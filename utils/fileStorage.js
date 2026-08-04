@@ -4,6 +4,7 @@ import crypto from "crypto";
 import { fileURLToPath } from "url";
 import { v2 as cloudinary } from "cloudinary";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import { retryWithBackoff } from "./retryWithBackoff.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -36,13 +37,13 @@ export const saveBookingDocumentFile = async ({ fileName, mimeType, buffer, exte
       secure: true
     });
 
-    const result = await new Promise((resolve, reject) => {
+    const result = await retryWithBackoff(() => new Promise((resolve, reject) => {
       const uploadStream = cloudinary.uploader.upload_stream({ resource_type: "auto", public_id: `${Date.now()}-${crypto.randomBytes(4).toString("hex")}${ext}` }, (error, result) => {
         if (error) return reject(error);
         resolve(result);
       });
       uploadStream.end(buffer);
-    });
+    }), { label: "Cloudinary upload" });
 
     return {
       fileName: safeName,
@@ -69,12 +70,12 @@ export const saveBookingDocumentFile = async ({ fileName, mimeType, buffer, exte
     });
 
     const objectKey = `${Date.now()}-${crypto.randomBytes(4).toString("hex")}${ext}`;
-    await s3Client.send(new PutObjectCommand({
+    await retryWithBackoff(() => s3Client.send(new PutObjectCommand({
       Bucket: process.env.AWS_S3_BUCKET,
       Key: objectKey,
       Body: buffer,
       ContentType: mimeType || "application/octet-stream"
-    }));
+    })), { label: "S3 upload" });
 
     const publicBaseUrl = process.env.AWS_S3_PUBLIC_BASE_URL || `https://${process.env.AWS_S3_BUCKET}.s3.${process.env.AWS_REGION}.amazonaws.com`;
 

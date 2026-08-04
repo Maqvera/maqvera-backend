@@ -85,6 +85,7 @@ const TravelTimelineSchema = new mongoose.Schema({
     {
       name: { type: String, required: true },
       url: { type: String, required: true },
+      storageKey: { type: String, default: null },
       mimeType: { type: String, default: "application/pdf" },
       size: { type: Number, default: 0 },
       uploadedAt: { type: Date, default: Date.now }

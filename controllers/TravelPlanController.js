@@ -756,6 +756,18 @@ export const UpdateTravelPlan = async (req, res) => {
         previousState: transitionResult.previousState,
         newStatus: travelPlan.status
       });
+
+      // Named milestone event distinct from the generic StatusChanged —
+      // downstream consumers (e.g. an AI Assistant summarizing "trips that
+      // wrapped up today") shouldn't have to filter every status transition
+      // just to catch completions.
+      if (travelPlan.status === "completed") {
+        publishEvent("TravelPlanCompleted", {
+          travelPlanId: travelPlan._id,
+          travelPlanNumber: travelPlan.travelPlanNumber,
+          tenantId
+        });
+      }
     }
 
     // Event bus

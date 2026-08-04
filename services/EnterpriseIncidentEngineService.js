@@ -7,7 +7,10 @@ import UnifiedActivityStreamModel from "../models/UnifiedActivityStreamModel.js"
 import AuditLogModel from "../models/AuditLogmodel.js";
 import { publishEvent } from "../utils/eventBus.js";
 import IncidentPolicyModel from "../models/IncidentPolicyModel.js";
+import { getIncidentConfig } from "../utils/incidentConfig.js";
 import { v4 as uuidv4 } from "uuid";
+
+const incidentConfig = getIncidentConfig();
 
 class EnterpriseIncidentEngineService {
   /**
@@ -37,11 +40,30 @@ class EnterpriseIncidentEngineService {
     };
   }
 
+  // Was previously a hard throw when no DB-seeded policy existed for a
+  // tenant ("No active incident policy is configured for this tenant."),
+  // which blocked incident creation ENTIRELY — including a medical
+  // emergency report — for any tenant that hadn't run
+  // `npm run seed:incident-policy`. Falls back to a real, config-driven
+  // default policy (utils/incidentConfig.js) instead, matching the
+  // env-fallback pattern used everywhere else in this codebase. A tenant
+  // with a real seeded policy (e.g. Visa's) is completely unaffected —
+  // this only changes behavior for tenants with none.
   static async getPolicy(tenantId) {
     if (mongoose.connection?.readyState !== 1) return null;
     const policy = await IncidentPolicyModel.findOne({ tenantId, isActive: true }).lean();
-    if (!policy) throw new Error("No active incident policy is configured for this tenant.");
-    return policy;
+    if (policy) return policy;
+    return {
+      tenantId,
+      isActive: true,
+      defaultAssignmentTeam: incidentConfig.defaultAssignmentTeam,
+      categories: incidentConfig.defaultCategories.map((name) => ({
+        name,
+        isActive: true,
+        locksVisaCase: incidentConfig.categoriesThatLockVisaCase.includes(name)
+      })),
+      severities: incidentConfig.defaultSeverities
+    };
   }
 
   static async resolveSLA(severity, tenantId) {
@@ -370,11 +392,19 @@ class EnterpriseIncidentEngineService {
   /**
    * 4. UPDATE INCIDENT
    */
-  static async updateIncident(incidentId, updateData, tenantId, userId) {
+  static async updateIncident(incidentId, updateData, tenantId, userId, permissions = []) {
     const incident = await this.getIncidentById(incidentId, tenantId);
 
     if (incident.status === "closed" && updateData.status !== "reopened") {
       throw new Error("Closed incidents require an explicit reopen request.");
+    }
+
+    // Business Rule: "Critical incidents require manager approval." Applies
+    // both when escalating TO Critical and when modifying an incident
+    // that's already Critical — was not implemented at all.
+    const isOrBecomesCritical = updateData.severity === "Critical" || incident.severity === "Critical";
+    if (isOrBecomesCritical && !permissions.includes("admin") && !permissions.includes("incidents.manage")) {
+      throw new Error("Manager approval (elevated permission) is required to update a Critical incident.");
     }
 
     const editableFields = [
@@ -453,6 +483,18 @@ class EnterpriseIncidentEngineService {
 
     const incident = await this.getIncidentById(incidentId, tenantId);
 
+    // Business Rule: "Tracks assignment history." Recorded before
+    // overwriting the flat fields, so the outgoing assignee is captured too
+    // (not just the new one).
+    if (!Array.isArray(incident.assignmentHistory)) incident.assignmentHistory = [];
+    incident.assignmentHistory.push({
+      assignedTo: assigneeId,
+      assignedToName: assigneeName || assigneeId,
+      assignedTeam: team,
+      assignedBy: userId || "system",
+      assignedAt: new Date()
+    });
+
     incident.assignedTo = assigneeId;
     incident.assignedToName = assigneeName || assigneeId;
     incident.assignedTeam = team;
@@ -479,9 +521,27 @@ class EnterpriseIncidentEngineService {
       description: `Incident ${incident.incidentNumber} assigned to ${incident.assignedToName} (${team})`,
       performedBy: userId
     });
-    if (mongoose.connection?.readyState === 1) await AuditLogModel.create({ tenantId, branchId: incident.branchId, userId: userId || "system", action: "RESOLVE_INCIDENT", resource: "Incident", resourceId: incident._id.toString(), details: { resolutionSummary, rootCause, correctiveAction, preventiveAction } }).catch(() => null);
+    // Was a live ReferenceError: this line referenced resolutionSummary/
+    // rootCause/correctiveAction/preventiveAction, which belong to
+    // resolveIncident's parameters, not this function's — undeclared here,
+    // so building this object literal threw synchronously before
+    // AuditLogModel.create() was ever called (the .catch() couldn't help;
+    // it only catches a rejected promise, not a synchronous throw while
+    // constructing the call's arguments). Every call to this endpoint
+    // failed. The action string was also wrong ("RESOLVE_INCIDENT" inside
+    // the assign handler).
+    if (mongoose.connection?.readyState === 1) await AuditLogModel.create({ tenantId, branchId: incident.branchId, userId: userId || "system", action: "ASSIGN_INCIDENT", resource: "Incident", resourceId: incident._id.toString(), details: { assigneeId, assigneeName: incident.assignedToName, team } }).catch(() => null);
 
     publishEvent("IncidentAssigned", { incidentId: incident._id, assigneeId, team, tenantId });
+    // Business Rule: "Notifications sent automatically."
+    publishEvent("NotificationRequested", {
+      tenantId,
+      event: "IncidentAssigned",
+      recipientId: assigneeId,
+      recipientName: incident.assignedToName,
+      incidentId: incident._id,
+      incidentNumber: incident.incidentNumber
+    });
 
     return incident;
   }
@@ -528,6 +588,8 @@ class EnterpriseIncidentEngineService {
 
     publishEvent("InvestigationStarted", { incidentId: incident._id, incidentNumber: incident.incidentNumber, tenantId });
 
+    if (mongoose.connection?.readyState === 1) await AuditLogModel.create({ tenantId, branchId: incident.branchId, userId: userId || "system", action: "ADD_INCIDENT_EVIDENCE", resource: "Incident", resourceId: incident._id.toString(), details: { type: item.type, description: item.description } }).catch(() => null);
+
     return item;
   }
 
@@ -541,8 +603,20 @@ class EnterpriseIncidentEngineService {
 
     const incident = await this.getIncidentById(incidentId, tenantId);
 
+    if (["resolved", "verified", "closed"].includes(incident.status)) {
+      throw new Error(`Incident is already '${incident.status}' and cannot be resolved again.`);
+    }
+
     if (["High", "Critical", "Emergency"].includes(incident.severity) && !rootCause) {
       throw new Error(`rootCause is required for resolving '${incident.severity}' severity incidents.`);
+    }
+
+    // Business Workflow: "Verify Open Tasks" — was not implemented at all;
+    // an incident with unfinished follow-up tasks could previously be
+    // resolved with no warning.
+    const openTasks = Array.isArray(incident.tasks) ? incident.tasks.filter((t) => !t.isCompleted) : [];
+    if (openTasks.length > 0) {
+      throw new Error(`Cannot resolve — ${openTasks.length} open task(s) remain: ${openTasks.map((t) => t.description).join("; ")}`);
     }
 
     const now = new Date();
@@ -601,6 +675,8 @@ class EnterpriseIncidentEngineService {
 
     publishEvent("IncidentResolved", { incidentId: incident._id, incidentNumber: incident.incidentNumber, tenantId });
 
+    if (mongoose.connection?.readyState === 1) await AuditLogModel.create({ tenantId, branchId: incident.branchId, userId: userId || "system", action: "RESOLVE_INCIDENT", resource: "Incident", resourceId: incident._id.toString(), details: { rootCause: rootCause || null, correctiveAction: correctiveAction || null } }).catch(() => null);
+
     return incident;
   }
 
@@ -633,6 +709,8 @@ class EnterpriseIncidentEngineService {
 
     publishEvent("IncidentVerified", { incidentId: incident._id, incidentNumber: incident.incidentNumber, tenantId });
 
+    if (mongoose.connection?.readyState === 1) await AuditLogModel.create({ tenantId, branchId: incident.branchId, userId: userId || "system", action: "VERIFY_INCIDENT", resource: "Incident", resourceId: incident._id.toString(), details: {} }).catch(() => null);
+
     return incident;
   }
 
@@ -641,6 +719,18 @@ class EnterpriseIncidentEngineService {
    */
   static async closeIncident(incidentId, tenantId, userId) {
     const incident = await this.getIncidentById(incidentId, tenantId);
+
+    // Had zero validation at all — an incident could be closed straight
+    // from "reported," with no resolution, no root cause, no corrective
+    // action, without ever going through resolveIncident.
+    if (!["resolved", "verified"].includes(incident.status)) {
+      throw new Error(`Incident must be resolved (and ideally verified) before it can be closed — current status is '${incident.status}'.`);
+    }
+
+    // Business Rule: "Corrective action required before closure."
+    if (!incident.resolution?.correctiveAction) {
+      throw new Error("A corrective action is required before an incident can be closed.");
+    }
 
     incident.status = "closed";
     if (!incident.resolution) incident.resolution = {};
@@ -661,6 +751,8 @@ class EnterpriseIncidentEngineService {
 
     publishEvent("IncidentClosed", { incidentId: incident._id, incidentNumber: incident.incidentNumber, tenantId });
 
+    if (mongoose.connection?.readyState === 1) await AuditLogModel.create({ tenantId, branchId: incident.branchId, userId: userId || "system", action: "CLOSE_INCIDENT", resource: "Incident", resourceId: incident._id.toString(), details: {} }).catch(() => null);
+
     return incident;
   }
 
@@ -669,6 +761,13 @@ class EnterpriseIncidentEngineService {
    */
   static async reopenIncident(incidentId, reason, tenantId, userId) {
     const incident = await this.getIncidentById(incidentId, tenantId);
+
+    // Was previously reachable from any status at all, including a
+    // freshly-"reported" incident that had never been resolved in the
+    // first place — reopening only makes sense from a terminal-ish state.
+    if (!["closed", "resolved", "verified", "rejected", "duplicate"].includes(incident.status)) {
+      throw new Error(`Cannot reopen an incident in '${incident.status}' status.`);
+    }
 
     incident.status = "reopened";
     incident.comments = Array.isArray(incident.comments) ? incident.comments : [];
@@ -692,6 +791,8 @@ class EnterpriseIncidentEngineService {
     });
 
     publishEvent("IncidentReopened", { incidentId: incident._id, incidentNumber: incident.incidentNumber, tenantId });
+
+    if (mongoose.connection?.readyState === 1) await AuditLogModel.create({ tenantId, branchId: incident.branchId, userId: userId || "system", action: "REOPEN_INCIDENT", resource: "Incident", resourceId: incident._id.toString(), details: { reason: reason || null } }).catch(() => null);
 
     return incident;
   }

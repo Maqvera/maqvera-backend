@@ -9,6 +9,15 @@ import PassportTrackingModel from "../models/PassportTrackingModel.js";
 import TravelIncidentManagementModel from "../models/TravelIncidentManagementModel.js";
 import TravelTimelineModel from "../models/TravelTimelineModel.js";
 import CustomerModel from "../models/CustomerModel.js";
+import BookingHeaderModel from "../models/BookingHeaderModel.js";
+import TravelPlanModel from "../models/TravelPlanModel.js";
+import TravelFlightAssignmentModel from "../models/TravelFlightAssignmentModel.js";
+import TravelHotelAssignmentModel from "../models/TravelHotelAssignmentModel.js";
+import TravelTransportAssignmentModel from "../models/TravelTransportAssignmentModel.js";
+import TravelNoteModel from "../models/TravelNoteModel.js";
+import TravelItineraryModel from "../models/TravelItineraryModel.js";
+import TravelAttendanceModel from "../models/TravelAttendanceModel.js";
+import BookingTaskModel from "../models/BookingTaskModel.js";
 import { publishEvent, subscribeEvent } from "../utils/eventBus.js";
 
 const MAX_PAGE_SIZE = Number.parseInt(process.env.ENTERPRISE_SEARCH_MAX_PAGE_SIZE || "100", 10) || 100;
@@ -49,6 +58,36 @@ class SearchEngineService {
       IncidentUpdated: (p) => this.indexIncident(p),
       IncidentResolved: (p) => this.indexIncident(p),
       TimelineEventCreated: (p) => this.indexTimelineEvent(p),
+      // Travel Operations entities. Centralized here (rather than left as the
+      // ad-hoc, no-permissionsRequired, create-only indexEntity calls that
+      // used to live in TravelOrchestrationEngine) so every entity type gets
+      // a real DB-backed lookup, a correct permissionsRequired gate, and
+      // re-indexing on update — not just on first creation.
+      TravelPlanCreated: (p) => this.indexTravelPlan(p),
+      TravelPlanUpdated: (p) => this.indexTravelPlan(p),
+      TravelPlanStatusChanged: (p) => this.indexTravelPlan(p),
+      TravelPlanArchived: (p) => this.removeEntity({ ...p, entityType: "TravelPlan", entityId: p.travelPlanId }),
+      FlightAssigned: (p) => this.indexFlight(p),
+      FlightUpdated: (p) => this.indexFlight(p),
+      FlightStatusUpdated: (p) => this.indexFlight(p),
+      HotelAssigned: (p) => this.indexHotel(p),
+      HotelUpdated: (p) => this.indexHotel(p),
+      HotelStatusUpdated: (p) => this.indexHotel(p),
+      TransportAssigned: (p) => this.indexTransport(p),
+      TransportStatusUpdated: (p) => this.indexTransport(p),
+      BookingCreated: (p) => this.indexBooking(p),
+      BookingUpdated: (p) => this.indexBooking(p),
+      BookingStatusChanged: (p) => this.indexBooking(p),
+      BookingArchived: (p) => this.removeEntity({ ...p, entityType: "Booking", entityId: p.bookingId }),
+      NoteCreated: (p) => this.indexNote(p),
+      NoteUpdated: (p) => this.indexNote(p),
+      NoteDeleted: (p) => this.removeEntity({ ...p, entityType: "Note", entityId: p.noteId }),
+      ActivityScheduled: (p) => this.indexItineraryActivity(p),
+      ActivityUpdated: (p) => this.indexItineraryActivity(p),
+      ActivityRescheduled: (p) => this.indexItineraryActivity(p),
+      AttendanceRecorded: (p) => this.indexAttendance(p),
+      BookingTaskCreated: (p) => this.indexTask(p),
+      BookingTaskAssigned: (p) => this.indexTask(p),
     };
     for (const [eventName, handler] of Object.entries(handlers)) {
       subscribeEvent(eventName, (payload) => queueMicrotask(() => handler(payload).catch((error) =>
@@ -169,15 +208,143 @@ class SearchEngineService {
     });
   }
 
+  static async indexTravelPlan({ tenantId, travelPlanId, branchId }) {
+    if (!tenantId || !travelPlanId) return;
+    const item = await TravelPlanModel.findOne({ _id: travelPlanId, tenantId }).lean();
+    if (!item || item.isArchived) return this.removeEntity({ tenantId, entityType: "TravelPlan", entityId: travelPlanId });
+    const customerName = item.bookingSnapshot?.customerName;
+    return this.indexEntity({ tenantId, branchId: item.branchId || branchId, entityType: "TravelPlan", entityId: item._id,
+      title: `${item.travelPlanNumber} — ${customerName || "Traveler"}`, description: `${item.travelType || "Travel"} · ${item.status}`,
+      keywords: [item.travelPlanNumber, item.bookingNumber, customerName, item.coordinator].filter(Boolean),
+      matchedFields: [{ field: "travelPlanNumber", value: item.travelPlanNumber }, { field: "customerName", value: customerName }].filter((f) => f.value),
+      module: "TravelOperations", status: item.status, navigationUrl: `/travel-plans/${item._id}`, permissionsRequired: ["travel.read", "travel_plans.read"],
+      facets: { branch: item.branchId, status: item.status, travelType: item.travelType, priority: item.priority },
+    });
+  }
+
+  static async indexFlight({ tenantId, travelPlanId, flightAssignmentId, branchId }) {
+    if (!tenantId || !flightAssignmentId) return;
+    const item = await TravelFlightAssignmentModel.findOne({ _id: flightAssignmentId, tenantId }).lean();
+    if (!item) return this.removeEntity({ tenantId, entityType: "Flight", entityId: flightAssignmentId });
+    return this.indexEntity({ tenantId, branchId: item.branchId || branchId, entityType: "Flight", entityId: item._id,
+      title: `${item.airline} ${item.flightNumber} — ${item.originAirport} → ${item.destinationAirport}`, description: `Flight status: ${item.status}`,
+      keywords: [item.airline, item.flightNumber, item.originAirport, item.destinationAirport].filter(Boolean),
+      matchedFields: [{ field: "flightNumber", value: item.flightNumber }, { field: "airline", value: item.airline }].filter((f) => f.value),
+      module: "FlightOperations", status: item.status, navigationUrl: `/travel-plans/${item.travelPlanId}/flights/${item._id}`, permissionsRequired: ["travel.read", "travel_plans.read"],
+      facets: { status: item.status, airline: item.airline, priority: item.priority },
+    });
+  }
+
+  static async indexHotel({ tenantId, travelPlanId, hotelAssignmentId, branchId }) {
+    if (!tenantId || !hotelAssignmentId) return;
+    const item = await TravelHotelAssignmentModel.findOne({ _id: hotelAssignmentId, tenantId }).lean();
+    if (!item) return this.removeEntity({ tenantId, entityType: "Hotel", entityId: hotelAssignmentId });
+    return this.indexEntity({ tenantId, branchId: item.branchId || branchId, entityType: "Hotel", entityId: item._id,
+      title: `${item.hotelName} — ${item.city}`, description: `Hotel status: ${item.status}`,
+      keywords: [item.hotelName, item.city, item.country].filter(Boolean),
+      matchedFields: [{ field: "hotelName", value: item.hotelName }, { field: "city", value: item.city }].filter((f) => f.value),
+      module: "HotelOperations", status: item.status, navigationUrl: `/travel-plans/${item.travelPlanId}/hotels/${item._id}`, permissionsRequired: ["travel.read", "travel_plans.read"],
+      facets: { status: item.status, city: item.city, priority: item.priority },
+    });
+  }
+
+  static async indexTransport({ tenantId, travelPlanId, transportAssignmentId, branchId }) {
+    if (!tenantId || !transportAssignmentId) return;
+    const item = await TravelTransportAssignmentModel.findOne({ _id: transportAssignmentId, tenantId }).lean();
+    if (!item) return this.removeEntity({ tenantId, entityType: "Transport", entityId: transportAssignmentId });
+    return this.indexEntity({ tenantId, branchId: item.branchId || branchId, entityType: "Transport", entityId: item._id,
+      title: `${item.vehicleType} ${item.vehicleNumber} — ${item.journeySegment}`, description: `${item.pickupLocation} → ${item.dropoffLocation}`,
+      keywords: [item.vehicleNumber, item.plateNumber, item.driverName, item.routeName, item.pickupLocation, item.dropoffLocation].filter(Boolean),
+      matchedFields: [{ field: "vehicleNumber", value: item.vehicleNumber }, { field: "driverName", value: item.driverName }].filter((f) => f.value),
+      module: "TransportOperations", status: item.status, navigationUrl: `/travel-plans/${item.travelPlanId}/transport/${item._id}`, permissionsRequired: ["travel.read", "travel_plans.read"],
+      facets: { status: item.status, transportType: item.transportType, priority: item.priority },
+    });
+  }
+
+  static async indexBooking({ tenantId, bookingId, branchId }) {
+    if (!tenantId || !bookingId) return;
+    const item = await BookingHeaderModel.findOne({ _id: bookingId, tenantId }).lean();
+    if (!item || item.status === "archived") return this.removeEntity({ tenantId, entityType: "Booking", entityId: bookingId });
+    return this.indexEntity({ tenantId, branchId: item.branchId || branchId, entityType: "Booking", entityId: item._id,
+      title: `${item.bookingNumber || item.bookingReference} — ${item.customerName || "Customer"}`, description: `${item.bookingType || "Booking"} · ${item.status}`,
+      keywords: [item.bookingNumber, item.bookingReference, item.customerName, item.customerCode].filter(Boolean),
+      matchedFields: [{ field: "bookingNumber", value: item.bookingNumber }, { field: "customerName", value: item.customerName }].filter((f) => f.value),
+      module: "Booking", status: item.status, navigationUrl: `/bookings/${item._id}`, permissionsRequired: ["bookings.read", "booking.read"],
+      facets: { branch: item.branchId, status: item.status, bookingType: item.bookingType, priority: item.priority },
+    });
+  }
+
+  static async indexNote({ tenantId, noteId, branchId }) {
+    if (!tenantId || !noteId) return;
+    const item = await TravelNoteModel.findOne({ noteId, tenantId, isSoftDeleted: { $ne: true } }).lean();
+    if (!item) return this.removeEntity({ tenantId, entityType: "Note", entityId: noteId });
+    // Private notes have no owner-scoped filter in the search index (only
+    // coarse permissionsRequired matching), so indexing one would leak it to
+    // every travel.read holder — skip indexing entirely rather than expose it.
+    if (item.visibility === "Private") return this.removeEntity({ tenantId, entityType: "Note", entityId: item.noteId });
+    return this.indexEntity({ tenantId, branchId: item.branchId || branchId, entityType: "Note", entityId: item.noteId,
+      title: item.title, description: item.content?.slice(0, 200) || "",
+      keywords: [item.title, item.content, item.authorName].filter(Boolean),
+      matchedFields: [{ field: "title", value: item.title }].filter((f) => f.value),
+      module: "TravelOperations", status: item.visibility, navigationUrl: `/travel-plans/${item.travelPlanId}/notes/${item.noteId}`, permissionsRequired: ["travel.read", "travel_plans.read"],
+      facets: { visibility: item.visibility, author: item.authorId },
+    });
+  }
+
+  static async indexItineraryActivity({ tenantId, travelPlanId, activityId, branchId }) {
+    if (!tenantId || !activityId) return;
+    const item = await TravelItineraryModel.findOne({ _id: activityId, tenantId }).lean();
+    if (!item) return this.removeEntity({ tenantId, entityType: "ItineraryActivity", entityId: activityId });
+    return this.indexEntity({ tenantId, branchId: item.branchId || branchId, entityType: "ItineraryActivity", entityId: item._id,
+      title: `Day ${item.day}: ${item.title}`, description: `${item.activityType} · ${item.status}`,
+      keywords: [item.title, item.activityType, item.location?.name, item.resources?.guideName].filter(Boolean),
+      matchedFields: [{ field: "title", value: item.title }, { field: "activityType", value: item.activityType }].filter((f) => f.value),
+      module: "ItineraryOperations", status: item.status, navigationUrl: `/travel-plans/${item.travelPlanId}/itinerary/${item._id}`, permissionsRequired: ["travel.read", "travel_plans.read"],
+      facets: { status: item.status, activityType: item.activityType, day: item.day, priority: item.priority },
+    });
+  }
+
+  static async indexAttendance({ tenantId, travelPlanId, attendanceId, branchId }) {
+    if (!tenantId || !attendanceId) return;
+    const item = await TravelAttendanceModel.findOne({ _id: attendanceId, tenantId }).lean();
+    if (!item) return this.removeEntity({ tenantId, entityType: "Attendance", entityId: attendanceId });
+    return this.indexEntity({ tenantId, branchId: item.branchId || branchId, entityType: "Attendance", entityId: item._id,
+      title: `${item.travelerName} — ${item.status}`, description: `Attendance check for Travel Plan ${item.travelPlanId}`,
+      keywords: [item.travelerName, item.status].filter(Boolean),
+      matchedFields: [{ field: "travelerName", value: item.travelerName }].filter((f) => f.value),
+      module: "AttendanceOperations", status: item.status, navigationUrl: `/travel-plans/${item.travelPlanId}/attendance/${item._id}`, permissionsRequired: ["travel.read", "travel_plans.read"],
+      facets: { status: item.status, verificationMethod: item.verificationMethod },
+    });
+  }
+
+  static async indexTask({ tenantId, taskId, branchId }) {
+    if (!tenantId || !taskId) return;
+    const item = await BookingTaskModel.findOne({ _id: taskId, tenantId }).lean();
+    if (!item || item.status !== "active") return this.removeEntity({ tenantId, entityType: "Task", entityId: taskId });
+    return this.indexEntity({ tenantId, branchId, entityType: "Task", entityId: item._id,
+      title: item.title, description: item.description || `${item.entityType} task`,
+      keywords: [item.title, item.assignedToName, item.entityType].filter(Boolean),
+      matchedFields: [{ field: "title", value: item.title }].filter((f) => f.value),
+      module: "TaskManagement", status: item.workflowStatus, navigationUrl: `/bookings/${item.bookingId}/tasks/${item._id}`, permissionsRequired: ["bookings.read", "booking.read"],
+      facets: { status: item.workflowStatus, priority: item.priority, entityType: item.entityType, assignedTo: item.assignedTo },
+    });
+  }
+
   static async indexTimelineEvent({ tenantId, eventId, branchId }) {
     if (!tenantId || !eventId) return;
-    const item = await TravelTimelineModel.findOne({ _id: eventId, tenantId, isArchived: { $ne: true } }).lean();
+    const item = await TravelTimelineModel.findOne({ _id: eventId, tenantId, archivedAt: null }).lean();
     if (!item) return this.removeEntity({ tenantId, entityType: "TimelineEvent", entityId: eventId });
+    // Private timeline entries (e.g. mirrored from a Private note) have the
+    // same owner-scoping gap as Notes — skip indexing rather than leak them.
+    if (item.visibility === "Private") return this.removeEntity({ tenantId, entityType: "TimelineEvent", entityId: eventId });
+    const isTravelSourced = Boolean(item.travelPlanId);
     return this.indexEntity({ tenantId, branchId: item.branchId || branchId, entityType: "TimelineEvent", entityId: item._id,
-      title: item.title || item.eventType, description: item.description || "", keywords: [item.title, item.description, item.eventType].filter(Boolean),
+      title: item.title || item.eventType, description: item.description || "", keywords: [item.title, item.description, item.eventType, item.sourceModule].filter(Boolean),
       matchedFields: [{ field: "title", value: item.title }, { field: "description", value: item.description }].filter((f) => f.value),
-      module: item.module || "Visa", status: item.status || "Active", navigationUrl: `/visa-cases/${item.aggregateId}/timeline/${item._id}`, permissionsRequired: ["visa.timeline.read"],
-      facets: { aggregateType: item.aggregateType, status: item.status },
+      module: item.sourceModule || (isTravelSourced ? "TravelOperations" : "Visa"), status: "Active",
+      navigationUrl: isTravelSourced ? `/travel-plans/${item.travelPlanId}/timeline/${item._id}` : `/visa-cases/${item.visaCaseId}/timeline/${item._id}`,
+      permissionsRequired: isTravelSourced ? ["travel.read", "travel_plans.read"] : ["visa.timeline.read"],
+      facets: { aggregateType: item.aggregateType, sourceModule: item.sourceModule, visibility: item.visibility },
     });
   }
 
@@ -206,20 +373,39 @@ class SearchEngineService {
     const dbSort = sort === "createdAt" ? { createdAt: order === "asc" ? 1 : -1 } : { relevanceBaseScore: -1, updatedAt: -1 };
     const documents = await SearchIndexModel.find(filter).sort(dbSort).skip((safePage - 1) * safePageSize).limit(safePageSize).lean();
     const queryLower = term.toLowerCase();
+    // Search Ranking Algorithm: Exact(100) > Prefix(90) > Contains(75) >
+    // Phonetic & Fuzzy(60). True phonetic/fuzzy matching needs a real search
+    // engine (regex can't do typo tolerance) — the 60-tier here honestly
+    // means "matched only in description/keywords/matchedFields, not the
+    // title", the closest achievable analog with the current MongoDB-regex
+    // index until an ElasticSearch/OpenSearch adapter replaces it.
     const results = documents.map((doc) => {
-      const exact = queryLower && doc.title.toLowerCase() === queryLower;
-      const prefix = queryLower && doc.title.toLowerCase().startsWith(queryLower);
-      const score = Math.min(100, (doc.relevanceBaseScore || 70) + (exact ? 30 : prefix ? 20 : term ? 10 : 0));
+      const titleLower = doc.title.toLowerCase();
       const match = (doc.matchedFields || []).find((field) => String(field.value || "").toLowerCase().includes(queryLower));
-      return { entityType: doc.entityType, entityId: doc.entityId, title: doc.title, subtitle: doc.description, highlightedMatch: match ? { field: match.field, value: match.value } : null, score, createdDate: doc.createdAt, currentStatus: doc.status, navigationUrl: doc.navigationUrl, facets: doc.facets || {} };
+      let score = doc.relevanceBaseScore ?? 70;
+      if (queryLower) {
+        if (titleLower === queryLower) score = 100;
+        else if (titleLower.startsWith(queryLower)) score = 90;
+        else if (titleLower.includes(queryLower)) score = 75;
+        else score = 60;
+      }
+      return { entityType: doc.entityType, entityId: doc.entityId, title: doc.title, description: doc.description, matchedField: match ? match.field : null, module: doc.module, status: doc.status, navigationUrl: doc.navigationUrl, score, createdDate: doc.createdAt, facets: doc.facets || {} };
     }).sort((a, b) => sort === "score" ? (order === "asc" ? a.score - b.score : b.score - a.score) : 0);
-    return { results, meta: { page: safePage, pageSize: safePageSize, totalItems, totalPages: Math.ceil(totalItems / safePageSize) || 1, source: "enterprise-search-index" } };
+    // isFallback signals a cold/empty search index for this tenant (nothing
+    // has been indexed yet) rather than "this particular query had 0 hits" —
+    // lets the client distinguish "no matches" from "search isn't warmed up".
+    let isFallback = false;
+    if (totalItems === 0) {
+      const tenantHasAnyIndex = await SearchIndexModel.exists({ tenantId, isSoftDeleted: false });
+      isFallback = !tenantHasAnyIndex;
+    }
+    return { results, meta: { page: safePage, pageSize: safePageSize, totalItems, totalPages: Math.ceil(totalItems / safePageSize) || 1, isFallback, source: "enterprise-search-index" } };
   }
 
   static async recordSearch({ tenantId, userId, query, filters, resultCount }) {
     if (!tenantId || !userId) return;
     await SearchHistoryModel.create({ tenantId, userId, query, filters, resultCount, accessedAt: new Date() });
-    publishEvent("SearchRequested", { tenantId, userId, query, resultCount });
+    publishEvent("SearchPerformed", { tenantId, userId, query, resultCount });
   }
 
   static async getSuggestions({ tenantId, userId, branchId, permissions = [] }) {

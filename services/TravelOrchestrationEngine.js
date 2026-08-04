@@ -1,7 +1,13 @@
 import { publishEvent, subscribeEvent } from "../utils/eventBus.js";
 import { recordCanonicalDomainEvent } from "../controllers/TravelNotesTimelineController.js";
-import SearchEngineService from "./SearchEngineService.js";
-import AnalyticsEngine from "./AnalyticsEngine.js";
+import CacheManager from "../utils/cacheManager.js";
+
+// Dashboard reads go through AnalyticsEngine's CacheManager.getOrCompute —
+// calling buildPrimaryDashboard again here would just return the still-cached
+// (stale) value within its TTL, not force a recompute. Invalidating the
+// pattern is what actually makes "Dashboard Updated" real per business
+// event, per next read recomputes fresh instead of waiting out the TTL/cron.
+const invalidateDashboardCache = (tenantId) => CacheManager.invalidatePattern(`dashboard:*:${tenantId}:*`);
 
 /**
  * Travel Orchestration Engine
@@ -78,20 +84,11 @@ class TravelOrchestrationEngine {
         visibility: "Operations"
       });
 
-      // 2. Index Travel Plan in Enterprise Search Engine
-      await SearchEngineService.indexEntity({
-        tenantId,
-        entityType: "TravelPlan",
-        entityId: travelPlanId,
-        title: `Travel Plan ${travelPlanId}`,
-        description: `Execution plan for booking ${bookingId}`,
-        keywords: [travelPlanId, bookingId, "Umrah", "TravelPlan"],
-        module: "TravelOperations",
-        navigationUrl: `/travel-plans/${travelPlanId}`
-      });
+      // Search indexing for TravelPlan is handled centrally by
+      // SearchEngineService.init()'s own TravelPlanCreated subscription
+      // (real DB lookup + correct permissionsRequired), not duplicated here.
 
-      // 3. Trigger Analytics Summary Refresh
-      await AnalyticsEngine.buildPrimaryDashboard({ tenantId });
+      await invalidateDashboardCache(tenantId);
 
       // 4. Publish WorkflowCompleted event
       publishEvent("TravelWorkflowInitialized", { travelPlanId, tenantId });
@@ -120,18 +117,10 @@ class TravelOrchestrationEngine {
         visibility: "Public"
       });
 
-      await SearchEngineService.indexEntity({
-        tenantId,
-        entityType: "Flight",
-        entityId: flightAssignmentId,
-        title: `Flight ${flightNumber} (PNR ${pnr})`,
-        description: `Flight booking for Travel Plan ${travelPlanId}`,
-        keywords: [flightNumber, pnr, travelPlanId, "Flight"],
-        module: "FlightOperations",
-        navigationUrl: `/travel-plans/${travelPlanId}/flights`
-      });
+      // Search indexing for Flight is handled centrally by
+      // SearchEngineService.init()'s own FlightAssigned subscription.
 
-      await AnalyticsEngine.buildPrimaryDashboard({ tenantId });
+      await invalidateDashboardCache(tenantId);
     } catch (err) {
       console.error("[Orchestrator] Error handling FlightAssignment:", err);
     }
@@ -157,18 +146,10 @@ class TravelOrchestrationEngine {
         visibility: "Public"
       });
 
-      await SearchEngineService.indexEntity({
-        tenantId,
-        entityType: "Hotel",
-        entityId: hotelAssignmentId,
-        title: `Hotel Stay: ${hotelName}`,
-        description: `${roomType} stay for Travel Plan ${travelPlanId}`,
-        keywords: [hotelName, roomType, travelPlanId, "Hotel"],
-        module: "HotelOperations",
-        navigationUrl: `/travel-plans/${travelPlanId}/hotels`
-      });
+      // Search indexing for Hotel is handled centrally by
+      // SearchEngineService.init()'s own HotelAssigned subscription.
 
-      await AnalyticsEngine.buildPrimaryDashboard({ tenantId });
+      await invalidateDashboardCache(tenantId);
     } catch (err) {
       console.error("[Orchestrator] Error handling HotelAssignment:", err);
     }
@@ -194,7 +175,7 @@ class TravelOrchestrationEngine {
         visibility: "Operations"
       });
 
-      await AnalyticsEngine.buildPrimaryDashboard({ tenantId });
+      await invalidateDashboardCache(tenantId);
     } catch (err) {
       console.error("[Orchestrator] Error handling TransportAssignment:", err);
     }
@@ -205,7 +186,7 @@ class TravelOrchestrationEngine {
    */
   static async orchestrateAttendanceUpdate({ sessionId, travelPlanId, status, tenantId }) {
     try {
-      await AnalyticsEngine.buildPrimaryDashboard({ tenantId });
+      await invalidateDashboardCache(tenantId);
     } catch (err) {
       console.error("[Orchestrator] Error handling AttendanceRecorded:", err);
     }
@@ -231,7 +212,7 @@ class TravelOrchestrationEngine {
         visibility: "Operations"
       });
 
-      await AnalyticsEngine.buildPrimaryDashboard({ tenantId });
+      await invalidateDashboardCache(tenantId);
     } catch (err) {
       console.error("[Orchestrator] Error handling TravelerMissing:", err);
     }
@@ -244,18 +225,12 @@ class TravelOrchestrationEngine {
     try {
       console.log(`[Orchestrator] Handling Incident Event for ${incidentNumber} (${severity})`);
 
-      await SearchEngineService.indexEntity({
-        tenantId,
-        entityType: "Incident",
-        entityId: incidentId,
-        title: `[${severity}] ${incidentNumber}`,
-        description: `Incident reported for Travel Plan ${travelPlanId}`,
-        keywords: [incidentNumber, severity, "Incident"],
-        module: "IncidentManagement",
-        navigationUrl: `/incidents/${incidentId}`
-      });
+      // Search indexing for Incident is handled centrally by
+      // SearchEngineService.init()'s own IncidentCreated subscription
+      // (indexIncident) — this used to duplicate it with a second,
+      // no-permissionsRequired indexEntity call racing the same upsert.
 
-      await AnalyticsEngine.buildPrimaryDashboard({ tenantId });
+      await invalidateDashboardCache(tenantId);
     } catch (err) {
       console.error("[Orchestrator] Error orchestrating incident:", err);
     }
@@ -281,7 +256,7 @@ class TravelOrchestrationEngine {
         visibility: "Operations"
       });
 
-      await AnalyticsEngine.buildPrimaryDashboard({ tenantId });
+      await invalidateDashboardCache(tenantId);
     } catch (err) {
       console.error("[Orchestrator] Error handling IncidentResolved:", err);
     }

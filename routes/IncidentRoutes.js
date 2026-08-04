@@ -1,5 +1,6 @@
 import express from "express";
 import authenticateAccessToken from "../middleware/authenticateAccessToken.js";
+import idempotency from "../middleware/idempotency.js";
 import rateLimit from "express-rate-limit";
 import {
   ListIncidents,
@@ -34,7 +35,7 @@ router.use(authenticateAccessToken);
 // Centralized Incident Engine Routes
 router.get("/analytics", limiter, GetIncidentAnalytics);
 router.get("/", limiter, ListIncidents);
-router.post("/", limiter, CreateIncident);
+router.post("/", limiter, idempotency(), CreateIncident);
 router.get("/:incidentId", limiter, GetIncidentDetails);
 router.patch("/:incidentId", limiter, UpdateIncident);
 router.post("/:incidentId/assign", limiter, AssignIncident);

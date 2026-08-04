@@ -78,6 +78,29 @@ const TravelIncidentManagementSchema = new mongoose.Schema({
     type: String,
     default: "Operations"
   },
+  // Response Includes (GET /incidents) and Editable Fields (PATCH) both
+  // name "Priority" — was accepted as a PATCH field with nowhere real to
+  // persist into (an undeclared Mongoose path) and never emitted by the
+  // list response at all.
+  priority: {
+    type: String,
+    enum: ["low", "normal", "high", "urgent"],
+    default: "normal",
+    index: true
+  },
+  // Business Rule: "Tracks assignment history." Was previously just three
+  // flat fields (assignedTo/assignedToName/assignedTeam) silently
+  // overwritten on every reassignment with no record of who held the
+  // incident before.
+  assignmentHistory: [
+    {
+      assignedTo: { type: String, default: null },
+      assignedToName: { type: String, default: null },
+      assignedTeam: { type: String, default: null },
+      assignedBy: { type: String, default: null },
+      assignedAt: { type: Date, default: Date.now }
+    }
+  ],
   reportedBy: {
     type: String,
     default: null
@@ -161,12 +184,18 @@ const TravelIncidentManagementSchema = new mongoose.Schema({
     closedAt: { type: Date, default: null },
     closedBy: { type: String, default: null }
   },
+  // AI Coding Rule: "Object Storage" — storageKey is the real object-storage
+  // key/public-id returned by utils/fileStorage.js's saveBookingDocumentFile
+  // (Cloudinary/S3/local, same abstraction already proven for Booking/
+  // Customer documents), not just a client-supplied URL trusted as-is.
   attachments: [
     {
       name: { type: String, required: true },
       url: { type: String, required: true },
+      storageKey: { type: String, default: null },
       mimeType: { type: String, default: "application/pdf" },
       size: { type: Number, default: 0 },
+      uploadedBy: { type: String, default: null },
       uploadedAt: { type: Date, default: Date.now }
     }
   ],

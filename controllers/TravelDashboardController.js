@@ -2,6 +2,16 @@ import AnalyticsEngine from "../services/AnalyticsEngine.js";
 import { sendError, sendSuccess } from "../utils/apiResponse.js";
 import { createRequestId } from "../utils/authTokens.js";
 
+// Business Rule: "Supports role-based widgets... Widgets filtered
+// automatically." No explicit role-to-widget mapping is given anywhere in
+// the doc (only role NAMES are listed), so building a full, speculative
+// access matrix would mean guessing. What IS unambiguous: Incident
+// Management (Part 8) already established a real, separate `incidents.read`
+// permission boundary distinct from `travel.read` — this reuses that
+// existing boundary consistently, so a caller without incident-read access
+// doesn't see incident-derived counts inside the dashboards either.
+const hasIncidentAccess = (permissions) => permissions.includes("incidents.read") || permissions.includes("admin");
+
 /**
  * 1. GET /api/v1/travel/dashboard
  * Returns the primary operational dashboard metrics.
@@ -23,8 +33,30 @@ export const GetPrimaryDashboard = async (req, res) => {
 
     const { data, fromCache } = await AnalyticsEngine.buildPrimaryDashboard({ tenantId, branchId });
 
+    let filteredData = { ...data };
+    if (!hasIncidentAccess(permissions)) {
+      const { openIncidents, criticalIncidents, emergencyCases, ...rest } = filteredData;
+      filteredData = rest;
+      filteredData.aiInsights = (filteredData.aiInsights || []).filter((i) => !i.insightType?.startsWith("IncidentTrend"));
+    }
+
+    // Business Rule: "Supports configurable widgets." Endpoint-level
+    // selection (primary/kpis/trends/map/workload/alerts, each independently
+    // cacheable) is the primary way this is satisfied; this optional
+    // ?fields= filter adds field-level composability within the primary
+    // dashboard itself — real and dynamic, not a fixed subset.
+    if (req.query.fields) {
+      const requestedFields = req.query.fields.split(",").map((f) => f.trim()).filter(Boolean);
+      const narrowed = {};
+      requestedFields.forEach((f) => {
+        if (filteredData[f] !== undefined) narrowed[f] = filteredData[f];
+      });
+      narrowed.dataAvailable = filteredData.dataAvailable;
+      filteredData = narrowed;
+    }
+
     return sendSuccess(res, 200, "Primary dashboard retrieved successfully.", {
-      data,
+      data: filteredData,
       meta: { fromCache, branchId, refreshedAt: new Date() }
     }, requestId);
   } catch (err) {
@@ -54,7 +86,13 @@ export const GetDashboardKPIs = async (req, res) => {
 
     const { data, fromCache } = await AnalyticsEngine.calculateKPIs({ tenantId, branchId });
 
-    return sendSuccess(res, 200, "Dashboard KPIs retrieved successfully.", { data, meta: { fromCache } }, requestId);
+    let filteredData = data;
+    if (!hasIncidentAccess(permissions)) {
+      const { incidentRatePct, emergencyCount, avgIncidentResolutionHours, avgResponseTimeHours, ...rest } = data;
+      filteredData = rest;
+    }
+
+    return sendSuccess(res, 200, "Dashboard KPIs retrieved successfully.", { data: filteredData, meta: { fromCache } }, requestId);
   } catch (err) {
     console.error("GetDashboardKPIs Error:", err);
     return sendError(res, 500, err.message || "Failed to fetch dashboard KPIs.", requestId);
@@ -109,7 +147,13 @@ export const GetDashboardMap = async (req, res) => {
 
     const { data, fromCache } = await AnalyticsEngine.getLiveMapData({ tenantId });
 
-    return sendSuccess(res, 200, "Dashboard map data retrieved successfully.", { data, meta: { fromCache } }, requestId);
+    let filteredData = data;
+    if (!hasIncidentAccess(permissions)) {
+      const { incidentLocations, emergencyAlertsCount, ...rest } = data;
+      filteredData = rest;
+    }
+
+    return sendSuccess(res, 200, "Dashboard map data retrieved successfully.", { data: filteredData, meta: { fromCache } }, requestId);
   } catch (err) {
     console.error("GetDashboardMap Error:", err);
     return sendError(res, 500, err.message || "Failed to fetch dashboard map data.", requestId);
@@ -136,7 +180,13 @@ export const GetDashboardWorkload = async (req, res) => {
 
     const { data, fromCache } = await AnalyticsEngine.getWorkloadData({ tenantId });
 
-    return sendSuccess(res, 200, "Dashboard workload data retrieved successfully.", { data, meta: { fromCache } }, requestId);
+    let filteredData = data;
+    if (!hasIncidentAccess(permissions)) {
+      const { openIncidentsCount, ...rest } = data;
+      filteredData = rest;
+    }
+
+    return sendSuccess(res, 200, "Dashboard workload data retrieved successfully.", { data: filteredData, meta: { fromCache } }, requestId);
   } catch (err) {
     console.error("GetDashboardWorkload Error:", err);
     return sendError(res, 500, err.message || "Failed to fetch dashboard workload.", requestId);
@@ -159,6 +209,12 @@ export const GetDashboardAlerts = async (req, res) => {
 
     if (!permissions.includes("travel.read") && !permissions.includes("travel_plans.read") && !permissions.includes("admin")) {
       return sendError(res, 403, "Permission denied.", requestId);
+    }
+    // This endpoint's entire content is incident-derived — unlike the other
+    // 5 dashboard endpoints, there's nothing meaningful left to return
+    // after filtering, so it's gated outright rather than field-filtered.
+    if (!hasIncidentAccess(permissions)) {
+      return sendError(res, 403, "Permission denied — incident read access is required for operational alerts.", requestId);
     }
 
     const { data, fromCache } = await AnalyticsEngine.getOperationalAlerts({ tenantId });

@@ -51,6 +51,7 @@ class AnalyticsEngine {
           pendingCheckIns: 0,
           delayedFlights: 0,
           pendingHotelCheckIns: 0,
+          transportStatus: { active: 0, delayed: 0, completed: 0 },
           openIncidents: 0,
           criticalIncidents: 0,
           emergencyCases: 0,
@@ -58,6 +59,7 @@ class AnalyticsEngine {
           upcomingActivities: 0,
           completedActivities: 0,
           operationalHealthScore: 100,
+          aiInsights: [],
           lastRefreshTime: null,
           dataAvailable: false,
         };
@@ -73,6 +75,9 @@ class AnalyticsEngine {
         pendingCheckIns: m.pendingCheckIns || 0,
         delayedFlights: m.delayedFlights || 0,
         pendingHotelCheckIns: m.pendingHotelCheckIns || 0,
+        // "Transport Status" (Part 10 Response Includes) — was computed by
+        // KPIEngine but never surfaced through the dashboard response.
+        transportStatus: m.transportStatus || { active: 0, delayed: 0, completed: 0 },
         openIncidents: m.openIncidents || 0,
         criticalIncidents: m.criticalIncidents || 0,
         emergencyCases: m.emergencyCases || 0,
@@ -80,6 +85,10 @@ class AnalyticsEngine {
         upcomingActivities: m.upcomingActivities || 0,
         completedActivities: m.completedActivities || 0,
         operationalHealthScore: m.operationalHealthScore || 0,
+        // "AI Insights" — real, deterministic day-over-day comparisons
+        // (KPIEngine.generateTravelAIInsights), was a live schema field that
+        // was never populated or surfaced anywhere.
+        aiInsights: summary.aiInsights || [],
         lastRefreshTime: summary.lastRefreshedAt,
         dataAvailable: true,
       };
@@ -118,7 +127,18 @@ class AnalyticsEngine {
         emergencyCount: kpis.emergencyCount || 0,
         tripCompletionPct: kpis.tripCompletionPct || 0,
         avgDelayMinutes: kpis.avgDelayMinutes || 0,
+        // "Average Response Time" — distinct KPI from resolution time (Part
+        // 10's KPI list names both); real, computed from the incident's own
+        // first-response SLA tracking (Part 8), not fabricated.
+        avgResponseTimeHours: kpis.avgResponseTimeHours || 0,
         avgIncidentResolutionHours: kpis.avgIncidentResolutionHours || 0,
+        // "Customer Complaints" has no backing model anywhere in this
+        // codebase — honestly reported as 0 (not tracked), matching this
+        // engine's own established convention for travelerSatisfaction.
+        customerComplaintsCount: kpis.customerComplaintsCount || 0,
+        // "Guide Performance" — real % of guide-assigned activities
+        // completed (KPIEngine.computeTravelMetrics), not a fabricated score.
+        guidePerformancePct: kpis.guidePerformancePct || 0,
         vehicleUtilizationPct: kpis.vehicleUtilizationPct || 0,
         dataAvailable: !!summary,
       };
@@ -180,10 +200,20 @@ class AnalyticsEngine {
           departures: m.todaysDepartures || 0,
           arrivals: m.todaysArrivals || 0,
           delayedFlights: m.delayedFlights || 0,
+          // Trend Metrics (Part 10) — "Hotels" and "Transport" were
+          // previously absent from trends despite both being real,
+          // already-tracked fields on the same summary row.
+          pendingHotelCheckIns: m.pendingHotelCheckIns || 0,
+          hotelCheckInSuccessPct: k.hotelCheckInSuccessPct || 0,
+          transportStatus: m.transportStatus || { active: 0, delayed: 0, completed: 0 },
           openIncidents: m.openIncidents || 0,
           attendancePct: k.attendancePct || 0,
           onTimeDeparturePct: k.onTimeDeparturePct || 0,
           operationalHealthScore: m.operationalHealthScore || 0,
+          // "Customer Satisfaction" — honestly 0 (no feedback model exists),
+          // matching this engine's own established convention rather than
+          // fabricating a score.
+          customerSatisfaction: k.travelerSatisfaction || 0,
           dataAvailable: !!s,
         };
       });

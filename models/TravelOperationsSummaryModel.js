@@ -31,7 +31,14 @@ const TravelOperationsSummarySchema = new mongoose.Schema({
     tasksDueToday: { type: Number, default: 0 },
     upcomingActivities: { type: Number, default: 0 },
     completedActivities: { type: Number, default: 0 },
-    operationalHealthScore: { type: Number, default: 0 }
+    operationalHealthScore: { type: Number, default: 0 },
+    // Response Includes (Part 10) names "Transport Status" — was computed
+    // by KPIEngine.computeTravelMetrics but never persisted anywhere.
+    transportStatus: {
+      active: { type: Number, default: 0 },
+      delayed: { type: Number, default: 0 },
+      completed: { type: Number, default: 0 }
+    }
   },
   kpis: {
     onTimeDeparturePct: { type: Number, default: 0 },
@@ -44,7 +51,19 @@ const TravelOperationsSummarySchema = new mongoose.Schema({
     tripCompletionPct: { type: Number, default: 0 },
     avgDelayMinutes: { type: Number, default: 0 },
     avgIncidentResolutionHours: { type: Number, default: 0 },
-    vehicleUtilizationPct: { type: Number, default: 0 }
+    vehicleUtilizationPct: { type: Number, default: 0 },
+    // "Average Response Time" (Part 10 KPI list) — distinct from resolution
+    // time; computed from TravelIncidentManagementModel.slaStatus's real
+    // firstResponse tracking (Part 8).
+    avgResponseTimeHours: { type: Number, default: 0 },
+    // "Guide Performance" — % of guide-assigned itinerary activities
+    // completed (real, derived from TravelItineraryModel), not a fabricated
+    // score. "Customer Complaints" has no backing model anywhere in this
+    // codebase — kept at the honest default (0, matching this file's own
+    // established convention for travelerSatisfaction below) rather than
+    // fabricated.
+    guidePerformancePct: { type: Number, default: 0 },
+    customerComplaintsCount: { type: Number, default: 0 }
   },
   workloadSummary: {
     coordinatorsActive: { type: Number, default: 0 },

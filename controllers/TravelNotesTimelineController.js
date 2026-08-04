@@ -4,9 +4,25 @@ import TravelTimelineModel from "../models/TravelTimelineModel.js";
 import TravelNoteModel from "../models/TravelNoteModel.js";
 import UnifiedActivityStreamModel from "../models/UnifiedActivityStreamModel.js";
 import AuditLogModel from "../models/AuditLogmodel.js";
+import EmployeeProfileModel from "../models/EmployeeProfilemodel.js";
 import { sendError, sendSuccess } from "../utils/apiResponse.js";
 import { publishEvent } from "../utils/eventBus.js";
 import { createRequestId } from "../utils/authTokens.js";
+import { saveBookingDocumentFile, resolveBookingDocumentUrl } from "../utils/fileStorage.js";
+import { getNotesTimelineConfig } from "../utils/notesTimelineConfig.js";
+
+const notesTimelineConfig = getNotesTimelineConfig();
+
+// "Only author or authorized manager may edit" — the previous check used
+// req.auth?.role (singular), a field that is essentially never populated on
+// this codebase's real JWT payload (confirmed: every other module reads
+// req.auth?.roles, a plural array, or req.auth?.permissions; a grep across
+// controllers/services turns up no other reliable writer of a singular
+// `role` string). That meant the "or manager" half of the rule silently
+// never fired — only the literal author could ever edit or delete a note.
+// Uses the same admin-elevation convention already established everywhere
+// else in this session.
+const isAuthorOrManager = (note, userId, permissions) => note.authorId === userId || (permissions || []).includes("admin");
 
 /**
  * Helper to construct and record Canonical Domain Event
@@ -71,6 +87,10 @@ export const recordCanonicalDomainEvent = async ({
       metadata
     });
 
+    // Note: publish the Mongo _id, not the human-readable eventId field —
+    // SearchEngineService.indexTimelineEvent looks the document up by _id.
+    publishEvent("TimelineEventCreated", { tenantId, eventId: timelineEvent._id.toString() });
+
     return timelineEvent;
   } catch (err) {
     console.error("recordCanonicalDomainEvent Error:", err);
@@ -86,6 +106,7 @@ export const GetTravelPlanTimeline = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const tenantId = req.auth?.tenantId;
+    const userId = req.auth?.userId || req.auth?.id;
     const permissions = req.auth?.permissions || [];
     const { travelPlanId } = req.params;
 
@@ -142,6 +163,19 @@ export const GetTravelPlanTimeline = async (req, res) => {
       ];
     }
 
+    // "Private" is the one visibility level with an unambiguous
+    // access-control meaning (the other four — Internal/Operations/
+    // Management/Customer Visible — read as categorization tags, not a
+    // documented access matrix, so they aren't enforced here). Was
+    // previously not enforced at all: any user with travel.read could see
+    // every entry, including ones explicitly marked Private.
+    if (!permissions.includes("admin")) {
+      filter.$and = [
+        ...(filter.$and || []),
+        { $or: [{ visibility: { $ne: "Private" } }, { "actor.userId": userId }] }
+      ];
+    }
+
     const totalItems = await TravelTimelineModel.countDocuments(filter);
     const totalPages = Math.ceil(totalItems / pageSize) || 1;
 
@@ -186,9 +220,34 @@ export const CreateTravelNote = async (req, res) => {
       return sendError(res, 400, "title and content are required.", requestId);
     }
 
+    // Validation Rule: "Visibility Valid" — was previously unchecked,
+    // relying only on Mongoose's own enum validation (a raw ValidationError
+    // caught by the generic catch and turned into an opaque 500).
+    if (!notesTimelineConfig.visibilityOptions.includes(visibility)) {
+      return sendError(res, 400, `Invalid visibility '${visibility}'. Must be one of: ${notesTimelineConfig.visibilityOptions.join(", ")}.`, requestId);
+    }
+
     const travelPlan = await TravelPlanModel.findOne({ _id: travelPlanId, tenantId });
     if (!travelPlan) {
       return sendError(res, 404, "Travel plan not found.", requestId);
+    }
+
+    // Validation Rule: "Mentioned Users Exist" — was previously not
+    // validated at all; mentions were stored as raw, unverified strings.
+    // Resolved against EmployeeProfileModel (mentions are internal staff
+    // pings, matching the "Notify Mentioned Users" workflow step below),
+    // same catalog used for Booking's "Consultant Exists"/Travel Plan's
+    // "Coordinator Exists" checks earlier this session.
+    if (Array.isArray(mentions) && mentions.length > 0) {
+      const mentionedStaff = await EmployeeProfileModel.find({
+        tenantId, status: { $ne: "archived" },
+        $or: [{ _id: { $in: mentions } }, { identityId: { $in: mentions } }]
+      }).select("_id identityId").lean();
+      const resolvedIds = new Set(mentionedStaff.flatMap((e) => [e._id.toString(), e.identityId].filter(Boolean)));
+      const missing = mentions.filter((m) => !resolvedIds.has(m.toString()));
+      if (missing.length > 0) {
+        return sendError(res, 422, `Mentioned user(s) do not exist: ${missing.join(", ")}.`, requestId);
+      }
     }
 
     const noteId = `NTE-${uuidv4().substring(0, 8)}`;
@@ -228,6 +287,15 @@ export const CreateTravelNote = async (req, res) => {
         mentionedUserIds: mentions,
         authorName: userName,
         tenantId
+      });
+      // Business Workflow: "Notify Mentioned Users."
+      publishEvent("NotificationRequested", {
+        tenantId,
+        event: "UsersMentioned",
+        recipientIds: mentions,
+        travelPlanId,
+        noteId,
+        authorName: userName
       });
     }
 
@@ -279,12 +347,27 @@ export const UpdateTravelNote = async (req, res) => {
       return sendError(res, 404, "Note not found.", requestId);
     }
 
-    // Author or Manager check
-    if (note.authorId !== userId && req.auth?.role !== "Manager" && req.auth?.role !== "Administrator") {
+    if (!isAuthorOrManager(note, userId, permissions)) {
       return sendError(res, 403, "Only the author or an authorized manager can edit this note.", requestId);
     }
 
     const { title, content, visibility, mentions } = req.body;
+
+    if (visibility !== undefined && !notesTimelineConfig.visibilityOptions.includes(visibility)) {
+      return sendError(res, 400, `Invalid visibility '${visibility}'. Must be one of: ${notesTimelineConfig.visibilityOptions.join(", ")}.`, requestId);
+    }
+
+    if (Array.isArray(mentions) && mentions.length > 0) {
+      const mentionedStaff = await EmployeeProfileModel.find({
+        tenantId, status: { $ne: "archived" },
+        $or: [{ _id: { $in: mentions } }, { identityId: { $in: mentions } }]
+      }).select("_id identityId").lean();
+      const resolvedIds = new Set(mentionedStaff.flatMap((e) => [e._id.toString(), e.identityId].filter(Boolean)));
+      const missing = mentions.filter((m) => !resolvedIds.has(m.toString()));
+      if (missing.length > 0) {
+        return sendError(res, 422, `Mentioned user(s) do not exist: ${missing.join(", ")}.`, requestId);
+      }
+    }
 
     // Record edit history
     note.editHistory.push({
@@ -364,6 +447,16 @@ export const DeleteTravelNote = async (req, res) => {
       return sendError(res, 404, "Note not found.", requestId);
     }
 
+    // PATCH's doc section explicitly restricts edits to "author or
+    // authorized manager"; DELETE's own section doesn't repeat the phrase,
+    // but leaving delete completely unrestricted — any user with
+    // travel.write could delete anyone else's note — would be a glaring,
+    // almost certainly unintended inconsistency with PATCH's own rule for
+    // the identical resource. Applied the same restriction here.
+    if (!isAuthorOrManager(note, userId, permissions)) {
+      return sendError(res, 403, "Only the author or an authorized manager can delete this note.", requestId);
+    }
+
     note.isSoftDeleted = true;
     await note.save();
 
@@ -411,9 +504,10 @@ export const AddTimelineAttachment = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const tenantId = req.auth?.tenantId;
+    const userId = req.auth?.userId || req.auth?.id || "system";
     const permissions = req.auth?.permissions || [];
     const { timelineEventId } = req.params;
-    const { name, url, mimeType = "application/pdf", size = 0 } = req.body;
+    const { name, url, storageKey, mimeType = "application/pdf", size = 0, fileBuffer, fileBase64 } = req.body;
 
     if (!tenantId) {
       return sendError(res, 403, "Tenant context is required.", requestId);
@@ -423,8 +517,40 @@ export const AddTimelineAttachment = async (req, res) => {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
-    if (!name || !url) {
-      return sendError(res, 400, "name and url are required.", requestId);
+    if (!name) {
+      return sendError(res, 400, "name is required.", requestId);
+    }
+    if (!url && !storageKey && !fileBuffer && !fileBase64) {
+      return sendError(res, 400, "Provide fileBuffer/fileBase64 to upload, or an existing url/storageKey.", requestId);
+    }
+
+    // AI Coding Rule "Object Storage" — was previously a fake pass-through
+    // trusting any client-supplied url, no upload handling, no MIME-type
+    // allowlist. Reuses the same real, already-proven multi-provider
+    // (Cloudinary/S3/local) storage abstraction used for Booking Documents
+    // and (this Part) Incident attachments.
+    if (mimeType && !notesTimelineConfig.attachmentAllowedMimeTypes.includes(mimeType)) {
+      return sendError(res, 400, `Unsupported file type '${mimeType}'. Allowed: ${notesTimelineConfig.attachmentAllowedMimeTypes.join(", ")}.`, requestId);
+    }
+
+    let resolvedStorageKey = storageKey || null;
+    let resolvedUrl = url ? resolveBookingDocumentUrl(url) : null;
+    let resolvedSize = Number(size) || 0;
+
+    if (!resolvedUrl && !resolvedStorageKey && (fileBuffer || fileBase64)) {
+      const buffer = fileBuffer ? Buffer.from(fileBuffer) : Buffer.from(fileBase64, "base64");
+      if (buffer.length > notesTimelineConfig.attachmentMaxSizeBytes) {
+        return sendError(res, 400, `File exceeds the maximum allowed size of ${notesTimelineConfig.attachmentMaxSizeBytes} bytes.`, requestId);
+      }
+      const storageResult = await saveBookingDocumentFile({
+        fileName: name,
+        mimeType,
+        buffer,
+        extension: mimeType.includes("pdf") ? ".pdf" : mimeType.includes("image") ? ".png" : mimeType.includes("video") ? ".mp4" : mimeType.includes("audio") ? ".mp3" : ".bin"
+      });
+      resolvedUrl = storageResult.publicUrl;
+      resolvedStorageKey = storageResult.storedFileName;
+      resolvedSize = buffer.length;
     }
 
     const timelineEvent = await TravelTimelineModel.findOne({
@@ -436,9 +562,29 @@ export const AddTimelineAttachment = async (req, res) => {
       return sendError(res, 404, "Timeline event not found.", requestId);
     }
 
-    const attachment = { name, url, mimeType, size, uploadedAt: new Date() };
+    const attachment = {
+      name,
+      url: resolvedUrl || url,
+      storageKey: resolvedStorageKey,
+      mimeType,
+      size: resolvedSize,
+      uploadedAt: new Date()
+    };
     timelineEvent.attachments.push(attachment);
     await timelineEvent.save();
+
+    try {
+      await AuditLogModel.create({
+        tenantId,
+        userId,
+        action: "ADD_TIMELINE_ATTACHMENT",
+        module: "NotesManagement",
+        targetId: timelineEvent._id.toString(),
+        details: { name, mimeType, size: resolvedSize }
+      });
+    } catch (auditErr) {
+      console.error("Audit log error:", auditErr);
+    }
 
     return sendSuccess(res, 201, "Attachment added to timeline event successfully.", attachment, requestId);
   } catch (err) {

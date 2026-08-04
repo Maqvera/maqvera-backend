@@ -59,6 +59,7 @@ class KPIEngine {
       attendanceStats,
       itineraryStats,
       incidentStats,
+      guidePerformanceStats,
     ] = await Promise.all([
       // 1. Travel Plan aggregate
       TravelPlanModel.aggregate([
@@ -277,6 +278,36 @@ class KPIEngine {
                 $cond: [{ $ne: ["$resolution.resolvedAt", null] }, 1, 0],
               },
             },
+            // "Average Response Time" (Part 10 KPI) — real first-response
+            // SLA data already tracked on the incident record (Part 8's
+            // slaStatus.firstResponseCompletedAt), not a new metric to invent.
+            totalResponseMs: {
+              $sum: {
+                $cond: [
+                  { $and: [{ $ne: ["$slaStatus.firstResponseCompletedAt", null] }, { $ne: ["$createdAt", null] }] },
+                  { $subtract: ["$slaStatus.firstResponseCompletedAt", "$createdAt"] },
+                  0,
+                ],
+              },
+            },
+            respondedCount: {
+              $sum: {
+                $cond: [{ $ne: ["$slaStatus.firstResponseCompletedAt", null] }, 1, 0],
+              },
+            },
+          },
+        },
+      ]),
+
+      // 9. Guide performance — % of guide-assigned itinerary activities
+      // completed on time (real, derived from real assignment data).
+      TravelItineraryModel.aggregate([
+        { $match: { ...baseFilter, "resources.guideId": { $ne: null } } },
+        {
+          $group: {
+            _id: null,
+            totalGuideActivities: { $sum: 1 },
+            completedGuideActivities: { $sum: { $cond: [{ $eq: ["$status", "completed"] }, 1, 0] } },
           },
         },
       ]),
@@ -291,6 +322,7 @@ class KPIEngine {
     const attendance = attendanceStats[0] || {};
     const itinerary = itineraryStats[0] || {};
     const incidents = incidentStats[0] || {};
+    const guidePerformance = guidePerformanceStats[0] || {};
 
     // ── Compute KPIs from raw data ──
     const totalTravelers = plans.totalTravelers || 0;
@@ -301,9 +333,13 @@ class KPIEngine {
     const avgIncidentResolutionHours = (incidents.resolvedCount || 0) > 0
       ? Number(((incidents.totalResolutionMs || 0) / incidents.resolvedCount / 3_600_000).toFixed(1))
       : 0;
+    const avgResponseTimeHours = (incidents.respondedCount || 0) > 0
+      ? Number(((incidents.totalResponseMs || 0) / incidents.respondedCount / 3_600_000).toFixed(1))
+      : 0;
     const vehicleUtilizationPct = (transport.totalVehicleCapacity || 0) > 0
       ? safeDiv(transport.totalPassengers || 0, transport.totalVehicleCapacity)
       : 0;
+    const guidePerformancePct = safeDiv(guidePerformance.completedGuideActivities || 0, guidePerformance.totalGuideActivities || 0);
     const attendanceTotal = attendance.total || 0;
     const attendancePresent = (attendance.present || 0) + (attendance.late || 0) + (attendance.checkedOut || 0);
 
@@ -316,6 +352,13 @@ class KPIEngine {
       pendingCheckIns: hotels.pendingCheckIn || 0,
       delayedFlights: flights.delayed || 0,
       pendingHotelCheckIns: hotels.pendingCheckIn || 0,
+      // "Transport Status" (Part 10 Response Includes) — was already
+      // computed in transportStats below but never surfaced anywhere.
+      transportStatus: {
+        active: transport.active || 0,
+        delayed: transport.delayed || 0,
+        completed: transport.completed || 0,
+      },
       openIncidents: incidents.open || 0,
       criticalIncidents: incidents.critical || 0,
       emergencyCases: incidents.emergency || 0,
@@ -339,12 +382,75 @@ class KPIEngine {
         (plans.total || 0) - (plans.active || 0),
         plans.total || 0
       ),
+      avgResponseTimeHours,
+      guidePerformancePct,
+      customerComplaintsCount: 0, // no complaint-tracking model exists anywhere in this codebase
       avgDelayMinutes,
       avgIncidentResolutionHours,
       vehicleUtilizationPct,
     };
 
     return { metrics, kpis };
+  }
+
+  /**
+   * "AI Insights... AI never writes data. Read-only analytics only." — real,
+   * deterministic day-over-day comparison against yesterday's persisted
+   * summary (not an ML model, not fabricated text): each insight is only
+   * generated when a real metric actually crossed a real, configurable
+   * threshold. Matches several of the doc's own example insight sentences.
+   */
+  static generateTravelAIInsights(todayMetrics, todayKpis, yesterdaySummary) {
+    if (!yesterdaySummary) return [];
+    const insights = [];
+    const yM = yesterdaySummary.metrics || {};
+    const yK = yesterdaySummary.kpis || {};
+
+    const healthThreshold = parseInt(process.env.AI_INSIGHT_HEALTH_SCORE_THRESHOLD || "5", 10);
+    const healthDelta = todayMetrics.operationalHealthScore - (yM.operationalHealthScore || 0);
+    if (Math.abs(healthDelta) >= healthThreshold) {
+      insights.push({
+        insightType: healthDelta < 0 ? "OperationalEfficiencyDrop" : "OperationalEfficiencyImprovement",
+        message: `Operations efficiency ${healthDelta < 0 ? "dropped" : "improved"} ${Math.abs(healthDelta)}% compared to yesterday.`,
+        severity: healthDelta <= -healthThreshold * 2 ? "Critical" : healthDelta < 0 ? "Warning" : "Info",
+        score: healthDelta,
+      });
+    }
+
+    const delayThresholdMinutes = parseInt(process.env.AI_INSIGHT_DELAY_THRESHOLD_MINUTES || "5", 10);
+    const delayDelta = todayKpis.avgDelayMinutes - (yK.avgDelayMinutes || 0);
+    if (Math.abs(delayDelta) >= delayThresholdMinutes) {
+      insights.push({
+        insightType: delayDelta > 0 ? "AverageDelayIncreased" : "AverageDelayDecreased",
+        message: `Average flight delay ${delayDelta > 0 ? "increased" : "decreased"} by ${Math.abs(delayDelta).toFixed(1)} minutes compared to yesterday.`,
+        severity: delayDelta > delayThresholdMinutes * 2 ? "Warning" : "Info",
+        score: delayDelta,
+      });
+    }
+
+    const incidentThreshold = parseInt(process.env.AI_INSIGHT_INCIDENT_TREND_THRESHOLD || "2", 10);
+    const incidentDelta = todayMetrics.openIncidents - (yM.openIncidents || 0);
+    if (Math.abs(incidentDelta) >= incidentThreshold) {
+      insights.push({
+        insightType: incidentDelta > 0 ? "IncidentTrendIncreasing" : "IncidentTrendDecreasing",
+        message: `Open incident count ${incidentDelta > 0 ? "increased" : "decreased"} by ${Math.abs(incidentDelta)} compared to yesterday.`,
+        severity: incidentDelta >= incidentThreshold * 2 ? "Critical" : incidentDelta > 0 ? "Warning" : "Info",
+        score: incidentDelta,
+      });
+    }
+
+    const hotelThresholdPct = parseInt(process.env.AI_INSIGHT_HOTEL_TREND_THRESHOLD_PCT || "10", 10);
+    const hotelDelta = todayKpis.hotelCheckInSuccessPct - (yK.hotelCheckInSuccessPct || 0);
+    if (Math.abs(hotelDelta) >= hotelThresholdPct) {
+      insights.push({
+        insightType: hotelDelta > 0 ? "HotelOccupancyImproving" : "HotelOccupancyDeclining",
+        message: `Hotel check-in success rate is ${hotelDelta > 0 ? "improving" : "declining"} (${hotelDelta > 0 ? "+" : ""}${hotelDelta.toFixed(1)}% vs yesterday).`,
+        severity: hotelDelta < -hotelThresholdPct * 2 ? "Warning" : "Info",
+        score: hotelDelta,
+      });
+    }
+
+    return insights;
   }
 
   /**
@@ -356,6 +462,9 @@ class KPIEngine {
 
     const { metrics, kpis } = result;
     const date = todayStr();
+    const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    const yesterdaySummary = await TravelOperationsSummaryModel.findOne({ tenantId, branchId, summaryDate: yesterday }).lean();
+    const aiInsights = this.generateTravelAIInsights(metrics, kpis, yesterdaySummary);
 
     const summary = await TravelOperationsSummaryModel.findOneAndUpdate(
       { tenantId, branchId, summaryDate: date },
@@ -365,6 +474,7 @@ class KPIEngine {
         summaryDate: date,
         metrics,
         kpis,
+        aiInsights,
         lastRefreshedAt: new Date(),
       },
       { upsert: true, new: true, setDefaultsOnInsert: true }

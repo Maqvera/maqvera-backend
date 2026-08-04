@@ -1,5 +1,6 @@
 import express from "express";
 import authenticateAccessToken from "../middleware/authenticateAccessToken.js";
+import idempotency from "../middleware/idempotency.js";
 import rateLimit from "express-rate-limit";
 import {
   ListTravelPlans,
@@ -78,7 +79,7 @@ router.get("/search", limiter, SearchTravelPlans);
 
 // Travel Plan CRUD Routes (Part 2)
 router.get("/", limiter, ListTravelPlans);
-router.post("/", limiter, CreateTravelPlan);
+router.post("/", limiter, idempotency(), CreateTravelPlan);
 router.get("/:travelPlanId", limiter, GetTravelPlan);
 router.patch("/:travelPlanId", limiter, UpdateTravelPlan);
 router.post("/:travelPlanId/archive", limiter, ArchiveTravelPlan);
@@ -121,7 +122,7 @@ router.post("/:travelPlanId/attendance", limiter, CreateAttendanceSession);
 router.patch("/:travelPlanId/attendance/:attendanceId", limiter, RecordTravelerAttendance);
 
 // Incident Management Route under Travel Plan (Part 8)
-router.post("/:travelPlanId/incidents", limiter, CreateIncident);
+router.post("/:travelPlanId/incidents", limiter, idempotency(), CreateIncident);
 
 // Notes & Timeline Management Routes under Travel Plan (Part 9)
 router.get("/:travelPlanId/timeline", limiter, GetTravelPlanTimeline);

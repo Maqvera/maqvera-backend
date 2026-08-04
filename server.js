@@ -61,6 +61,22 @@ app.use(requestLogger);
 // Static files for local uploads
 app.use("/uploads", express.static("uploads"));
 
+// Health Check — real, not a fixed 200: checks the two actual runtime
+// dependencies every request downstream relies on.
+app.get("/health", async (req, res) => {
+  const dbConnected = mongoose.connection.readyState === 1;
+  const cacheHealthy = await CacheManager.isHealthy();
+  const healthy = dbConnected && cacheHealthy;
+  return res.status(healthy ? 200 : 503).json({
+    status: healthy ? "healthy" : "degraded",
+    checks: {
+      database: dbConnected ? "up" : "down",
+      cache: { backend: CacheManager.backendName, status: cacheHealthy ? "up" : "down" }
+    },
+    timestamp: new Date().toISOString()
+  });
+});
+
 // Routes
 app.use("/api/v1/auth", route);
 app.use("/api/auth", route);

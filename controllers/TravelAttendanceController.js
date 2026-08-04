@@ -450,6 +450,22 @@ export const RecordTravelerAttendance = async (req, res) => {
       });
     }
 
+    // Audit Rule: every other write endpoint in this module logs to
+    // AuditLogModel — this one can mark a traveler Missing/Emergency (the
+    // highest-stakes status this endpoint can set) yet had no audit trail.
+    try {
+      await AuditLogModel.create({
+        tenantId,
+        userId,
+        action: "RECORD_TRAVELER_ATTENDANCE",
+        module: "AttendanceManagement",
+        targetId: record._id.toString(),
+        details: { travelPlanId, travelerId: record.travelerId, status: evaluatedStatus, verificationMethod }
+      });
+    } catch (auditErr) {
+      console.error("Audit log error:", auditErr);
+    }
+
     return sendSuccess(res, 200, "Attendance recorded successfully.", record, requestId);
   } catch (err) {
     console.error("RecordTravelerAttendance Error:", err);

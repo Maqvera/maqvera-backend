@@ -2,8 +2,13 @@ import EnterpriseIncidentEngineService from "../services/EnterpriseIncidentEngin
 import TravelIncidentManagementModel from "../models/TravelIncidentManagementModel.js";
 import TravelPlanModel from "../models/TravelPlanModel.js";
 import TravelTimelineModel from "../models/TravelTimelineModel.js";
+import AuditLogModel from "../models/AuditLogmodel.js";
 import { sendError, sendSuccess } from "../utils/apiResponse.js";
 import { createRequestId } from "../utils/authTokens.js";
+import { saveBookingDocumentFile, resolveBookingDocumentUrl } from "../utils/fileStorage.js";
+import { getIncidentConfig } from "../utils/incidentConfig.js";
+
+const incidentConfig = getIncidentConfig();
 
 /**
 / * 1. GET /api/v1/incidents
@@ -13,9 +18,13 @@ export const ListIncidents = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
+    const permissions = req.auth?.permissions || [];
 
     if (!tenantId) {
       return sendError(res, 403, "Tenant context is required.", requestId);
+    }
+    if (!permissions.includes("incidents.read") && !permissions.includes("travel.read") && !permissions.includes("travel_plans.read") && !permissions.includes("visa.read") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
     }
 
     const { items, pagination } = await EnterpriseIncidentEngineService.getIncidents(req.query, tenantId);
@@ -37,6 +46,9 @@ export const ListIncidents = async (req, res) => {
       assignedTeam: inc.assignedTeam,
       reportedBy: inc.reportedBy,
       reportedByName: inc.reportedByName,
+      // Response Includes "Priority" — was accepted as a PATCH field with
+      // no real model field to persist into, and never emitted here.
+      priority: inc.priority || "normal",
       location: inc.location,
       attachmentsCount: inc.attachments ? inc.attachments.length : 0,
       commentsCount: inc.comments ? inc.comments.length : 0,
@@ -45,12 +57,10 @@ export const ListIncidents = async (req, res) => {
       updatedAt: inc.updatedAt
     }));
 
-    return res.status(200).json({
-      success: true,
+    return sendSuccess(res, 200, "Incidents retrieved successfully.", {
       data: formattedData,
-      meta: pagination,
-      requestId
-    });
+      meta: pagination
+    }, requestId);
   } catch (err) {
     console.error("ListIncidents Error:", err);
     return sendError(res, 500, err.message || "Failed to fetch incidents.", requestId);
@@ -97,10 +107,14 @@ export const GetIncidentDetails = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
+    const permissions = req.auth?.permissions || [];
     const { incidentId } = req.params;
 
     if (!tenantId) {
       return sendError(res, 403, "Tenant context is required.", requestId);
+    }
+    if (!permissions.includes("incidents.read") && !permissions.includes("travel.read") && !permissions.includes("travel_plans.read") && !permissions.includes("visa.read") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
     }
 
     const incident = await EnterpriseIncidentEngineService.getIncidentById(incidentId, tenantId);
@@ -115,16 +129,55 @@ export const GetIncidentDetails = async (req, res) => {
       timeline = await TravelTimelineModel.find({ travelPlanId: incident.travelPlanId, tenantId }).sort({ createdAt: -1 }).limit(10);
     }
 
+    // Response Includes "Audit History" — was entirely absent; AuditLogModel
+    // was never queried from this endpoint. Matches both audit-log
+    // conventions already coexisting in this codebase (createIncident logs
+    // via targetId/module; updateIncident/assignIncident/etc. via
+    // resourceId/resource) — matching only one would silently drop the
+    // incident's own creation entry from its history.
+    const auditHistory = await AuditLogModel.find({
+      tenantId,
+      $or: [
+        { resourceId: incident._id.toString(), resource: "Incident" },
+        { targetId: incident._id.toString(), module: "IncidentManagement" }
+      ]
+    })
+      .sort({ createdAt: -1 })
+      .limit(20)
+      .lean()
+      .catch(() => []);
+
+    // Response Includes "Related Incidents" — was entirely absent. Real
+    // query, not fabricated: other open incidents sharing the same travel
+    // plan or category, excluding this one.
+    const relatedFilter = { tenantId, isSoftDeleted: false, _id: { $ne: incident._id } };
+    relatedFilter.$or = [
+      ...(incident.travelPlanId ? [{ travelPlanId: incident.travelPlanId }] : []),
+      ...(incident.visaCaseId ? [{ visaCaseId: incident.visaCaseId }] : []),
+      { category: incident.category }
+    ];
+    const relatedIncidents = relatedFilter.$or.length > 0
+      ? await TravelIncidentManagementModel.find(relatedFilter)
+        .select("incidentNumber title category severity status createdAt")
+        .sort({ createdAt: -1 })
+        .limit(10)
+        .lean()
+      : [];
+
     const fullAggregate = {
       header: incident,
       travelPlanSummary: travelPlan ? { travelPlanNumber: travelPlan.travelPlanNumber, bookingNumber: travelPlan.bookingNumber } : null,
+      reporter: { reportedBy: incident.reportedBy, reportedByName: incident.reportedByName },
+      assignee: { assignedTo: incident.assignedTo, assignedToName: incident.assignedToName, assignedTeam: incident.assignedTeam },
       timeline,
       investigation: incident.investigation,
       caseHistory: incident.comments,
       tasks: incident.tasks,
       attachments: incident.attachments,
       resolution: incident.resolution,
-      slaStatus: incident.slaStatus
+      slaStatus: incident.slaStatus,
+      auditHistory,
+      relatedIncidents
     };
 
     return sendSuccess(res, 200, "Incident details retrieved successfully.", fullAggregate, requestId);
@@ -143,13 +196,17 @@ export const UpdateIncident = async (req, res) => {
   try {
     const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
     const userId = req.auth?.userId || req.auth?.id || "system";
+    const permissions = req.auth?.permissions || [];
     const { incidentId } = req.params;
 
     if (!tenantId) {
       return sendError(res, 403, "Tenant context is required.", requestId);
     }
+    if (!permissions.includes("incidents.write") && !permissions.includes("travel.write") && !permissions.includes("travel_plans.write") && !permissions.includes("visa.write") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
 
-    const updated = await EnterpriseIncidentEngineService.updateIncident(incidentId, req.body, tenantId, userId);
+    const updated = await EnterpriseIncidentEngineService.updateIncident(incidentId, req.body, tenantId, userId, permissions);
     return sendSuccess(res, 200, "Incident updated successfully.", updated, requestId);
   } catch (err) {
     console.error("UpdateIncident Error:", err);
@@ -166,11 +223,15 @@ export const AssignIncident = async (req, res) => {
   try {
     const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
     const userId = req.auth?.userId || req.auth?.id || "system";
+    const permissions = req.auth?.permissions || [];
     const { incidentId } = req.params;
     const { userId: assigneeId, userName: assigneeName, team = "Operations" } = req.body;
 
     if (!tenantId) {
       return sendError(res, 403, "Tenant context is required.", requestId);
+    }
+    if (!permissions.includes("incidents.write") && !permissions.includes("travel.write") && !permissions.includes("travel_plans.write") && !permissions.includes("visa.write") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
     }
 
     const assigned = await EnterpriseIncidentEngineService.assignIncident(
@@ -196,10 +257,14 @@ export const ResolveIncident = async (req, res) => {
   try {
     const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
     const userId = req.auth?.userId || req.auth?.id || "system";
+    const permissions = req.auth?.permissions || [];
     const { incidentId } = req.params;
 
     if (!tenantId) {
       return sendError(res, 403, "Tenant context is required.", requestId);
+    }
+    if (!permissions.includes("incidents.write") && !permissions.includes("travel.write") && !permissions.includes("travel_plans.write") && !permissions.includes("visa.write") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
     }
 
     const resolved = await EnterpriseIncidentEngineService.resolveIncident(incidentId, req.body, tenantId, userId);
@@ -219,10 +284,14 @@ export const AddIncidentEvidence = async (req, res) => {
   try {
     const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
     const userId = req.auth?.userId || req.auth?.id || "system";
+    const permissions = req.auth?.permissions || [];
     const { incidentId } = req.params;
 
     if (!tenantId) {
       return sendError(res, 403, "Tenant context is required.", requestId);
+    }
+    if (!permissions.includes("incidents.write") && !permissions.includes("travel.write") && !permissions.includes("travel_plans.write") && !permissions.includes("visa.write") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
     }
 
     const evidence = await EnterpriseIncidentEngineService.addEvidence(incidentId, req.body, tenantId, userId);
@@ -242,7 +311,15 @@ export const VerifyIncident = async (req, res) => {
   try {
     const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
     const userId = req.auth?.userId || req.auth?.id || "system";
+    const permissions = req.auth?.permissions || [];
     const { incidentId } = req.params;
+
+    if (!tenantId) {
+      return sendError(res, 403, "Tenant context is required.", requestId);
+    }
+    if (!permissions.includes("incidents.write") && !permissions.includes("travel.write") && !permissions.includes("travel_plans.write") && !permissions.includes("visa.write") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
 
     const verified = await EnterpriseIncidentEngineService.verifyIncident(incidentId, tenantId, userId);
     return sendSuccess(res, 200, "Incident resolution verified successfully.", verified, requestId);
@@ -261,7 +338,15 @@ export const CloseIncident = async (req, res) => {
   try {
     const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
     const userId = req.auth?.userId || req.auth?.id || "system";
+    const permissions = req.auth?.permissions || [];
     const { incidentId } = req.params;
+
+    if (!tenantId) {
+      return sendError(res, 403, "Tenant context is required.", requestId);
+    }
+    if (!permissions.includes("incidents.write") && !permissions.includes("travel.write") && !permissions.includes("travel_plans.write") && !permissions.includes("visa.write") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
 
     const closed = await EnterpriseIncidentEngineService.closeIncident(incidentId, tenantId, userId);
     return sendSuccess(res, 200, "Incident closed successfully.", closed, requestId);
@@ -280,8 +365,16 @@ export const ReopenIncident = async (req, res) => {
   try {
     const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
     const userId = req.auth?.userId || req.auth?.id || "system";
+    const permissions = req.auth?.permissions || [];
     const { incidentId } = req.params;
     const { reason } = req.body;
+
+    if (!tenantId) {
+      return sendError(res, 403, "Tenant context is required.", requestId);
+    }
+    if (!permissions.includes("incidents.write") && !permissions.includes("travel.write") && !permissions.includes("travel_plans.write") && !permissions.includes("visa.write") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
 
     const reopened = await EnterpriseIncidentEngineService.reopenIncident(incidentId, reason, tenantId, userId);
     return sendSuccess(res, 200, "Incident reopened successfully.", reopened, requestId);
@@ -298,14 +391,51 @@ export const AddIncidentAttachment = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
+    const userId = req.auth?.userId || req.auth?.id || "system";
+    const permissions = req.auth?.permissions || [];
     const { incidentId } = req.params;
-    const { name, url, mimeType = "application/pdf", size = 0 } = req.body;
+    const { name, url, storageKey, mimeType = "application/pdf", size = 0, fileBuffer, fileBase64 } = req.body;
 
     if (!tenantId) {
       return sendError(res, 403, "Tenant context is required.", requestId);
     }
-    if (!name || !url) {
-      return sendError(res, 400, "name and url are required.", requestId);
+    if (!permissions.includes("incidents.write") && !permissions.includes("travel.write") && !permissions.includes("travel_plans.write") && !permissions.includes("visa.write") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
+    if (!name) {
+      return sendError(res, 400, "name is required.", requestId);
+    }
+    if (!url && !storageKey && !fileBuffer && !fileBase64) {
+      return sendError(res, 400, "Provide fileBuffer/fileBase64 to upload, or an existing url/storageKey.", requestId);
+    }
+
+    // AI Coding Rule "Object Storage" — was previously a fake pass-through:
+    // whatever `url` the client claimed was trusted as-is, with no upload
+    // handling, no MIME-type allowlist, no size limit. Reuses the same
+    // real, already-proven multi-provider (Cloudinary/S3/local) storage
+    // abstraction Booking Documents use, instead of duplicating it.
+    if (mimeType && !incidentConfig.attachmentAllowedMimeTypes.includes(mimeType)) {
+      return sendError(res, 400, `Unsupported file type '${mimeType}'. Allowed: ${incidentConfig.attachmentAllowedMimeTypes.join(", ")}.`, requestId);
+    }
+
+    let resolvedStorageKey = storageKey || null;
+    let resolvedUrl = url ? resolveBookingDocumentUrl(url) : null;
+    let resolvedSize = Number(size) || 0;
+
+    if (!resolvedUrl && !resolvedStorageKey && (fileBuffer || fileBase64)) {
+      const buffer = fileBuffer ? Buffer.from(fileBuffer) : Buffer.from(fileBase64, "base64");
+      if (buffer.length > incidentConfig.attachmentMaxSizeBytes) {
+        return sendError(res, 400, `File exceeds the maximum allowed size of ${incidentConfig.attachmentMaxSizeBytes} bytes.`, requestId);
+      }
+      const storageResult = await saveBookingDocumentFile({
+        fileName: name,
+        mimeType,
+        buffer,
+        extension: mimeType.includes("pdf") ? ".pdf" : mimeType.includes("image") ? ".png" : mimeType.includes("video") ? ".mp4" : ".bin"
+      });
+      resolvedUrl = storageResult.publicUrl;
+      resolvedStorageKey = storageResult.storedFileName;
+      resolvedSize = buffer.length;
     }
 
     const incident = await TravelIncidentManagementModel.findOne({ _id: incidentId, tenantId, isSoftDeleted: false });
@@ -313,9 +443,30 @@ export const AddIncidentAttachment = async (req, res) => {
       return sendError(res, 404, "Incident case not found.", requestId);
     }
 
-    const attachment = { name, url, mimeType, size, uploadedAt: new Date() };
+    const attachment = {
+      name,
+      url: resolvedUrl || url,
+      storageKey: resolvedStorageKey,
+      mimeType,
+      size: resolvedSize,
+      uploadedBy: userId,
+      uploadedAt: new Date()
+    };
     incident.attachments.push(attachment);
     await incident.save();
+
+    try {
+      await AuditLogModel.create({
+        tenantId,
+        userId,
+        action: "ADD_INCIDENT_ATTACHMENT",
+        module: "IncidentManagement",
+        targetId: incident._id.toString(),
+        details: { name, mimeType, size: resolvedSize }
+      });
+    } catch (auditErr) {
+      console.error("Audit log error:", auditErr);
+    }
 
     return sendSuccess(res, 201, "Attachment added successfully.", attachment, requestId);
   } catch (err) {
@@ -332,11 +483,15 @@ export const AddIncidentComment = async (req, res) => {
   try {
     const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
     const userId = req.auth?.userId || req.auth?.id || "system";
+    const permissions = req.auth?.permissions || [];
     const { incidentId } = req.params;
     const { text } = req.body;
 
     if (!tenantId) {
       return sendError(res, 403, "Tenant context is required.", requestId);
+    }
+    if (!permissions.includes("incidents.write") && !permissions.includes("travel.write") && !permissions.includes("travel_plans.write") && !permissions.includes("visa.write") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
     }
     if (!text) {
       return sendError(res, 400, "Comment text is required.", requestId);
@@ -357,6 +512,19 @@ export const AddIncidentComment = async (req, res) => {
     incident.comments.push(comment);
     await incident.save();
 
+    try {
+      await AuditLogModel.create({
+        tenantId,
+        userId,
+        action: "ADD_INCIDENT_COMMENT",
+        module: "IncidentManagement",
+        targetId: incident._id.toString(),
+        details: { text }
+      });
+    } catch (auditErr) {
+      console.error("Audit log error:", auditErr);
+    }
+
     return sendSuccess(res, 201, "Comment added successfully.", comment, requestId);
   } catch (err) {
     console.error("AddIncidentComment Error:", err);
@@ -371,11 +539,15 @@ export const AddIncidentTask = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
+    const permissions = req.auth?.permissions || [];
     const { incidentId } = req.params;
     const { description, assignedTo, dueDate } = req.body;
 
     if (!tenantId) {
       return sendError(res, 403, "Tenant context is required.", requestId);
+    }
+    if (!permissions.includes("incidents.write") && !permissions.includes("travel.write") && !permissions.includes("travel_plans.write") && !permissions.includes("visa.write") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
     }
     if (!description) {
       return sendError(res, 400, "Task description is required.", requestId);
@@ -397,6 +569,19 @@ export const AddIncidentTask = async (req, res) => {
     incident.tasks.push(task);
     await incident.save();
 
+    try {
+      await AuditLogModel.create({
+        tenantId,
+        userId: req.auth?.userId || req.auth?.id || "system",
+        action: "ADD_INCIDENT_TASK",
+        module: "IncidentManagement",
+        targetId: incident._id.toString(),
+        details: { description, assignedTo: assignedTo || null }
+      });
+    } catch (auditErr) {
+      console.error("Audit log error:", auditErr);
+    }
+
     return sendSuccess(res, 201, "Task added successfully.", task, requestId);
   } catch (err) {
     console.error("AddIncidentTask Error:", err);
@@ -412,11 +597,15 @@ export const UpdateIncidentInvestigation = async (req, res) => {
   try {
     const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
     const userId = req.auth?.userId || req.auth?.id || "system";
+    const permissions = req.auth?.permissions || [];
     const { incidentId } = req.params;
     const { evidenceItem, interviewItem, lessonsLearned, rootCauseCategory } = req.body;
 
     if (!tenantId) {
       return sendError(res, 403, "Tenant context is required.", requestId);
+    }
+    if (!permissions.includes("incidents.write") && !permissions.includes("travel.write") && !permissions.includes("travel_plans.write") && !permissions.includes("visa.write") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
     }
 
     const incident = await TravelIncidentManagementModel.findOne({ _id: incidentId, tenantId, isSoftDeleted: false });
@@ -472,9 +661,13 @@ export const GetIncidentAnalytics = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
+    const permissions = req.auth?.permissions || [];
 
     if (!tenantId) {
       return sendError(res, 403, "Tenant context is required.", requestId);
+    }
+    if (!permissions.includes("incidents.read") && !permissions.includes("travel.read") && !permissions.includes("travel_plans.read") && !permissions.includes("visa.read") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
     }
 
     const analytics = await EnterpriseIncidentEngineService.getIncidentAnalytics(tenantId);
