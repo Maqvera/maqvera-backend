@@ -9,6 +9,7 @@ import PassportTrackingEngineService from "../services/PassportTrackingEngineSer
 import { sendSuccess, sendError } from "../utils/apiResponse.js";
 import { createRequestId } from "../utils/authTokens.js";
 import EnterpriseTimelineEngineService from "../services/EnterpriseTimelineEngineService.js";
+import AuditLogModel from "../models/AuditLogmodel.js";
 
 /**
  * GET /api/v1/visa-cases
@@ -59,7 +60,7 @@ export const getVisaCaseById = async (req, res) => {
     const branchId = req.auth?.branchId || req.headers["x-branch-id"] || null;
     const { visaCaseId } = req.params;
 
-    const visaCase = await VisaService.getVisaCaseById(visaCaseId, tenantId, branchId);
+    const visaCase = await VisaService.getVisaCaseAggregate(visaCaseId, tenantId, branchId);
     return sendSuccess(res, 200, "Visa Case details retrieved successfully.", visaCase, requestId);
   } catch (error) {
     console.error("getVisaCaseById error:", error);
@@ -75,7 +76,9 @@ export const getVisaCaseById = async (req, res) => {
 export const getVisaWorkflowDefinition = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    return sendSuccess(res, 200, "Visa workflow definition retrieved successfully.", VisaWorkflowService.getWorkflowDefinition(), requestId);
+    const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
+    const definition = await VisaWorkflowService.getWorkflowDefinition(null, tenantId);
+    return sendSuccess(res, 200, "Visa workflow definition retrieved successfully.", definition, requestId);
   } catch (error) {
     console.error("getVisaWorkflowDefinition error:", error);
     return sendError(res, 500, error.message || "Failed to retrieve visa workflow definition.", requestId);
@@ -91,15 +94,33 @@ export const getVisaCaseWorkflow = async (req, res) => {
   try {
     const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
     const branchId = req.auth?.branchId || req.headers["x-branch-id"] || null;
+    const permissions = req.auth?.permissions || [];
     const { visaCaseId } = req.params;
 
+    if (!permissions.includes("visa.read") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
+
     const visaCase = await VisaService.getVisaCaseById(visaCaseId, tenantId, branchId);
+    const definition = await VisaWorkflowService.getWorkflowDefinition(visaCase.workflow?.version, tenantId);
+    // "Audit Summary" was entirely absent — same aggregate-view gap already
+    // fixed for the Visa Case, Document, and Embassy Submission GETs.
+    const auditSummary = await AuditLogModel.find({
+      tenantId,
+      $or: [
+        { resource: "VisaCase", resourceId: visaCase._id.toString() },
+        { "details.visaCaseId": visaCase._id.toString() }
+      ]
+    }).sort({ createdAt: -1 }).limit(20).lean();
+
     return sendSuccess(res, 200, "Visa workflow details retrieved successfully.", {
       visaCaseId,
       currentState: visaCase.workflow?.currentStep || visaCase.status,
       previousState: visaCase.workflow?.previousStep || null,
       history: Array.isArray(visaCase.timeline) ? visaCase.timeline : [],
-      definition: VisaWorkflowService.getWorkflowDefinition()
+      timeline: Array.isArray(visaCase.timeline) ? visaCase.timeline : [],
+      auditSummary,
+      definition
     }, requestId);
   } catch (error) {
     console.error("getVisaCaseWorkflow error:", error);
@@ -119,8 +140,16 @@ export const transitionVisaCaseWorkflow = async (req, res) => {
     const branchId = req.auth?.branchId || req.headers["x-branch-id"] || null;
     const userId = req.auth?.userId || req.auth?.id || "system";
     const userRoles = Array.isArray(req.auth?.roles) ? req.auth.roles : [];
+    const permissions = req.auth?.permissions || [];
     const { visaCaseId } = req.params;
     const { targetState, remarks } = req.body;
+
+    // Baseline permission gate, on top of (not instead of) the per-transition
+    // role check VisaWorkflowService.hasRequiredRole already performs —
+    // every other Visa write endpoint has one of these; this one didn't.
+    if (!permissions.includes("visa.workflow.write") && !permissions.includes("visa.write") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
 
     if (!targetState) {
       return sendError(res, 400, "targetState is required.", requestId);
@@ -253,9 +282,18 @@ export const getVisaCaseDocuments = async (req, res) => {
   try {
     const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
     const branchId = req.auth?.branchId || req.headers["x-branch-id"] || null;
+    const permissions = req.auth?.permissions || [];
     const { visaCaseId } = req.params;
 
-    const result = await EnterpriseDocumentService.getVisaCaseDocuments(visaCaseId, tenantId, branchId);
+    // Security Rule "Permission Validation" — was entirely absent across
+    // every document endpoint (only tenant presence was checked), so any
+    // authenticated user of any role could read/write any tenant's
+    // documents once Part 2's authentication fix required a valid token.
+    if (!permissions.includes("visa.documents.read") && !permissions.includes("visa.read") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
+
+    const result = await EnterpriseDocumentService.getVisaCaseDocuments(visaCaseId, tenantId, branchId, req.query);
     return sendSuccess(res, 200, "Visa Case documents retrieved successfully.", result, requestId);
   } catch (error) {
     console.error("getVisaCaseDocuments error:", error);
@@ -274,10 +312,22 @@ export const uploadVisaCaseDocument = async (req, res) => {
     const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
     const branchId = req.auth?.branchId || req.headers["x-branch-id"] || "main";
     const userId = req.auth?.userId || req.auth?.id || "system";
+    const permissions = req.auth?.permissions || [];
     const { visaCaseId } = req.params;
 
+    if (!permissions.includes("visa.documents.write") && !permissions.includes("visa.write") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
+
+    // req.file is populated by the upload.single("file") multer middleware
+    // on this route (services/FileUploadService.js — the same configured
+    // Cloudinary/S3/local abstraction the /avatar upload route already
+    // uses). Without it, uploadedFile was always undefined here — every
+    // real document upload call would throw "A file uploaded through the
+    // configured storage provider is required," since a JSON body alone
+    // can never carry multer's processed file object.
     const result = await EnterpriseDocumentService.uploadVisaCaseDocument(
-      { ...req.body, visaCaseId },
+      { ...req.body, visaCaseId, uploadedFile: req.file },
       tenantId,
       branchId,
       userId
@@ -298,9 +348,15 @@ export const getDocumentById = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
+    const branchId = req.auth?.branchId || req.headers["x-branch-id"] || null;
+    const permissions = req.auth?.permissions || [];
     const { documentId } = req.params;
 
-    const result = await EnterpriseDocumentService.getDocumentById(documentId, tenantId);
+    if (!permissions.includes("visa.documents.read") && !permissions.includes("visa.read") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
+
+    const result = await EnterpriseDocumentService.getDocumentById(documentId, tenantId, branchId);
     return sendSuccess(res, 200, "Document metadata retrieved successfully.", result, requestId);
   } catch (error) {
     console.error("getDocumentById error:", error);
@@ -318,7 +374,12 @@ export const updateDocumentMetadata = async (req, res) => {
   try {
     const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
     const userId = req.auth?.userId || req.auth?.id || "system";
+    const permissions = req.auth?.permissions || [];
     const { documentId } = req.params;
+
+    if (!permissions.includes("visa.documents.write") && !permissions.includes("visa.write") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
 
     const result = await EnterpriseDocumentService.updateDocumentMetadata(documentId, req.body, tenantId, userId);
     return sendSuccess(res, 200, "Document metadata updated successfully.", result, requestId);
@@ -338,7 +399,12 @@ export const archiveDocument = async (req, res) => {
   try {
     const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
     const userId = req.auth?.userId || req.auth?.id || "system";
+    const permissions = req.auth?.permissions || [];
     const { documentId } = req.params;
+
+    if (!permissions.includes("visa.documents.write") && !permissions.includes("visa.write") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
 
     const result = await EnterpriseDocumentService.archiveDocument(documentId, tenantId, userId);
     return sendSuccess(res, 200, result.message, result, requestId);
@@ -359,7 +425,12 @@ export const startDocumentVerification = async (req, res) => {
     const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
     const branchId = req.auth?.branchId || req.headers["x-branch-id"] || "main";
     const userId = req.auth?.userId || req.auth?.id || "system";
+    const permissions = req.auth?.permissions || [];
     const { documentId } = req.params;
+
+    if (!permissions.includes("visa.documents.write") && !permissions.includes("visa.write") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
 
     const result = await DocumentVerificationService.startVerification(documentId, tenantId, branchId, userId);
     return sendSuccess(res, 200, "Document verification pipeline started.", result, requestId);
@@ -378,7 +449,12 @@ export const getDocumentVerificationDetails = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
+    const permissions = req.auth?.permissions || [];
     const { documentId } = req.params;
+
+    if (!permissions.includes("visa.documents.read") && !permissions.includes("visa.read") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
 
     const result = await DocumentVerificationService.getVerificationDetails(documentId, tenantId);
     return sendSuccess(res, 200, "Document verification details retrieved.", result, requestId);
@@ -398,7 +474,16 @@ export const submitManualDocumentReview = async (req, res) => {
   try {
     const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
     const userId = req.auth?.userId || req.auth?.id || "system";
+    const permissions = req.auth?.permissions || [];
     const { documentId } = req.params;
+
+    // Business Workflow's own first step, "Validate Permission" — approving
+    // or rejecting a document is a more sensitive action than uploading or
+    // editing one, so this is gated on a dedicated verify permission rather
+    // than reusing the plain documents.write check.
+    if (!permissions.includes("visa.documents.verify") && !permissions.includes("visa.write") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
 
     const result = await DocumentVerificationService.submitManualReview(documentId, req.body, tenantId, userId);
     return sendSuccess(res, 200, "Manual review submitted successfully.", result, requestId);
@@ -418,7 +503,12 @@ export const reverifyDocument = async (req, res) => {
   try {
     const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
     const userId = req.auth?.userId || req.auth?.id || "system";
+    const permissions = req.auth?.permissions || [];
     const { documentId } = req.params;
+
+    if (!permissions.includes("visa.documents.write") && !permissions.includes("visa.write") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
 
     const result = await DocumentVerificationService.reverifyDocument(documentId, tenantId, userId);
     return sendSuccess(res, 200, "Document reverification pipeline started.", result, requestId);
@@ -439,7 +529,12 @@ export const createEmbassySubmission = async (req, res) => {
     const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
     const branchId = req.auth?.branchId || req.headers["x-branch-id"] || "main";
     const userId = req.auth?.userId || req.auth?.id || "system";
+    const permissions = req.auth?.permissions || [];
     const { visaCaseId } = req.params;
+
+    if (!permissions.includes("visa.embassy.write") && !permissions.includes("visa.write") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
 
     const result = await EmbassyProcessingService.createEmbassySubmission(visaCaseId, req.body, tenantId, branchId, userId);
     return sendSuccess(res, 201, "Embassy submission created successfully.", result, requestId);
@@ -458,9 +553,14 @@ export const getEmbassySubmissionById = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
+    const permissions = req.auth?.permissions || [];
     const { submissionId } = req.params;
 
-    const result = await EmbassyProcessingService.getEmbassySubmissionById(submissionId, tenantId);
+    if (!permissions.includes("visa.embassy.read") && !permissions.includes("visa.read") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
+
+    const result = await EmbassyProcessingService.getEmbassySubmissionAggregate(submissionId, tenantId);
     return sendSuccess(res, 200, "Embassy submission details retrieved successfully.", result, requestId);
   } catch (error) {
     console.error("getEmbassySubmissionById error:", error);
@@ -478,7 +578,12 @@ export const updateEmbassySubmission = async (req, res) => {
   try {
     const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
     const userId = req.auth?.userId || req.auth?.id || "system";
+    const permissions = req.auth?.permissions || [];
     const { submissionId } = req.params;
+
+    if (!permissions.includes("visa.embassy.write") && !permissions.includes("visa.write") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
 
     const result = await EmbassyProcessingService.updateEmbassySubmission(submissionId, req.body, tenantId, userId);
     return sendSuccess(res, 200, "Embassy submission updated successfully.", result, requestId);
@@ -498,7 +603,12 @@ export const requestAdditionalDocuments = async (req, res) => {
   try {
     const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
     const userId = req.auth?.userId || req.auth?.id || "system";
+    const permissions = req.auth?.permissions || [];
     const { submissionId } = req.params;
+
+    if (!permissions.includes("visa.embassy.write") && !permissions.includes("visa.write") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
 
     const result = await EmbassyProcessingService.requestAdditionalDocuments(submissionId, req.body, tenantId, userId);
     return sendSuccess(res, 200, "Additional document request registered.", result, requestId);
@@ -518,7 +628,16 @@ export const registerEmbassyDecision = async (req, res) => {
   try {
     const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
     const userId = req.auth?.userId || req.auth?.id || "system";
+    const permissions = req.auth?.permissions || [];
     const { submissionId } = req.params;
+
+    // Registering the final embassy decision (approve/reject) is a more
+    // sensitive action than routine submission updates — gated on a
+    // dedicated permission, matching the same reasoning already applied to
+    // document manual review.
+    if (!permissions.includes("visa.embassy.decide") && !permissions.includes("visa.write") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
 
     const result = await EmbassyProcessingService.registerEmbassyDecision(submissionId, req.body, tenantId, userId);
     return sendSuccess(res, 200, "Embassy decision registered successfully.", result, requestId);
@@ -539,6 +658,11 @@ export const createSubmissionBatch = async (req, res) => {
     const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
     const branchId = req.auth?.branchId || req.headers["x-branch-id"] || "main";
     const userId = req.auth?.userId || req.auth?.id || "system";
+    const permissions = req.auth?.permissions || [];
+
+    if (!permissions.includes("visa.embassy.write") && !permissions.includes("visa.write") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
 
     const result = await EmbassyProcessingService.createSubmissionBatch(req.body, tenantId, branchId, userId);
     return sendSuccess(res, 201, "Embassy submission batch created successfully.", result, requestId);
@@ -558,7 +682,12 @@ export const getVisaCaseAppointments = async (req, res) => {
   try {
     const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
     const branchId = req.auth?.branchId || req.headers["x-branch-id"] || null;
+    const permissions = req.auth?.permissions || [];
     const { visaCaseId } = req.params;
+
+    if (!permissions.includes("visa.appointments.read") && !permissions.includes("visa.read") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
 
     const result = await SchedulingEngineService.getAppointmentsForCase(visaCaseId, req.query, tenantId, branchId);
     return sendSuccess(res, 200, "Appointments retrieved successfully.", result, requestId);
@@ -579,7 +708,12 @@ export const scheduleVisaCaseAppointment = async (req, res) => {
     const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
     const branchId = req.auth?.branchId || req.headers["x-branch-id"] || "main";
     const userId = req.auth?.userId || req.auth?.id || "system";
+    const permissions = req.auth?.permissions || [];
     const { visaCaseId } = req.params;
+
+    if (!permissions.includes("visa.appointments.write") && !permissions.includes("visa.write") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
 
     const result = await SchedulingEngineService.scheduleAppointment(visaCaseId, req.body, tenantId, branchId, userId);
     return sendSuccess(res, 201, "Appointment scheduled successfully.", result, requestId);
@@ -599,7 +733,12 @@ export const updateAppointment = async (req, res) => {
   try {
     const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
     const userId = req.auth?.userId || req.auth?.id || "system";
+    const permissions = req.auth?.permissions || [];
     const { appointmentId } = req.params;
+
+    if (!permissions.includes("visa.appointments.write") && !permissions.includes("visa.write") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
 
     const result = await SchedulingEngineService.updateAppointment(appointmentId, req.body, tenantId, userId);
     return sendSuccess(res, 200, "Appointment updated successfully.", result, requestId);
@@ -619,7 +758,12 @@ export const recordAppointmentAttendance = async (req, res) => {
   try {
     const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
     const userId = req.auth?.userId || req.auth?.id || "system";
+    const permissions = req.auth?.permissions || [];
     const { appointmentId } = req.params;
+
+    if (!permissions.includes("visa.appointments.write") && !permissions.includes("visa.write") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
 
     const result = await SchedulingEngineService.recordAttendance(appointmentId, req.body, tenantId, userId);
     return sendSuccess(res, 200, "Attendance recorded successfully.", result, requestId);
@@ -639,7 +783,12 @@ export const recordAppointmentResult = async (req, res) => {
   try {
     const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
     const userId = req.auth?.userId || req.auth?.id || "system";
+    const permissions = req.auth?.permissions || [];
     const { appointmentId } = req.params;
+
+    if (!permissions.includes("visa.appointments.write") && !permissions.includes("visa.write") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
 
     const result = await SchedulingEngineService.recordAppointmentResult(appointmentId, req.body, tenantId, userId);
     return sendSuccess(res, 200, "Appointment outcome result recorded.", result, requestId);
@@ -658,9 +807,15 @@ export const getVisaCasePassport = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
+    const branchId = req.auth?.branchId || req.headers["x-branch-id"] || null;
+    const permissions = req.auth?.permissions || [];
     const { visaCaseId } = req.params;
 
-    const passport = await PassportTrackingEngineService.getPassportByVisaCaseId(visaCaseId, tenantId);
+    if (!permissions.includes("visa.passports.read") && !permissions.includes("visa.read") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
+
+    const passport = await PassportTrackingEngineService.getPassportByVisaCaseId(visaCaseId, tenantId, branchId);
     return sendSuccess(res, 200, "Passport tracking record retrieved successfully.", passport, requestId);
   } catch (error) {
     console.error("getVisaCasePassport error:", error);
@@ -679,7 +834,12 @@ export const receiveVisaCasePassport = async (req, res) => {
     const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
     const branchId = req.auth?.branchId || req.headers["x-branch-id"] || "main";
     const userId = req.auth?.userId || req.auth?.id || "system";
+    const permissions = req.auth?.permissions || [];
     const { visaCaseId } = req.params;
+
+    if (!permissions.includes("visa.passports.write") && !permissions.includes("visa.write") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
 
     const passport = await PassportTrackingEngineService.receivePassport(
       { visaCaseId, ...req.body },
@@ -704,7 +864,12 @@ export const transferPassportCustody = async (req, res) => {
   try {
     const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
     const userId = req.auth?.userId || req.auth?.id || "system";
+    const permissions = req.auth?.permissions || [];
     const { passportId } = req.params;
+
+    if (!permissions.includes("visa.passports.write") && !permissions.includes("visa.write") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
 
     const passport = await PassportTrackingEngineService.transferCustody(
       { passportId, ...req.body },
@@ -728,7 +893,12 @@ export const dispatchPassportToEmbassy = async (req, res) => {
   try {
     const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
     const userId = req.auth?.userId || req.auth?.id || "system";
+    const permissions = req.auth?.permissions || [];
     const { passportId } = req.params;
+
+    if (!permissions.includes("visa.passports.write") && !permissions.includes("visa.write") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
 
     const passport = await PassportTrackingEngineService.dispatchToEmbassy(
       { passportId, ...req.body },
@@ -752,12 +922,19 @@ export const receivePassportFromEmbassy = async (req, res) => {
   try {
     const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
     const userId = req.auth?.userId || req.auth?.id || "system";
+    const userRoles = req.auth?.roles || [];
+    const permissions = req.auth?.permissions || [];
     const { passportId } = req.params;
+
+    if (!permissions.includes("visa.passports.write") && !permissions.includes("visa.write") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
 
     const passport = await PassportTrackingEngineService.receiveFromEmbassy(
       { passportId, ...req.body },
       tenantId,
-      userId
+      userId,
+      userRoles
     );
     return sendSuccess(res, 200, "Passport return from embassy registered.", passport, requestId);
   } catch (error) {
@@ -776,7 +953,12 @@ export const collectPassport = async (req, res) => {
   try {
     const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
     const userId = req.auth?.userId || req.auth?.id || "system";
+    const permissions = req.auth?.permissions || [];
     const { passportId } = req.params;
+
+    if (!permissions.includes("visa.passports.write") && !permissions.includes("visa.write") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
 
     const passport = await PassportTrackingEngineService.collectPassport(
       { passportId, ...req.body },
@@ -792,6 +974,38 @@ export const collectPassport = async (req, res) => {
 };
 
 /**
+ * POST /api/v1/passports/:passportId/report-lost
+ * Lost Passport Procedure: reports a passport lost or damaged, opens a
+ * Critical incident, and auto-locks the Visa Case pending investigation.
+ */
+export const reportPassportLostOrDamaged = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
+    const branchId = req.auth?.branchId || req.headers["x-branch-id"] || "main";
+    const userId = req.auth?.userId || req.auth?.id || "system";
+    const permissions = req.auth?.permissions || [];
+    const { passportId } = req.params;
+
+    if (!permissions.includes("visa.passports.write") && !permissions.includes("visa.write") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
+
+    const passport = await PassportTrackingEngineService.reportLostOrDamagedPassport(
+      { passportId, ...req.body },
+      tenantId,
+      branchId,
+      userId
+    );
+    return sendSuccess(res, 200, "Passport reported and incident created successfully.", passport, requestId);
+  } catch (error) {
+    console.error("reportPassportLostOrDamaged error:", error);
+    const statusCode = error.message?.includes("not found") ? 404 : 400;
+    return sendError(res, statusCode, error.message || "Failed to report lost or damaged passport.", requestId);
+  }
+};
+
+/**
  * GET /api/v1/visa-cases/:visaCaseId/incidents
  * Returns incidents reported for a Visa Case.
  */
@@ -800,10 +1014,15 @@ export const getVisaCaseIncidents = async (req, res) => {
   try {
     const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
     const branchId = req.auth?.branchId || req.headers["x-branch-id"] || null;
+    const permissions = req.auth?.permissions || [];
     const { visaCaseId } = req.params;
 
-    const incidents = await VisaService.getVisaCaseIncidents(visaCaseId, tenantId, branchId);
-    return sendSuccess(res, 200, "Visa Case incidents retrieved successfully.", incidents, requestId);
+    if (!permissions.includes("visa.incidents.read") && !permissions.includes("visa.read") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
+
+    const { items, pagination } = await VisaService.getVisaCaseIncidents(visaCaseId, req.query, tenantId, branchId);
+    return sendSuccess(res, 200, "Visa Case incidents retrieved successfully.", { data: items, meta: pagination }, requestId);
   } catch (error) {
     console.error("getVisaCaseIncidents error:", error);
     const statusCode = error.message?.includes("not found") ? 404 : 500;
@@ -821,7 +1040,12 @@ export const reportVisaCaseIncident = async (req, res) => {
     const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
     const branchId = req.auth?.branchId || req.headers["x-branch-id"] || "main";
     const userId = req.auth?.userId || req.auth?.id || "system";
+    const permissions = req.auth?.permissions || [];
     const { visaCaseId } = req.params;
+
+    if (!permissions.includes("visa.incidents.write") && !permissions.includes("visa.write") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
 
     const incident = await VisaService.addVisaCaseIncident(visaCaseId, req.body, tenantId, branchId, userId);
     return sendSuccess(res, 201, "Incident reported successfully.", incident, requestId);
@@ -840,10 +1064,19 @@ export const getVisaCaseTimeline = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
-    const branchId = req.auth?.branchId || req.headers["x-branch-id"] || null;
+    const branchId = req.auth?.branchId || req.headers["x-branch-id"] || "main";
+    const userId = req.auth?.userId || req.auth?.id || null;
+    const permissions = req.auth?.permissions || [];
     const { visaCaseId } = req.params;
 
-    const timelineData = await VisaService.getVisaCaseTimeline(visaCaseId, req.query, tenantId, branchId);
+    if (!permissions.includes("visa.timeline.read") && !permissions.includes("visa.read") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
+
+    const timelineData = await VisaService.getVisaCaseTimeline(visaCaseId, req.query, tenantId, branchId, {
+      userId,
+      isAdmin: permissions.includes("admin")
+    });
     return res.status(200).json({
       success: true,
       data: timelineData.items || timelineData,
@@ -867,13 +1100,20 @@ export const addVisaCaseNote = async (req, res) => {
     const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
     const branchId = req.auth?.branchId || req.headers["x-branch-id"] || "main";
     const userId = req.auth?.userId || req.auth?.id || "system";
+    const userName = req.auth?.name || "Staff";
+    const userRole = req.auth?.roles?.[0] || req.auth?.role || "Staff";
+    const permissions = req.auth?.permissions || [];
     const { visaCaseId } = req.params;
+
+    if (!permissions.includes("visa.notes.write") && !permissions.includes("visa.write") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
 
     const note = await VisaService.addVisaCaseNote(visaCaseId, req.body, tenantId, branchId, userId, {
       requestId,
       ipAddress: req.ip,
       device: req.get("user-agent") || null
-    });
+    }, userName, userRole);
     return sendSuccess(res, 201, "Manual note created successfully.", note, requestId);
   } catch (error) {
     console.error("addVisaCaseNote error:", error);
@@ -890,8 +1130,13 @@ export const getVisaCaseAIContext = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
-    const branchId = req.auth?.branchId || req.headers["x-branch-id"] || null;
+    const branchId = req.auth?.branchId || req.headers["x-branch-id"] || "main";
+    const permissions = req.auth?.permissions || [];
     const { visaCaseId } = req.params;
+
+    if (!permissions.includes("visa.timeline.read") && !permissions.includes("visa.read") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
 
     const aiContext = await VisaService.getVisaCaseAIContext(visaCaseId, tenantId, branchId);
     return sendSuccess(res, 200, "AI context generated successfully.", aiContext, requestId);
@@ -907,7 +1152,13 @@ export const getTimelineEventById = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
-    const event = await EnterpriseTimelineEngineService.getEventById(req.params.eventId, tenantId);
+    const permissions = req.auth?.permissions || [];
+
+    if (!permissions.includes("visa.timeline.read") && !permissions.includes("visa.read") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
+
+    const event = await EnterpriseTimelineEngineService.getEventDetail(req.params.eventId, tenantId);
     return sendSuccess(res, 200, "Timeline event retrieved successfully.", event, requestId);
   } catch (error) {
     return sendError(res, error.message?.includes("not found") ? 404 : 500, error.message || "Failed to retrieve timeline event.", requestId);

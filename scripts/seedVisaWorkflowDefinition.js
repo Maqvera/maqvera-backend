@@ -9,7 +9,7 @@ if (!tenantId) throw new Error("SEED_TENANT_ID is required to seed a Visa workfl
 
 if (!process.env.URI) throw new Error("URI is required to seed a Visa workflow.");
 await mongoose.connect(process.env.URI);
-const definition = VisaWorkflowService.getWorkflowDefinition(1);
+const definition = VisaWorkflowService.getDefaultWorkflowDefinition(1);
 await WorkflowDefinitionModel.findOneAndUpdate(
   { tenantId, entityType: "Visa", version: 1 },
   {

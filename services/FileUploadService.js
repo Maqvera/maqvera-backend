@@ -3,7 +3,7 @@ import path from "path";
 import fs from "fs";
 import { v4 as uuidv4 } from "uuid";
 import dotenv from "dotenv";
-import { getStorageConfig } from "../utils/storageConfig.js";
+import { getStorageConfig, getAllowedDocumentMimeTypes } from "../utils/storageConfig.js";
 import logger from "../utils/logger.js";
 dotenv.config();
 
@@ -11,15 +11,11 @@ const storageConfig = getStorageConfig();
 const storageBackend = storageConfig.backend;
 const localUploadDir = storageConfig.localUploadDir;
 
-const ALLOWED_MIME_TYPES = [
-  "application/pdf",
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-  "image/heic",
-  "image/tiff",
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-];
+// Was a separately hardcoded literal, independent of (and previously
+// slightly re-typed from) EnterpriseDocumentService's own copy — a single
+// mismatch between the two would let multer accept a file the document
+// service then rejects, or vice versa. Both now read the same env-driven list.
+const ALLOWED_MIME_TYPES = getAllowedDocumentMimeTypes();
 
 const MAX_FILE_SIZE = storageConfig.maxFileSizeBytes;
 

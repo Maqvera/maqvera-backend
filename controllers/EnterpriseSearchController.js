@@ -145,3 +145,30 @@ export const DeleteSavedSearch = async (req, res) => {
     return sendSuccess(res, 200, "Saved search deleted successfully.", null, requestId);
   } catch (err) { return sendError(res, 500, err.message || "Failed to delete saved search.", requestId); }
 };
+
+/**
+ * 6. POST /api/v1/search/rebuild
+ * Full asynchronous reindex for a tenant. Admin-gated — this is an
+ * operational/maintenance capability ("Background Workers" / domain event
+ * "SearchRebuilt"), not a regular user-facing search endpoint.
+ */
+export const RebuildSearchIndex = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const tenantId = req.auth?.tenantId;
+    const permissions = req.auth?.permissions || [];
+
+    if (!tenantId) {
+      return sendError(res, 403, "Tenant context is required.", requestId);
+    }
+    if (!permissions.includes("search.rebuild") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
+
+    const result = await SearchEngineService.rebuildIndexForTenant({ tenantId, branchId: req.body?.branchId || req.query.branchId || null });
+    return sendSuccess(res, 200, "Search index rebuild completed.", result, requestId);
+  } catch (err) {
+    console.error("RebuildSearchIndex Error:", err);
+    return sendError(res, 500, err.message || "Failed to rebuild search index.", requestId);
+  }
+};

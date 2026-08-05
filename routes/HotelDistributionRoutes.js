@@ -1,4 +1,6 @@
 import express from "express";
+import rateLimit from "express-rate-limit";
+import authenticateAccessToken from "../middleware/authenticateAccessToken.js";
 import {
   SearchHotels,
   GetHotelSearchById,
@@ -13,6 +15,18 @@ import {
 } from "../controllers/HotelDistributionController.js";
 
 const router = express.Router();
+
+const limiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  limit: 100,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: "Too many requests from this IP, please try again after 10 minutes."
+});
+
+// Same class of bug already fixed for Flight Search/Booking/Ticketing —
+// every route here was previously completely public.
+router.use(authenticateAccessToken, limiter);
 
 // Live Hotel Search across Providers
 router.post("/hotel-search", SearchHotels);

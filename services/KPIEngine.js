@@ -988,6 +988,12 @@ class KPIEngine {
     publishEvent("KPICalculated", { tenantId, branchId, module: "visa" });
     publishEvent("AnalyticsUpdated", { tenantId, branchId, module: "visa" });
     publishEvent("PerformanceSnapshotCreated", { tenantId, branchId, module: "visa" });
+    publishEvent("RevenueSummaryUpdated", { tenantId, branchId, module: "visa", revenue: metrics.revenue });
+    publishEvent("OfficerMetricsUpdated", { tenantId, branchId, module: "visa", officerCount: officerMetrics.length });
+    publishEvent("EmbassyMetricsUpdated", { tenantId, branchId, module: "visa", embassyCount: embassyMetrics.length });
+    if (metrics.slaBreaches > 0) {
+      publishEvent("SLAExceeded", { tenantId, branchId, module: "visa", slaBreachCount: metrics.slaBreaches });
+    }
 
     return summary;
   }

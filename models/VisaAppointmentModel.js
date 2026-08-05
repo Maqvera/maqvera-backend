@@ -123,7 +123,9 @@ const VisaAppointmentSchema = new mongoose.Schema({
   },
   reminders: [
     {
-      channel: { type: String, enum: ["Email", "SMS", "WhatsApp", "Push"], default: "Email" },
+      // "Voice Call" was named in the Reminder System's supported channels
+      // but missing from the enum.
+      channel: { type: String, enum: ["Email", "SMS", "WhatsApp", "Push", "Voice"], default: "Email" },
       scheduledFor: { type: Date, required: true },
       sentAt: { type: Date, default: null },
       status: { type: String, enum: ["pending", "sent", "failed"], default: "pending" }
@@ -143,6 +145,12 @@ const VisaAppointmentSchema = new mongoose.Schema({
   remarks: {
     type: String,
     default: null
+  },
+  // Named in PATCH's Editable Fields list but had no backing field at all.
+  priority: {
+    type: String,
+    enum: ["normal", "medium", "high", "vip"],
+    default: "normal"
   },
   isSoftDeleted: {
     type: Boolean,

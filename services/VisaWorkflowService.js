@@ -1,8 +1,25 @@
 import { VISA_CASE_STATUSES, VISA_DOMAIN_EVENTS } from "../utils/visaConstants.js";
 import { publishEvent } from "../utils/eventBus.js";
+import WorkflowDefinitionModel from "../models/WorkflowDefinitionModel.js";
+import mongoose from "mongoose";
+
+// Matches the hardcoded definition's own "terminal" state assignments —
+// used only to reconstruct state.type when mapping a persisted DB record
+// back into this same response shape.
+const TERMINAL_STATE_KEYS = new Set([
+  VISA_CASE_STATUSES.COMPLETED, VISA_CASE_STATUSES.REJECTED, VISA_CASE_STATUSES.CANCELLED,
+  VISA_CASE_STATUSES.WITHDRAWN, VISA_CASE_STATUSES.EXPIRED, VISA_CASE_STATUSES.BLACKLISTED
+]);
 
 class VisaWorkflowService {
-  static getWorkflowDefinition(version = 1) {
+  /**
+   * The hardcoded fallback — used when no active WorkflowDefinitionModel
+   * record exists yet for a tenant (fresh/unseeded deployment) or when the
+   * DB isn't reachable. Also what scripts/seedVisaWorkflowDefinition.js
+   * itself seeds FROM, so it must stay synchronous and DB-independent to
+   * avoid a "read the DB to seed the DB" loop.
+   */
+  static getDefaultWorkflowDefinition(version = 1) {
     return {
       name: "Enterprise Visa Case Workflow",
       version,
@@ -107,7 +124,61 @@ class VisaWorkflowService {
     };
   }
 
-  static evaluateTransition({ visaCase, targetState, userRoles = [] }) {
+  /**
+   * "Supports Versioning" / "Supports Multiple Workflows" — WorkflowDefinitionModel
+   * and its seed script (scripts/seedVisaWorkflowDefinition.js) already
+   * existed in this codebase before this fix, but nothing ever actually
+   * READ from it — every caller got the same hardcoded definition
+   * regardless of what was seeded or which version was requested, meaning
+   * a newly-published v2 workflow (or a per-tenant customization) could
+   * never actually take effect. Falls back to the hardcoded default only
+   * when no active persisted definition exists yet, or tenantId/DB aren't
+   * available — matching the resilience convention used throughout this
+   * codebase.
+   */
+  static async getWorkflowDefinition(version = null, tenantId = null) {
+    if (tenantId && mongoose.connection.readyState === 1) {
+      const query = { tenantId, entityType: "Visa", isActive: true };
+      if (version) query.version = version;
+      const persisted = await WorkflowDefinitionModel.findOne(query).sort({ version: -1 }).lean();
+      if (persisted) return this.mapPersistedDefinition(persisted);
+    }
+    return this.getDefaultWorkflowDefinition(version || 1);
+  }
+
+  /**
+   * Maps a persisted WorkflowDefinitionModel record back into the exact
+   * response shape getDefaultWorkflowDefinition returns, so every existing
+   * caller (evaluateTransition's guard logic, createVisaCase's initial-state
+   * resolution, the GET /workflows/visa response) works unchanged regardless
+   * of which source the definition came from.
+   */
+  static mapPersistedDefinition(doc) {
+    const roles = Array.from(new Set([
+      ...doc.transitions.map((t) => t.requiredPermission).filter(Boolean),
+      "admin"
+    ]));
+    const actions = Array.from(new Set(doc.transitions.map((t) => t.action)));
+    return {
+      name: doc.workflowName,
+      version: doc.version,
+      states: doc.states.map((s) => ({
+        key: s.stateId,
+        label: s.label,
+        type: s.stateId === doc.initialState ? "initial" : TERMINAL_STATE_KEYS.has(s.stateId) ? "terminal" : "active"
+      })),
+      transitions: doc.transitions.map((t) => ({ fromState: t.fromState, toState: t.toState, action: t.action, requiredRole: t.requiredPermission || null })),
+      roles,
+      actions,
+      slaRules: doc.slaPolicies || [],
+      escalationChain: doc.escalationRules || [],
+      approvalPolicies: doc.approvalPolicies || [],
+      automationRules: doc.automationRules || [],
+      status: doc.isActive ? "active" : "inactive"
+    };
+  }
+
+  static async evaluateTransition({ visaCase, targetState, userRoles = [] }) {
     const currentState = visaCase?.workflow?.currentStep || visaCase?.status || "inquiry";
 
     // Lock check for completed or blacklisted cases
@@ -119,7 +190,19 @@ class VisaWorkflowService {
       };
     }
 
-    const definition = this.getWorkflowDefinition(visaCase?.workflow?.version || 1);
+    const definition = await this.getWorkflowDefinition(visaCase?.workflow?.version || 1, visaCase?.tenantId);
+
+    // Validation Rule "Workflow Active" — was never checked at all; a
+    // deactivated workflow definition (isActive: false in
+    // WorkflowDefinitionModel) still let every transition through.
+    if (definition.status !== "active") {
+      return {
+        allowed: false,
+        reasons: [`Workflow definition version ${definition.version} is not active.`],
+        transition: null
+      };
+    }
+
     const allowedTransitions = definition.transitions.filter((t) => t.fromState === currentState);
     const transition = allowedTransitions.find((item) => item.toState === targetState);
 
@@ -143,9 +226,19 @@ class VisaWorkflowService {
       reasons.push("All required documents must be uploaded and verified before submission.");
     }
 
-    // Guard Condition 3: Incident Blocking Check
+    // Guard Condition 3: Incident Blocking Check. hasOpenIncidents alone
+    // isn't sufficient — visaCase.isLocked/workflow.isBlocked (set by
+    // EnterpriseIncidentEngineService's critical-incident auto-lock) is the
+    // more authoritative signal and can diverge from it: an officer can
+    // mark an individual incident record "resolved" without that action
+    // ever clearing the case-level lock, since no "unlock case" step exists
+    // anywhere in this codebase. Checking only the incidents array would
+    // silently miss a case still actually locked.
     if (this.hasOpenIncidents(visaCase)) {
       reasons.push("Open incidents block workflow progression.");
+    }
+    if (visaCase?.isLocked || visaCase?.workflow?.isBlocked) {
+      reasons.push(visaCase.lockReason || visaCase.workflow?.blockReason || "Visa Case is locked and cannot be transitioned.");
     }
 
     // Guard Condition 4: User Role / Permission Validation
@@ -191,11 +284,25 @@ class VisaWorkflowService {
   }
 
   static async applyTransition({ visaCase, targetState, userRoles = [], performedBy = "system", remarks = null }) {
-    const evaluation = this.evaluateTransition({ visaCase, targetState, userRoles });
+    // Named Domain Event, never published anywhere — distinct from
+    // WorkflowTransitionCompleted/Rejected, which only fire once the
+    // outcome is known; this fires the moment a transition is asked for.
+    publishEvent(VISA_DOMAIN_EVENTS.WORKFLOW_TRANSITION_REQUESTED, {
+      visaCaseId: visaCase._id?.toString?.() || visaCase.caseNumber,
+      tenantId: visaCase.tenantId,
+      branchId: visaCase.branchId,
+      currentState: visaCase.workflow?.currentStep || visaCase.status || "inquiry",
+      targetState,
+      performedBy
+    });
+
+    const evaluation = await this.evaluateTransition({ visaCase, targetState, userRoles });
 
     if (!evaluation.allowed) {
       publishEvent(VISA_DOMAIN_EVENTS.WORKFLOW_TRANSITION_REJECTED, {
         visaCaseId: visaCase._id?.toString?.() || visaCase.caseNumber,
+        tenantId: visaCase.tenantId,
+        branchId: visaCase.branchId,
         targetState,
         reasons: evaluation.reasons,
         performedBy
@@ -225,6 +332,8 @@ class VisaWorkflowService {
 
     publishEvent(VISA_DOMAIN_EVENTS.WORKFLOW_TRANSITION_COMPLETED, {
       visaCaseId: visaCase._id?.toString?.() || visaCase.caseNumber,
+      tenantId: visaCase.tenantId,
+      branchId: visaCase.branchId,
       previousState,
       currentState: nextState,
       performedBy,
@@ -234,6 +343,52 @@ class VisaWorkflowService {
     if (nextState === VISA_CASE_STATUSES.COMPLETED) {
       publishEvent(VISA_DOMAIN_EVENTS.WORKFLOW_COMPLETED, {
         visaCaseId: visaCase._id?.toString?.() || visaCase.caseNumber,
+        tenantId: visaCase.tenantId,
+        branchId: visaCase.branchId,
+        performedBy
+      });
+      // Named milestone event distinct from the generic WorkflowCompleted —
+      // this is the specific event Part 1's Domain Event Map names.
+      publishEvent(VISA_DOMAIN_EVENTS.VISA_COMPLETED, {
+        visaCaseId: visaCase._id?.toString?.() || visaCase.caseNumber,
+        caseNumber: visaCase.caseNumber,
+        tenantId: visaCase.tenantId,
+        branchId: visaCase.branchId,
+        performedBy
+      });
+    }
+
+    // Named milestone events distinct from the generic
+    // WorkflowTransitionCompleted — none of these were ever published.
+    if (nextState === VISA_CASE_STATUSES.REOPENED) {
+      publishEvent(VISA_DOMAIN_EVENTS.WORKFLOW_REOPENED, {
+        visaCaseId: visaCase._id?.toString?.() || visaCase.caseNumber,
+        tenantId: visaCase.tenantId,
+        branchId: visaCase.branchId,
+        performedBy
+      });
+    } else if (nextState === VISA_CASE_STATUSES.CANCELLED) {
+      publishEvent(VISA_DOMAIN_EVENTS.WORKFLOW_CANCELLED, {
+        visaCaseId: visaCase._id?.toString?.() || visaCase.caseNumber,
+        tenantId: visaCase.tenantId,
+        branchId: visaCase.branchId,
+        performedBy
+      });
+    }
+
+    // "Approval Policies: Officer/Supervisor/Dual/... Approval" — a
+    // transition gated behind an elevated role (supervisor/admin) IS the
+    // approval in this workflow model (there's no separate pending-approval
+    // queue the way the generic WorkflowEngine has); ApprovalCompleted was
+    // never published for any of them.
+    if (["supervisor", "admin"].includes(evaluation.transition?.requiredRole)) {
+      publishEvent(VISA_DOMAIN_EVENTS.APPROVAL_COMPLETED, {
+        visaCaseId: visaCase._id?.toString?.() || visaCase.caseNumber,
+        tenantId: visaCase.tenantId,
+        branchId: visaCase.branchId,
+        approvalRole: evaluation.transition.requiredRole,
+        action: evaluation.transition.action,
+        targetState: nextState,
         performedBy
       });
     }

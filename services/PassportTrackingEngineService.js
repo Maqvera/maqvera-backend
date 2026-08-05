@@ -5,17 +5,28 @@ import { publishEvent } from "../utils/eventBus.js";
 import { v4 as uuidv4 } from "uuid";
 import AuditLogModel from "../models/AuditLogmodel.js";
 import CourierIntegrationService from "./CourierIntegrationService.js";
+import VisaWorkflowService from "./VisaWorkflowService.js";
+import EnterpriseIncidentEngineService from "./EnterpriseIncidentEngineService.js";
 import mongoose from "mongoose";
 
 const referenceNumber = (envKey, fallbackPrefix) => `${process.env[`${envKey}_PREFIX`] || fallbackPrefix}-${new Date().getFullYear()}-${uuidv4().slice(0, 8).toUpperCase()}`;
 
 class PassportTrackingEngineService {
-  static async getPassportByVisaCaseId(visaCaseId, tenantId) {
-    const trackingRecord = await PassportTrackingModel.findOne({ visaCaseId, tenantId });
+  static async getPassportByVisaCaseId(visaCaseId, tenantId, branchId) {
+    // Security Rule "Branch Isolation" — was never filtered by branch.
+    const filter = { visaCaseId, tenantId };
+    if (branchId) filter.branchId = branchId;
+    const trackingRecord = await PassportTrackingModel.findOne(filter);
     if (!trackingRecord) {
       throw new Error("Passport has not been received for this Visa Case.");
     }
-    return trackingRecord;
+    // "Latest Event" — named in Response Includes as its own field, not
+    // just something the client derives from the tail of trackingEvents.
+    const recordObj = trackingRecord.toObject();
+    return {
+      ...recordObj,
+      latestEvent: recordObj.trackingEvents.length > 0 ? recordObj.trackingEvents[recordObj.trackingEvents.length - 1] : null
+    };
   }
 
   static async getPassportById(passportId, tenantId) {
@@ -103,6 +114,18 @@ class PassportTrackingEngineService {
 
     await passport.save();
 
+    // "Create Timeline" — every write method in this service was missing
+    // this; the Visa Case's own timeline never reflected any passport
+    // movement at all, unlike every other domain (documents, embassy,
+    // appointments, workflow).
+    visaCase.timeline.push({
+      event: "PassportReceived",
+      description: `Passport ${passport.passportNumber} received from traveler by ${passport.currentHolder}.`,
+      performedBy: userId || "system",
+      timestamp: event.timestamp
+    });
+    await visaCase.save();
+
     if (mongoose.connection.readyState === 1) await AuditLogModel.create({ tenantId, branchId: passport.branchId, userId: userId || "system", action: "RECEIVE_PASSPORT", resource: "PassportTracking", resourceId: passport._id.toString(), details: { visaCaseId, receivedBy, receivedDate } }).catch(() => null);
 
     publishEvent(PASSPORT_DOMAIN_EVENTS.PASSPORT_RECEIVED, {
@@ -145,8 +168,31 @@ class PassportTrackingEngineService {
     passport.trackingEvents.push(event);
     await passport.save();
 
+    if (mongoose.connection.readyState === 1) {
+      const visaCase = await VisaCaseModel.findOne({ _id: passport.visaCaseId, tenantId });
+      if (visaCase) {
+        visaCase.timeline.push({
+          event: "PassportTransferred",
+          description: `Passport ${passport.passportNumber} custody transferred from ${previousHolder} to ${passport.currentHolder}.`,
+          performedBy: userId || "system",
+          timestamp: event.timestamp
+        });
+        await visaCase.save();
+      }
+    }
+
     if (mongoose.connection.readyState === 1) await AuditLogModel.create({ tenantId, branchId: passport.branchId, userId: userId || "system", action: "TRANSFER_PASSPORT_CUSTODY", resource: "PassportTracking", resourceId: passport._id.toString(), details: { fromHolder: previousHolder, toHolder, newLocation: passport.currentLocation, targetStatus: passport.currentStatus } }).catch(() => null);
 
+    // PassportCustodyChanged is the generic signal; PassportTransferred
+    // (the event named for THIS specific endpoint's own "Publish
+    // PassportTransferred" workflow step) was only ever used as a tracking
+    // event label, never actually published on the real event bus.
+    publishEvent(PASSPORT_DOMAIN_EVENTS.PASSPORT_TRANSFERRED, {
+      passportId: passport._id,
+      previousHolder,
+      newHolder: passport.currentHolder,
+      performedBy: userId, visaCaseId: passport.visaCaseId, tenantId, branchId: passport.branchId
+    });
     publishEvent(PASSPORT_DOMAIN_EVENTS.PASSPORT_CUSTODY_CHANGED, {
       passportId: passport._id,
       previousHolder,
@@ -194,6 +240,19 @@ class PassportTrackingEngineService {
     passport.trackingEvents.push(event);
     await passport.save();
 
+    if (mongoose.connection.readyState === 1) {
+      const visaCaseForDispatch = await VisaCaseModel.findOne({ _id: passport.visaCaseId, tenantId });
+      if (visaCaseForDispatch) {
+        visaCaseForDispatch.timeline.push({
+          event: "PassportDispatched",
+          description: `Passport ${passport.passportNumber} dispatched to embassy via ${passport.courierCompany} (Ref: ${dispatchNumber}).`,
+          performedBy: userId || "system",
+          timestamp: event.timestamp
+        });
+        await visaCaseForDispatch.save();
+      }
+    }
+
     if (mongoose.connection.readyState === 1) await AuditLogModel.create({ tenantId, branchId: passport.branchId, userId: userId || "system", action: "DISPATCH_PASSPORT", resource: "PassportTracking", resourceId: passport._id.toString(), details: { dispatchNumber, courierCompany, trackingNumber: passport.trackingNumber, embassyName } }).catch(() => null);
 
     publishEvent(PASSPORT_DOMAIN_EVENTS.PASSPORT_DISPATCHED, {
@@ -206,8 +265,16 @@ class PassportTrackingEngineService {
     return passport;
   }
 
-  static async receiveFromEmbassy({ passportId, remarks }, tenantId, userId) {
+  static async receiveFromEmbassy({ passportId, remarks }, tenantId, userId, userRoles = []) {
     const passport = await this.getPassportById(passportId, tenantId);
+
+    // "Validate Dispatch" — was entirely absent; this could previously be
+    // called on a passport that was never dispatched (still "Received") or
+    // one already collected, silently overwriting its status regardless.
+    const dispatchedStates = [PASSPORT_STATUSES.DISPATCHED, PASSPORT_STATUSES.WITH_COURIER, PASSPORT_STATUSES.AT_EMBASSY, PASSPORT_STATUSES.EMBASSY_PROCESSING];
+    if (!dispatchedStates.includes(passport.currentStatus)) {
+      throw new Error(`Passport must be dispatched to the embassy before it can be received back (current status: '${passport.currentStatus}').`);
+    }
 
     passport.currentStatus = PASSPORT_STATUSES.RETURNED;
     passport.currentHolder = "Branch Operations";
@@ -228,8 +295,37 @@ class PassportTrackingEngineService {
     passport.trackingEvents.push(event);
     await passport.save();
 
+    // "Update Visa Case" — was entirely absent; the case's own status never
+    // advanced when its passport actually came back. Best-effort: if the
+    // case isn't currently in a state where "return_passport" is a valid
+    // workflow transition (e.g. the embassy decision hasn't been
+    // registered yet), this doesn't block the passport-tracking action
+    // itself, since that's this endpoint's real purpose.
+    if (mongoose.connection.readyState === 1) {
+      const visaCase = await VisaCaseModel.findOne({ _id: passport.visaCaseId, tenantId });
+      if (visaCase) {
+        visaCase.timeline.push({
+          event: "PassportReturned",
+          description: `Passport ${passport.passportNumber} returned from embassy and received at branch.`,
+          performedBy: userId || "system",
+          timestamp: event.timestamp
+        });
+        try {
+          await VisaWorkflowService.applyTransition({ visaCase, targetState: "passport_returned", userRoles, performedBy: userId || "system", remarks: "Passport returned from embassy." });
+        } catch (workflowErr) {
+          console.warn("receiveFromEmbassy: workflow transition to passport_returned skipped:", workflowErr.message);
+        }
+        await visaCase.save();
+      }
+    }
+
+    if (mongoose.connection.readyState === 1) await AuditLogModel.create({ tenantId, branchId: passport.branchId, userId: userId || "system", action: "RECEIVE_PASSPORT_FROM_EMBASSY", resource: "PassportTracking", resourceId: passport._id.toString(), details: { visaCaseId: passport.visaCaseId, remarks } }).catch(() => null);
+
     publishEvent(PASSPORT_DOMAIN_EVENTS.PASSPORT_RETURNED, {
       passportId: passport._id,
+      visaCaseId: passport.visaCaseId,
+      tenantId,
+      branchId: passport.branchId,
       returnedAt: new Date(),
       performedBy: userId
     });
@@ -276,11 +372,128 @@ class PassportTrackingEngineService {
     passport.trackingEvents.push(event);
     await passport.save();
 
+    // "Timeline created" — this Business Rule was named but nothing pushed
+    // to the Visa Case's timeline; "Audit" — no AuditLogModel.create call
+    // existed at all, despite this being the single most legally/
+    // operationally sensitive action in the passport lifecycle (mandatory
+    // identity verification, explicitly irreversible).
+    if (mongoose.connection.readyState === 1) {
+      const visaCase = await VisaCaseModel.findOne({ _id: passport.visaCaseId, tenantId });
+      if (visaCase) {
+        visaCase.timeline.push({
+          event: "PassportCollected",
+          description: `Passport ${passport.passportNumber} collected by ${passport.collectionInfo.collectedBy} after identity verification (Receipt #${receiptNumber}).`,
+          performedBy: userId || "system",
+          timestamp: passport.collectionInfo.collectionTime
+        });
+        await visaCase.save();
+      }
+    }
+
+    if (mongoose.connection.readyState === 1) await AuditLogModel.create({ tenantId, branchId: passport.branchId, userId: userId || "system", action: "COLLECT_PASSPORT", resource: "PassportTracking", resourceId: passport._id.toString(), details: { collectedBy: passport.collectionInfo.collectedBy, verifiedBy: passport.collectionInfo.verifiedBy, receiptNumber } }).catch(() => null);
+
     publishEvent(PASSPORT_DOMAIN_EVENTS.PASSPORT_COLLECTED, {
       passportId: passport._id,
+      visaCaseId: passport.visaCaseId,
+      tenantId,
+      branchId: passport.branchId,
       collectedBy: passport.collectionInfo.collectedBy,
       receiptNumber,
       timestamp: passport.collectionInfo.collectionTime
+    });
+
+    return passport;
+  }
+
+  /**
+   * Lost Passport Procedure: Create Incident -> Lock Visa Case -> Notify
+   * Management -> Generate Timeline -> Investigation -> Resolution. This
+   * had zero implementation anywhere — isLost/isDamaged existed as schema
+   * fields and PassportLost/PassportDamaged as domain event constants, but
+   * no method could ever reach either. Reuses
+   * EnterpriseIncidentEngineService.createIncident — the same,
+   * already-proven mechanism that auto-locks a Visa Case on a Critical
+   * incident — rather than reimplementing case-locking here.
+   */
+  static async reportLostOrDamagedPassport({ passportId, condition, remarks }, tenantId, branchId, userId) {
+    const normalizedCondition = String(condition || "").toLowerCase();
+    if (!["lost", "damaged"].includes(normalizedCondition)) {
+      throw new Error("condition must be 'lost' or 'damaged'.");
+    }
+
+    const passport = await this.getPassportById(passportId, tenantId);
+    const isLost = normalizedCondition === "lost";
+
+    passport.currentStatus = isLost ? PASSPORT_STATUSES.LOST : PASSPORT_STATUSES.DAMAGED;
+    passport.isLost = isLost;
+    passport.isDamaged = !isLost;
+
+    const event = {
+      eventId: `EVT-${uuidv4().substring(0, 8)}`,
+      eventType: isLost ? PASSPORT_DOMAIN_EVENTS.PASSPORT_LOST : PASSPORT_DOMAIN_EVENTS.PASSPORT_DAMAGED,
+      timestamp: new Date(),
+      previousHolder: passport.currentHolder,
+      newHolder: passport.currentHolder,
+      previousLocation: passport.currentLocation,
+      newLocation: passport.currentLocation,
+      performedBy: userId || "Staff",
+      reason: isLost ? "Passport reported lost" : "Passport reported damaged",
+      remarks: remarks || `Passport reported ${normalizedCondition}.`
+    };
+    passport.trackingEvents.push(event);
+    await passport.save();
+
+    const visaCase = mongoose.connection.readyState === 1
+      ? await VisaCaseModel.findOne({ _id: passport.visaCaseId, tenantId })
+      : null;
+
+    // "Create Incident" + "Lock Visa Case" — EnterpriseIncidentEngineService
+    // already auto-locks the case on Critical/Emergency severity.
+    await EnterpriseIncidentEngineService.createIncident(
+      {
+        visaCaseId: passport.visaCaseId,
+        visaCase,
+        title: `Passport ${normalizedCondition === "lost" ? "Lost" : "Damaged"} — ${passport.passportNumber}`,
+        description: remarks || `Passport ${passport.passportNumber} reported ${normalizedCondition} while in custody of ${passport.currentHolder}.`,
+        category: "Passport",
+        severity: "Critical"
+      },
+      tenantId,
+      branchId || passport.branchId,
+      userId
+    );
+
+    // "Generate Timeline"
+    if (visaCase) {
+      visaCase.timeline.push({
+        event: isLost ? "PassportLost" : "PassportDamaged",
+        description: `Passport ${passport.passportNumber} reported ${normalizedCondition}. Case locked pending investigation.`,
+        performedBy: userId || "system",
+        timestamp: event.timestamp
+      });
+      await visaCase.save();
+    }
+
+    if (mongoose.connection.readyState === 1) await AuditLogModel.create({ tenantId, branchId: passport.branchId, userId: userId || "system", action: isLost ? "REPORT_PASSPORT_LOST" : "REPORT_PASSPORT_DAMAGED", resource: "PassportTracking", resourceId: passport._id.toString(), details: { remarks } }).catch(() => null);
+
+    publishEvent(isLost ? PASSPORT_DOMAIN_EVENTS.PASSPORT_LOST : PASSPORT_DOMAIN_EVENTS.PASSPORT_DAMAGED, {
+      passportId: passport._id,
+      visaCaseId: passport.visaCaseId,
+      tenantId,
+      branchId: passport.branchId,
+      performedBy: userId
+    });
+
+    // "Notify Management" — no real notification provider exists anywhere
+    // in this codebase, so this publishes the same NotificationRequested
+    // pattern already established elsewhere rather than claiming delivery.
+    publishEvent("NotificationRequested", {
+      tenantId,
+      branchId: passport.branchId,
+      event: isLost ? "PassportLost" : "PassportDamaged",
+      priority: "immediate",
+      visaCaseId: passport.visaCaseId,
+      passportNumber: passport.passportNumber
     });
 
     return passport;

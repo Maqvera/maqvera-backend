@@ -101,6 +101,26 @@ const TravelFlightAssignmentSchema = new mongoose.Schema({
     enum: ["normal", "medium", "high", "vip"],
     default: "normal"
   },
+  // EXT-004 §5 "Aggregate Relationship" — Flight Assignment owns the
+  // Airline Booking/PNR/External Order ID/Booking Snapshot/Ticket Status
+  // reference, with Travel Plan remaining the aggregate root. The full
+  // booking record (traveler details, raw provider snapshot, version
+  // history) lives on FlightBookingModel; these are the read-through
+  // fields Travel Operations needs without an extra lookup.
+  flightBookingId: { type: mongoose.Schema.Types.ObjectId, ref: "FlightBooking", default: null, index: true },
+  airlinePNR: { type: String, default: null, index: true },
+  externalOrderId: { type: String, default: null },
+  bookingStatus: {
+    type: String,
+    enum: ["Pending", "Confirmed", "Cancelled", "Failed", "Expired"],
+    default: "Pending",
+    index: true
+  },
+  ticketStatus: {
+    type: String,
+    enum: ["Not Issued", "Issued", "Voided", "Refunded", "Exchanged"],
+    default: "Not Issued"
+  },
   internalNotes: {
     type: String,
     default: null

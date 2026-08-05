@@ -23,9 +23,16 @@ import dashboardRoute from "./routes/TravelDashboardRoutes.js";
 import enterpriseSearchRoute from "./routes/EnterpriseSearchRoutes.js";
 import flightSearchRoute from "./routes/FlightSearchRoutes.js";
 import flightBookingRoute from "./routes/FlightBookingRoutes.js";
+import aiAssistantRoute from "./routes/AIAssistantRoutes.js";
+import aiOrchestrationRoute from "./routes/AIOrchestrationRoutes.js";
+import externalFlightRoute from "./routes/ExternalFlightRoutes.js";
+import externalAmadeusRoute from "./routes/ExternalAmadeusRoutes.js";
+import amadeusIntegrationRoute from "./routes/AmadeusIntegrationRoutes.js";
+import airlineIntegrationRoute from "./routes/AirlineIntegrationRoutes.js";
 import hotelDistributionRoute from "./routes/HotelDistributionRoutes.js";
 import visaRoute from "./routes/VisaRoutes.js";
 import visaDashboardRoute from "./routes/VisaDashboardRoutes.js";
+import referenceDataRoute from "./routes/ReferenceDataRoutes.js";
 import DBconfig from "./config/DbConfig.js";
 import TravelOrchestrationEngine from "./services/TravelOrchestrationEngine.js";
 import VisaTimelineEventBus from "./services/VisaTimelineEventBus.js";
@@ -34,7 +41,13 @@ import CustomerStatisticsEngine from "./services/CustomerStatisticsEngine.js";
 import VisaAnalyticsEngine from "./services/VisaAnalyticsEngine.js";
 import CacheManager from "./utils/cacheManager.js";
 import AnalyticsScheduler from "./services/analyticsScheduler.js";
+import DocumentExpiryScheduler from "./services/documentExpiryScheduler.js";
 import SearchEngineService from "./services/SearchEngineService.js";
+import EmbassyProcessingService from "./services/EmbassyProcessingService.js";
+import AppointmentReminderScheduler from "./services/appointmentReminderScheduler.js";
+import IncidentSlaScheduler from "./services/incidentSlaScheduler.js";
+import ReferenceDataScheduler from "./services/referenceDataScheduler.js";
+import FlightScheduleSyncScheduler from "./services/flightScheduleSyncScheduler.js";
 
 validateEnv();
 
@@ -42,7 +55,13 @@ const bootstrapEnterpriseServices = async () => {
   await CacheManager.init();
   VisaAnalyticsEngine.init();
   SearchEngineService.init();
+  EmbassyProcessingService.init();
   await AnalyticsScheduler.init();
+  await DocumentExpiryScheduler.init();
+  await AppointmentReminderScheduler.init();
+  await IncidentSlaScheduler.init();
+  await ReferenceDataScheduler.init();
+  await FlightScheduleSyncScheduler.init();
 };
 
 const app = express();
@@ -91,6 +110,13 @@ app.use("/api/v1/search", enterpriseSearchRoute);
 app.use("/api/v1/flight-search", flightSearchRoute);
 app.use("/api/v1/flight-bookings", flightBookingRoute);
 app.use("/api/v1", hotelDistributionRoute);
+app.use("/api/v1/ai", aiAssistantRoute);
+app.use("/api/v1/ai", aiOrchestrationRoute);
+app.use("/api/v1/external", externalFlightRoute);
+app.use("/api/v1/external/amadeus", externalAmadeusRoute);
+app.use("/api/v1/integrations/amadeus", amadeusIntegrationRoute);
+app.use("/api/v1/integrations/airlines", airlineIntegrationRoute);
+app.use("/api/v1/reference", referenceDataRoute);
 app.use("/api/v1", notesTimelineRoute);
 app.use("/api/v1", visaRoute);
 

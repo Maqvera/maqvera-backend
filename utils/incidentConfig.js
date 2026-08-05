@@ -72,6 +72,15 @@ export const getIncidentConfig = () => ({
     'Supplier', 'Guide', 'Driver', 'Operations', 'AI Monitoring'
   ]),
 
+  // "Escalation Chain ... Escalation configurable." Was previously just a
+  // documented concept — no field tracked how far an incident had been
+  // pushed up the chain and nothing ever moved it. Walked by
+  // services/incidentSlaScheduler.js whenever an open incident's
+  // resolution SLA breaches.
+  escalationChain: parseJson(process.env.INCIDENT_ESCALATION_CHAIN_JSON, [
+    'Officer', 'Supervisor', 'Branch Manager', 'Operations Manager', 'Executive Dashboard'
+  ]),
+
   // Attachments — "Supported Files" list, used as a real MIME-type
   // allowlist (Part 8's Incident Attachments section) rather than accepting
   // any file type unchecked.

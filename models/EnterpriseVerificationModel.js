@@ -77,6 +77,13 @@ const EnterpriseVerificationSchema = new mongoose.Schema({
     tamperingDetected: { type: Boolean, default: false },
     faceDetected: { type: Boolean, default: true },
     signatureDetected: { type: Boolean, default: true },
+    // Named in the AI Validation Checks list but had no backing fields —
+    // the other 5 of these 10 checks were real.
+    fakeDocumentIndicatorsDetected: { type: Boolean, default: false },
+    hasMissingPages: { type: Boolean, default: false },
+    isLowResolution: { type: Boolean, default: false },
+    glareDetected: { type: Boolean, default: false },
+    photoQualityScore: { type: Number, default: 0 },
     notes: { type: String, default: null },
     evaluatedAt: { type: Date, default: null }
   },

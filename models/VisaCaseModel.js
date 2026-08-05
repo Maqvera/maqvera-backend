@@ -118,7 +118,12 @@ const VisaCaseSchema = new mongoose.Schema({
       verificationStatus: { type: String, enum: ["unverified", "verified", "failed"], default: "unverified" },
       verifiedBy: { type: String, default: null },
       verifiedAt: { type: Date, default: null },
-      rejectionReason: { type: String, default: null }
+      rejectionReason: { type: String, default: null },
+      // Carried over from the Requirement Profile at case-creation time so
+      // the Business Rule Engine can reference them per document.
+      requiredPages: { type: Number, default: null },
+      requiresSignature: { type: Boolean, default: false },
+      requiresStamp: { type: Boolean, default: false }
     }
   ],
   requirementProfileSnapshot: {

@@ -252,7 +252,7 @@ class EnterpriseTimelineEngineService {
   /**
    * 3. GET TIMELINE (Paginated & Filtered)
    */
-  static async getTimeline(query, tenantId) {
+  static async getTimeline(query, tenantId, requester = {}) {
     const page = Math.max(parseInt(query.page || "1", 10), 1);
     const pageSize = Math.min(Math.max(parseInt(query.pageSize || "20", 10), 1), 100);
 
@@ -282,6 +282,17 @@ class EnterpriseTimelineEngineService {
           { title: searchRegex },
           { description: searchRegex },
           { eventType: searchRegex }
+        ];
+      }
+
+      // "Visibility Rules... Private" — was previously unenforced: any
+      // caller with read access could see every entry, including notes
+      // marked Private by another user. Mirrors the same access-control
+      // carve-out already applied to Travel Plan timelines.
+      if (!requester.isAdmin) {
+        filter.$and = [
+          ...(filter.$and || []),
+          { $or: [{ visibility: { $ne: "Private" } }, { "actor.userId": requester.userId || null }] }
         ];
       }
 
@@ -331,6 +342,48 @@ class EnterpriseTimelineEngineService {
       description: "Mock event details for test",
       eventType: "MockEvent",
       actor: { name: "Staff" }
+    };
+  }
+
+  /**
+   * 4b. GET SINGLE TIMELINE EVENT DETAIL — event + Related Records + Audit Summary.
+   * Doc's Response Includes for GET /timeline/{eventId} go beyond the raw
+   * event (comments/attachments/metadata already on the model) to also call
+   * for "Related Records" and an "Audit Summary" — neither was assembled
+   * anywhere; the endpoint just returned the bare document.
+   */
+  static async getEventDetail(eventId, tenantId) {
+    const event = await this.getEventById(eventId, tenantId);
+    const plainEvent = typeof event.toObject === "function" ? event.toObject() : event;
+
+    let auditSummary = [];
+    if (mongoose.connection?.readyState === 1) {
+      const idCandidates = [eventId];
+      if (event._id) idCandidates.push(event._id.toString());
+      if (event.eventId) idCandidates.push(event.eventId);
+
+      auditSummary = await AuditLogModel.find({
+        tenantId,
+        $or: [
+          { resourceId: { $in: idCandidates } },
+          { targetId: { $in: idCandidates } }
+        ]
+      })
+        .sort({ createdAt: -1 })
+        .limit(20)
+        .select("action module resource userId createdAt details")
+        .lean();
+    }
+
+    return {
+      ...plainEvent,
+      relatedRecords: {
+        visaCaseId: plainEvent.visaCaseId || null,
+        travelPlanId: plainEvent.travelPlanId || null,
+        aggregateType: plainEvent.aggregateType || null,
+        aggregateId: plainEvent.aggregateId || null
+      },
+      auditSummary
     };
   }
 

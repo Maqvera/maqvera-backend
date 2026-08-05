@@ -1,0 +1,2 @@
+{"level":"error","message":"[EXT-018] Flight SV701 (sync-test-flight-1) dead-lettered after 5 failed sync attempts: simulated failure","service":"maqvera-api","timestamp":"2026-08-05 23:17:18"}
+{"level":"error","message":"[EXT-018] Flight SV701 (sync-test-flight-1) dead-lettered after 6 failed sync attempts: simulated failure","service":"maqvera-api","timestamp":"2026-08-05 23:17:18"}

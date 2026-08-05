@@ -37,6 +37,7 @@ export const ListIncidents = async (req, res) => {
       travelPlanId: inc.travelPlanId,
       sourceModule: inc.sourceModule,
       category: inc.category,
+      type: inc.type,
       severity: inc.severity,
       status: inc.status,
       title: inc.title,
@@ -53,6 +54,13 @@ export const ListIncidents = async (req, res) => {
       attachmentsCount: inc.attachments ? inc.attachments.length : 0,
       commentsCount: inc.comments ? inc.comments.length : 0,
       slaStatus: inc.slaStatus,
+      // Response Includes "Resolution Status" — was entirely absent from the
+      // list view; a caller previously had to open every incident
+      // individually just to see whether it had a resolution recorded.
+      resolutionStatus: ["resolved", "verified", "closed"].includes(inc.status)
+        ? inc.status
+        : (inc.resolution?.resolutionSummary ? "pending_verification" : "unresolved"),
+      escalationLevel: inc.escalationLevel || 0,
       createdAt: inc.createdAt,
       updatedAt: inc.updatedAt
     }));
@@ -599,7 +607,6 @@ export const UpdateIncidentInvestigation = async (req, res) => {
     const userId = req.auth?.userId || req.auth?.id || "system";
     const permissions = req.auth?.permissions || [];
     const { incidentId } = req.params;
-    const { evidenceItem, interviewItem, lessonsLearned, rootCauseCategory } = req.body;
 
     if (!tenantId) {
       return sendError(res, 403, "Tenant context is required.", requestId);
@@ -608,49 +615,11 @@ export const UpdateIncidentInvestigation = async (req, res) => {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
-    const incident = await TravelIncidentManagementModel.findOne({ _id: incidentId, tenantId, isSoftDeleted: false });
-    if (!incident) {
-      return sendError(res, 404, "Incident case not found.", requestId);
-    }
-
-    if (!incident.investigation) {
-      incident.investigation = { evidence: [], interviews: [], witnesses: [], correctiveActions: [], preventiveActions: [], lessonsLearned: null, rootCauseCategory: "Process" };
-    }
-
-    if (evidenceItem && evidenceItem.description) {
-      incident.investigation.evidence.push({
-        type: evidenceItem.type || "Document",
-        description: evidenceItem.description,
-        url: evidenceItem.url || null,
-        gatheredBy: userId,
-        gatheredAt: new Date()
-      });
-    }
-
-    if (interviewItem && interviewItem.intervieweeName && interviewItem.summary) {
-      incident.investigation.interviews.push({
-        intervieweeName: interviewItem.intervieweeName,
-        role: interviewItem.role || "Witness",
-        summary: interviewItem.summary,
-        interviewedBy: userId,
-        interviewedAt: new Date()
-      });
-    }
-
-    if (lessonsLearned) {
-      incident.investigation.lessonsLearned = lessonsLearned;
-    }
-    if (rootCauseCategory) {
-      incident.investigation.rootCauseCategory = rootCauseCategory;
-    }
-
-    incident.status = incident.status === "reported" ? "in_investigation" : incident.status;
-    await incident.save();
-
-    return sendSuccess(res, 200, "Investigation updated successfully.", incident.investigation, requestId);
+    const investigation = await EnterpriseIncidentEngineService.updateInvestigation(incidentId, req.body, tenantId, userId);
+    return sendSuccess(res, 200, "Investigation updated successfully.", investigation, requestId);
   } catch (err) {
     console.error("UpdateIncidentInvestigation Error:", err);
-    return sendError(res, 500, err.message || "Failed to update investigation.", requestId);
+    return sendError(res, err.message?.includes("not found") ? 404 : 400, err.message || "Failed to update investigation.", requestId);
   }
 };
 

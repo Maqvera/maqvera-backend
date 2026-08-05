@@ -16,7 +16,9 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.115.0",
     "@aws-sdk/client-s3": "^3.1098.0",
+    "ajv": "^8.20.0",
     "bcryptjs": "^3.0.3",
     "cloudinary": "^1.41.3",
     "compression": "^1.8.1",
@@ -37,6 +39,7 @@
     "multer-storage-cloudinary": "^4.0.0",
     "node-cron": "^4.6.0",
     "nodemailer": "^7.0.10",
+    "openai": "^7.4.0",
     "otplib": "^12.0.0",
     "rate-limit-mongo": "^2.3.2",
     "uuid": "^13.0.0",

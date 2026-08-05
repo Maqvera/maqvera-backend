@@ -10,10 +10,35 @@ const HotelBookingSchema = new mongoose.Schema(
     provider: {
       type: String,
       required: true,
-      enum: ["AmadeusHotels", "Hotelbeds", "Expedia", "BookingCom", "SabreHotels", "DirectHotel"],
-      default: "Hotelbeds"
+      // "Amadeus"/"Sabre" are the only providers with a real registered
+      // adapter (GdsIntegrationService.adapters) — every booking is created
+      // with adapter.providerName, which is literally "Amadeus" or "Sabre".
+      // The enum previously only listed aspirational supplier names
+      // ("AmadeusHotels", "Hotelbeds", ...) that no adapter ever produces,
+      // so every real booking failed Mongoose validation on save. Kept the
+      // aspirational names too so adding a real Hotelbeds/Expedia adapter
+      // later needs no migration.
+      enum: ["Amadeus", "Sabre", "AmadeusHotels", "Hotelbeds", "Expedia", "BookingCom", "SabreHotels", "DirectHotel"],
+      default: "Amadeus"
     },
     reservationNumber: { type: String, required: true, index: true },
+    // EXT-022 §12/§13 — distinct from `reservationNumber` above (this
+    // codebase's own internal identifier): the real Amadeus confirmation
+    // number and internal booking ID, additive fields so the pre-existing
+    // legacy hotel-distribution pipeline's writes (which never populate
+    // these) remain valid.
+    providerConfirmationNumber: { type: String, default: null },
+    providerBookingId: { type: String, default: null },
+    contact: {
+      email: { type: String, default: null },
+      phone: { type: String, default: null }
+    },
+    specialRequests: [{ type: String }],
+    // §11 "Booking snapshot is immutable" / §13 "Provider Response
+    // Reference" — set once at creation, never edited afterward by any
+    // controller/service in this codebase (same convention as
+    // FlightBookingModel.bookingSnapshot).
+    bookingSnapshot: { type: mongoose.Schema.Types.Mixed, default: null },
     status: {
       type: String,
       enum: ["Offer Selected", "Pending Validation", "Reserved", "Confirmed", "Modified", "Cancelled", "Completed"],
@@ -21,7 +46,13 @@ const HotelBookingSchema = new mongoose.Schema(
       index: true
     },
     hotelName: { type: String, required: true },
-    city: { type: String, required: true },
+    // EXT-022: relaxed from required — the real Amadeus Hotel Offers
+    // response (EXT-020) this booking path books from carries no city-name
+    // field at all (only a hotelId), so genuinely honest data isn't always
+    // available at booking time. Left required-in-spirit for the legacy
+    // hotel-distribution pipeline (which always supplies it from its own
+    // search params), but a `null` here is honest, not a validation dodge.
+    city: { type: String, default: null },
     stars: { type: Number, default: 5 },
     distanceToHaram: { type: String, default: null },
     roomType: { type: String, default: "Standard Room" },
@@ -34,15 +65,28 @@ const HotelBookingSchema = new mongoose.Schema(
       {
         firstName: { type: String, required: true },
         lastName: { type: String, required: true },
+        dateOfBirth: { type: Date, default: null },
         isLeadGuest: { type: Boolean, default: false }
       }
     ],
     totalPrice: { type: Number, required: true },
     currency: { type: String, default: "PKR" },
     cancellationPolicy: { type: String, default: "Free cancellation up to 48 hours before check-in" },
+    // EXT-024 — structured cancellation-policy data, captured once at
+    // booking creation from EXT-021's real pricing verification (itself
+    // derived from Amadeus's real `policies.cancellations[]`). The
+    // `cancellationPolicy` string above is display-only; EXT-024's actual
+    // refund/penalty computation at cancellation time needs these
+    // structured fields, which previously didn't exist on this model at
+    // all — a real gap found while building EXT-024, not present before.
+    refundable: { type: Boolean, default: false },
+    freeCancellationUntilDate: { type: Date, default: null },
+    cancellationPenaltyAmount: { type: Number, default: null },
     voucherNumber: { type: String, default: null },
     voucherUrl: { type: String, default: null },
     cancellationReason: { type: String, default: null },
+    cancellationPenaltyFee: { type: Number, default: null },
+    cancellationRefundAmount: { type: Number, default: null },
     cancelledAt: { type: Date, default: null },
     cancelledBy: { type: String, default: null },
     lastSynchronizedAt: { type: Date, default: Date.now },

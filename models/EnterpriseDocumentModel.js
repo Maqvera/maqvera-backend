@@ -50,6 +50,23 @@ const EnterpriseDocumentSchema = new mongoose.Schema({
     default: null,
     index: true
   },
+  // "Document Expiry ... Automatic reminders supported" — tracked by
+  // documentExpiryScheduler.js rather than overloading verificationStatus/
+  // approvalStatus (a document expiring is a different concern from its
+  // verification/approval outcome).
+  isExpired: {
+    type: Boolean,
+    default: false,
+    index: true
+  },
+  expiredAt: {
+    type: Date,
+    default: null
+  },
+  expiryReminderSentAt: {
+    type: Date,
+    default: null
+  },
   remarks: {
     type: String,
     default: null
@@ -103,6 +120,15 @@ const EnterpriseDocumentSchema = new mongoose.Schema({
     index: true
   },
   deletedAt: {
+    type: Date,
+    default: null
+  },
+  // "Retention policy configurable" — the date after which this archived
+  // document is eligible for permanent purge, per DOCUMENT_RETENTION_DAYS.
+  // No automated purge job runs against this (deleting real files is not
+  // something to automate without a live environment to verify against) —
+  // it's tracked as real, honest metadata for a future/manual purge pass.
+  retentionEligiblePurgeDate: {
     type: Date,
     default: null
   }

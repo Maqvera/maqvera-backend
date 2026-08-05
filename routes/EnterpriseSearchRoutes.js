@@ -6,7 +6,8 @@ import {
   GetSearchSuggestions,
   SaveSearchQuery,
   ListSavedSearches,
-  DeleteSavedSearch
+  DeleteSavedSearch,
+  RebuildSearchIndex
 } from "../controllers/EnterpriseSearchController.js";
 
 const router = express.Router();
@@ -33,6 +34,7 @@ router.get("/documents", limiter, (req, _res, next) => { req.query.entityType = 
 router.get("/incidents", limiter, (req, _res, next) => { req.query.entityType = "Incident"; next(); }, GlobalSearch);
 router.get("/appointments", limiter, (req, _res, next) => { req.query.entityType = "Appointment"; next(); }, GlobalSearch);
 router.get("/embassies", limiter, (req, _res, next) => { req.query.entityType = "EmbassySubmission"; next(); }, GlobalSearch);
+router.post("/rebuild", limiter, RebuildSearchIndex);
 router.get("/", limiter, GlobalSearch);
 
 export default router;

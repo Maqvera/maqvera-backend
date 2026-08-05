@@ -15,7 +15,7 @@ import { createRequestId } from "../utils/authTokens.js";
 // real GDS/airline API is configured.
 import { AirlineConnector } from "../utils/SupplierIntegrationLayer.js";
 import { getFlightConfig } from "../utils/flightConfig.js";
-import { getAllowedNextActions, executeWorkflowTransition } from "../utils/WorkflowEngine.js";
+import { getAllowedNextActions, executeWorkflowTransition, getOrCreateWorkflowInstance } from "../utils/WorkflowEngine.js";
 
 const flightConfig = getFlightConfig();
 
@@ -560,6 +560,15 @@ export const UpdateFlightExecutionStatus = async (req, res) => {
     // same "workflow bypass" bug class fixed for Booking/Travel Plan. Now
     // routed through the real, state-aware Flight workflow (utils/flightConfig.js).
     const normalizedStatus = status ? status.toLowerCase() : null;
+    // EXT-011 audit finding: executeWorkflowTransition's own
+    // getOrCreateWorkflowInstance() call never passes an initialState, so a
+    // flight's FIRST transition attempt always seeded a workflow instance at
+    // the hardcoded "draft" — a state that doesn't exist anywhere in the
+    // Flight workflow definition, so it threw "not allowed from current
+    // state 'draft'" every time. Booking already avoids this (see
+    // BookingController.js) by pre-seeding its own instance with the real
+    // current status first; Flight never did. Fixed the same way here.
+    await getOrCreateWorkflowInstance({ tenantId, entityType: "Flight", entityId: flight._id, initialState: flight.status });
     let transitionResult;
     try {
       transitionResult = await executeWorkflowTransition({

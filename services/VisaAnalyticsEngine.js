@@ -13,11 +13,22 @@ const cacheKey = (type, tenantId, branchId, suffix = "") =>
 const PERIOD_DAYS = {
   Today: 1,
   Yesterday: 2,
+  Daily: 1,
+  Weekly: 7,
   "7 Days": 7,
+  Monthly: 30,
   "30 Days": 30,
+  Quarterly: 90,
   "90 Days": 90,
+  Yearly: 365,
   "1 Year": 365,
 };
+
+// "Security... Sensitive KPI masking" — Branch Dashboard (unlike Executive/
+// Finance) is available to non-management branch staff too, but revenue is
+// still a management-tier figure and must not leak to them.
+const SENSITIVE_METRIC_KEYS = ["revenue"];
+const SENSITIVE_KPI_KEYS = ["revenue", "refundRatio"];
 
 class VisaAnalyticsEngine {
   static initialized = false;
@@ -201,14 +212,20 @@ class VisaAnalyticsEngine {
     return { fromCache, data };
   }
 
-  static async branchDashboard({ tenantId, branchId = "main" }) {
-    const key = cacheKey("branch", tenantId, branchId);
+  static async branchDashboard({ tenantId, branchId = "main", isManagement = false }) {
+    const key = cacheKey("branch", tenantId, branchId, isManagement ? "full" : "masked");
     const { data, fromCache } = await CacheManager.getOrCompute(key, async () => {
       const { summary } = await this.getSummary({ tenantId, branchId });
+      const metrics = { ...(summary.metrics || {}) };
+      const kpis = { ...(summary.kpis || {}) };
+      if (!isManagement) {
+        SENSITIVE_METRIC_KEYS.forEach((k) => delete metrics[k]);
+        SENSITIVE_KPI_KEYS.forEach((k) => delete kpis[k]);
+      }
       return {
         branchId,
-        ...summary.metrics,
-        kpis: summary.kpis || {},
+        ...metrics,
+        kpis,
         generatedAt: summary.generatedAt,
         pendingRefresh: summary.pendingRefresh || false,
       };
@@ -318,14 +335,35 @@ class VisaAnalyticsEngine {
     return { fromCache, data };
   }
 
-  static async buildTrendSnapshot({ tenantId, branchId = "main", period = "7 Days" }) {
-    const days = PERIOD_DAYS[period] || 7;
-    const now = new Date();
-    const dateStrings = [];
+  static async buildTrendSnapshot({ tenantId, branchId = "main", period = "7 Days", dateFrom = null, dateTo = null }) {
+    let dateStrings = [];
+    let resolvedPeriod = period;
 
-    for (let i = days - 1; i >= 0; i -= 1) {
-      const d = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
-      dateStrings.push(d.toISOString().slice(0, 10));
+    // "Trend Analysis... Custom Date Range" — was entirely unimplemented;
+    // period was always treated as a fixed day-count bucket with no way to
+    // request an explicit start/end range.
+    if (dateFrom && dateTo) {
+      const start = new Date(dateFrom);
+      const end = new Date(dateTo);
+      if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start > end) {
+        throw new Error("Invalid custom date range: dateFrom/dateTo must be valid dates with dateFrom <= dateTo.");
+      }
+      const maxRangeDays = parseInt(process.env.DASHBOARD_TREND_MAX_RANGE_DAYS || "366", 10);
+      const rangeDays = Math.round((end - start) / (24 * 60 * 60 * 1000)) + 1;
+      if (rangeDays > maxRangeDays) {
+        throw new Error(`Custom date range cannot exceed ${maxRangeDays} days.`);
+      }
+      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+        dateStrings.push(d.toISOString().slice(0, 10));
+      }
+      resolvedPeriod = "Custom Date Range";
+    } else {
+      const days = PERIOD_DAYS[period] || 7;
+      const now = new Date();
+      for (let i = days - 1; i >= 0; i -= 1) {
+        const d = new Date(now.getTime() - i * 24 * 60 * 60 * 1000);
+        dateStrings.push(d.toISOString().slice(0, 10));
+      }
     }
 
     const summaries = await VisaAnalyticsSummaryModel.find({
@@ -353,18 +391,23 @@ class VisaAnalyticsEngine {
     });
 
     return {
-      period,
+      period: resolvedPeriod,
       branchId,
+      dateFrom: dateFrom || null,
+      dateTo: dateTo || null,
       dataPointsCount: trends.length,
       dataPointsWithData: trends.filter((item) => item.dataAvailable).length,
       trends,
     };
   }
 
-  static async generateTrends({ tenantId, branchId = "main", period = "7 Days" }) {
-    const key = cacheKey("trends", tenantId, branchId, period.replace(/\s+/g, "-").toLowerCase());
+  static async generateTrends({ tenantId, branchId = "main", period = "7 Days", dateFrom = null, dateTo = null }) {
+    const keySuffix = dateFrom && dateTo
+      ? `custom-${dateFrom}-${dateTo}`
+      : period.replace(/\s+/g, "-").toLowerCase();
+    const key = cacheKey("trends", tenantId, branchId, keySuffix);
     const { data, fromCache } = await CacheManager.getOrCompute(key, async () =>
-      this.buildTrendSnapshot({ tenantId, branchId, period })
+      this.buildTrendSnapshot({ tenantId, branchId, period, dateFrom, dateTo })
     );
     return { fromCache, data };
   }

@@ -8,6 +8,7 @@ import EnterpriseIncidentEngineService from "./EnterpriseIncidentEngineService.j
 import EnterpriseTimelineEngineService from "./EnterpriseTimelineEngineService.js";
 import VisaTypeModel from "../models/VisaTypeModel.js";
 import CountryMasterModel from "../models/CountryMasterModel.js";
+import EnterpriseDocumentModel from "../models/EnterpriseDocumentModel.js";
 import mongoose from "mongoose";
 import VisaWorkflowService from "./VisaWorkflowService.js";
 
@@ -17,7 +18,10 @@ class VisaService {
    */
   static async generateCaseNumber(tenantId) {
     const year = new Date().getFullYear();
-    const prefix = `VIS-${year}-`;
+    // "Case Number Format ... configurable" — was hardcoded to "VIS-",
+    // unlike Incident numbers which already follow this exact env-var
+    // pattern (INCIDENT_NUMBER_PREFIX).
+    const prefix = `${process.env.VISA_CASE_NUMBER_PREFIX || "VIS"}-${year}-`;
     const count = await VisaCaseModel.countDocuments({
       tenantId,
       caseNumber: new RegExp(`^${prefix}`)
@@ -46,7 +50,10 @@ class VisaService {
         status: "pending",
         fileUrl: null,
         objectStorageKey: null,
-        verificationStatus: "unverified"
+        verificationStatus: "unverified",
+        requiredPages: doc.requiredPages ?? null,
+        requiresSignature: doc.requiresSignature || false,
+        requiresStamp: doc.requiresStamp || false
       }));
 
     return reqDocConfig;
@@ -65,10 +72,22 @@ class VisaService {
       };
     }
 
-    let queueType = "workload_queue";
+    // Country Specialist Assignment: no officer-specialization model exists
+    // anywhere in this codebase yet (no field on EmployeeProfileModel or
+    // elsewhere designates a "handles Country X" specialist), so this can't
+    // auto-match a specific officer without fabricating that data — it does
+    // group the case into a country-specific queue so it's at least
+    // routable/filterable for manual specialist assignment.
+    let queueType = destinationCountry ? `country_team:${destinationCountry.toLowerCase().replace(/\s+/g, "_")}` : "workload_queue";
 
     if (priority === "high" || priority === "vip") {
       queueType = "priority_queue";
+    }
+
+    // Branch Assignment: destinationCountry/branchId used to be accepted
+    // params that the queue logic silently ignored.
+    if (branchId) {
+      queueType = `${queueType}:branch_${branchId}`;
     }
 
     return {
@@ -110,7 +129,10 @@ class VisaService {
 
     const country = await this.resolveCountry({ countryId, destinationCountry }, tenantId);
     const visaTypeRecord = await this.resolveVisaType({ visaTypeId, visaType }, tenantId);
-    const workflowDefinition = await VisaWorkflowService.getWorkflowDefinitionForTenant(tenantId);
+    // getWorkflowDefinition is now genuinely tenant-aware and DB-backed
+    // (WorkflowDefinitionModel, falling back to the hardcoded default when
+    // nothing's been seeded yet) — see VisaWorkflowService for the fix.
+    const workflowDefinition = await VisaWorkflowService.getWorkflowDefinition(null, tenantId);
     const initialWorkflowState = workflowDefinition.initialState || workflowDefinition.states.find((state) => state.type === "initial")?.key;
     if (!initialWorkflowState) throw new Error("Active Visa workflow has no initial state.");
     const destCountry = country.name;
@@ -259,12 +281,14 @@ class VisaService {
       visaCaseId: newVisaCase._id,
       caseNumber,
       tenantId,
+      branchId: newVisaCase.branchId,
       travelerId
     });
     publishEvent(VISA_DOMAIN_EVENTS.VISA_APPLICATION_CREATED, {
       visaCaseId: newVisaCase._id,
       applicationNumber: `${caseNumber}-APP-1`,
-      tenantId
+      tenantId,
+      branchId: newVisaCase.branchId
     });
     publishEvent("VisaApplicationInitialized", {
       visaCaseId: newVisaCase._id,
@@ -273,6 +297,9 @@ class VisaService {
       branchId: newVisaCase.branchId
     });
     publishEvent("RequirementsGenerated", { visaCaseId: newVisaCase._id, tenantId, branchId: newVisaCase.branchId });
+    // Named Domain Event, never published anywhere — this is the exact
+    // moment the case's workflow genuinely starts.
+    publishEvent(VISA_DOMAIN_EVENTS.WORKFLOW_STARTED, { visaCaseId: newVisaCase._id, tenantId, branchId: newVisaCase.branchId, initialState: initialWorkflowState });
 
     return newVisaCase;
   }
@@ -294,7 +321,9 @@ class VisaService {
       assignedTo,
       createdFrom,
       createdTo,
-      search
+      search,
+      sort = "createdAt",
+      order = "desc"
     } = query;
 
     const limit = Math.min(Math.max(parseInt(pageSize, 10), 1), 100);
@@ -332,9 +361,16 @@ class VisaService {
       ];
     }
 
+    // Business Rule "Sorting" — was previously a hardcoded .sort({createdAt:-1})
+    // with no query-param support at all. Whitelisted against indexed,
+    // client-meaningful fields rather than passing the sort key through raw.
+    const sortableFields = new Set(["createdAt", "updatedAt", "caseNumber", "status", "priority", "destinationCountry", "plannedTravelDate"]);
+    const sortField = sortableFields.has(sort) ? sort : "createdAt";
+    const dbSort = { [sortField]: order === "asc" ? 1 : -1 };
+
     const [items, total] = await Promise.all([
       VisaCaseModel.find(filter)
-        .sort({ createdAt: -1 })
+        .sort(dbSort)
         .skip(skip)
         .limit(limit)
         .lean(),
@@ -367,6 +403,42 @@ class VisaService {
   }
 
   /**
+   * Full Aggregate View for GET /visa-cases/:id. The doc's Business Rules
+   * explicitly call this an "Aggregate View," but getVisaCaseById alone just
+   * returns the raw Visa Case document — Uploaded Documents (full version
+   * history, kept in EnterpriseDocumentModel, a separate collection) and
+   * Audit Summary were both entirely absent from the response. Kept as a
+   * separate method (not a change to getVisaCaseById itself) since that
+   * method is used internally elsewhere as a mutable Mongoose document to
+   * call .save() on.
+   */
+  static async getVisaCaseAggregate(visaCaseId, tenantId, branchId) {
+    const visaCase = await this.getVisaCaseById(visaCaseId, tenantId, branchId);
+
+    const [uploadedDocuments, auditSummary] = await Promise.all([
+      EnterpriseDocumentModel.find({ tenantId, referenceId: visaCaseId, isSoftDeleted: { $ne: true } })
+        .sort({ updatedAt: -1 })
+        .lean(),
+      AuditLogModel.find({
+        tenantId,
+        $or: [
+          { resource: "VisaCase", resourceId: visaCaseId.toString() },
+          { "details.visaCaseId": visaCaseId.toString() }
+        ]
+      })
+        .sort({ createdAt: -1 })
+        .limit(20)
+        .lean()
+    ]);
+
+    return {
+      ...visaCase.toObject(),
+      uploadedDocuments,
+      auditSummary
+    };
+  }
+
+  /**
    * Update Visa Case
    */
   static async updateVisaCase(visaCaseId, updateData, tenantId, branchId, userId) {
@@ -379,6 +451,7 @@ class VisaService {
     }
 
     const timelineEvents = [];
+    const domainEventsToPublish = [];
 
     if (updateData.status && updateData.status !== visaCase.status) {
       throw new Error("Status changes must use the workflow transition endpoint.");
@@ -391,6 +464,10 @@ class VisaService {
         performedBy: userId || "system",
         timestamp: new Date()
       });
+      // VisaPriorityChanged (named in the Domain Event Map) was previously
+      // only ever pushed into the case's own embedded timeline array, never
+      // published on the real event bus.
+      domainEventsToPublish.push(["VisaPriorityChanged", { visaCaseId, tenantId, branchId: visaCase.branchId, previousPriority: visaCase.priority, newPriority: updateData.priority, performedBy: userId }]);
       visaCase.priority = updateData.priority;
     }
 
@@ -401,6 +478,7 @@ class VisaService {
         performedBy: userId || "system",
         timestamp: new Date()
       });
+      domainEventsToPublish.push(["VisaOfficerAssigned", { visaCaseId, tenantId, branchId: visaCase.branchId, assignedTo: updateData.assignedTo, performedBy: userId }]);
       visaCase.assignedTo = updateData.assignedTo;
       if (updateData.assignedConsultantName) {
         visaCase.assignedConsultantName = updateData.assignedConsultantName;
@@ -436,7 +514,10 @@ class VisaService {
       details: updateData
     }).catch(err => console.error("AuditLog error:", err));
 
-    publishEvent("VisaCaseUpdated", { visaCaseId, tenantId, updatedBy: userId });
+    publishEvent("VisaCaseUpdated", { visaCaseId, tenantId, branchId: visaCase.branchId, updatedBy: userId });
+    for (const [eventName, payload] of domainEventsToPublish) {
+      publishEvent(eventName, payload);
+    }
 
     return visaCase;
   }
@@ -471,7 +552,7 @@ class VisaService {
       details: { caseNumber: visaCase.caseNumber, archivedAt: visaCase.deletedAt }
     }).catch(err => console.error("AuditLog error:", err));
 
-    publishEvent("VisaCaseArchived", { visaCaseId, caseNumber: visaCase.caseNumber, tenantId });
+    publishEvent("VisaCaseArchived", { visaCaseId, caseNumber: visaCase.caseNumber, tenantId, branchId: visaCase.branchId });
 
     return { message: `Visa Case ${visaCase.caseNumber} archived successfully.` };
   }
@@ -480,7 +561,10 @@ class VisaService {
    * Adds an incident to a Visa Case via EnterpriseIncidentEngineService
    */
   static async addVisaCaseIncident(visaCaseId, incidentData, tenantId, branchId, userId) {
-    const visaCase = await this.getVisaCaseById(visaCaseId, tenantId, branchId).catch(() => null);
+    // "Validate Visa Case" / "Visa Case Exists" — was silently swallowed via
+    // .catch(() => null), letting an incident be created against a
+    // non-existent (or wrong-branch) Visa Case ID with no error at all.
+    const visaCase = await this.getVisaCaseById(visaCaseId, tenantId, branchId);
 
     const createdIncident = await EnterpriseIncidentEngineService.createIncident(
       {
@@ -502,29 +586,53 @@ class VisaService {
   }
 
   /**
-   * Returns incidents for a Visa Case
+   * Returns incidents for a Visa Case. "Supports filtering. Supports
+   * pagination. Supports sorting." — query previously hardcoded to just
+   * { visaCaseId }, silently dropping any severity/status/sort/page params
+   * a caller sent even though EnterpriseIncidentEngineService.getIncidents
+   * already supports all of them.
    */
-  static async getVisaCaseIncidents(visaCaseId, tenantId, branchId) {
-    const result = await EnterpriseIncidentEngineService.getIncidents({ visaCaseId }, tenantId);
+  static async getVisaCaseIncidents(visaCaseId, query, tenantId, branchId) {
+    const result = await EnterpriseIncidentEngineService.getIncidents({ ...query, visaCaseId }, tenantId);
     if (result && Array.isArray(result.items) && result.items.length > 0) {
-      return result.items;
+      // Response Includes: Incident ID, Incident Number, Category, Severity,
+      // Status, Assigned Officer, Created Date, SLA Status, Resolution
+      // Status, Priority — the raw Mongoose documents don't name several of
+      // these fields the way the doc does.
+      const items = result.items.map((inc) => ({
+        incidentId: inc._id,
+        incidentNumber: inc.incidentNumber,
+        category: inc.category,
+        type: inc.type,
+        severity: inc.severity,
+        status: inc.status,
+        assignedOfficer: inc.assignedToName || inc.assignedTo || null,
+        createdDate: inc.createdAt,
+        slaStatus: inc.slaStatus,
+        resolutionStatus: ["resolved", "verified", "closed"].includes(inc.status)
+          ? inc.status
+          : (inc.resolution?.resolutionSummary ? "pending_verification" : "unresolved"),
+        priority: inc.priority || "normal"
+      }));
+      return { items, pagination: result.pagination };
     }
     const visaCase = await this.getVisaCaseById(visaCaseId, tenantId, branchId);
-    return Array.isArray(visaCase.incidents) ? visaCase.incidents : [];
+    const items = Array.isArray(visaCase.incidents) ? visaCase.incidents : [];
+    return { items, pagination: { page: 1, pageSize: items.length, totalItems: items.length, totalPages: 1 } };
   }
 
   /**
    * Returns complete activity timeline for a Visa Case
    */
-  static async getVisaCaseTimeline(visaCaseId, query, tenantId, branchId) {
+  static async getVisaCaseTimeline(visaCaseId, query, tenantId, branchId, requester = {}) {
     await this.getVisaCaseById(visaCaseId, tenantId, branchId);
-    return EnterpriseTimelineEngineService.getTimeline({ visaCaseId, branchId, ...query }, tenantId);
+    return EnterpriseTimelineEngineService.getTimeline({ visaCaseId, branchId, ...query }, tenantId, requester);
   }
 
   /**
    * Adds a manual operational note to a Visa Case
    */
-  static async addVisaCaseNote(visaCaseId, noteData, tenantId, branchId, userId, requestContext = {}) {
+  static async addVisaCaseNote(visaCaseId, noteData, tenantId, branchId, userId, requestContext = {}, userName = "Staff", userRole = "Staff") {
     const visaCase = await this.getVisaCaseById(visaCaseId, tenantId, branchId);
     const note = await EnterpriseTimelineEngineService.recordManualNote({
       visaCaseId,
@@ -538,6 +646,8 @@ class VisaService {
       tenantId,
       branchId,
       userId,
+      userName,
+      userRole,
       requestContext
     });
 

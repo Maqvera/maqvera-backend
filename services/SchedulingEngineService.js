@@ -2,7 +2,7 @@ import VisaAppointmentModel from "../models/VisaAppointmentModel.js";
 import VisaCaseModel from "../models/VisaCaseModel.js";
 import AuditLogModel from "../models/AuditLogmodel.js";
 import { publishEvent } from "../utils/eventBus.js";
-import { VISA_CASE_STATUSES } from "../utils/visaConstants.js";
+import { VISA_CASE_STATUSES, VISA_DOMAIN_EVENTS } from "../utils/visaConstants.js";
 import AppointmentProviderModel from "../models/AppointmentProviderModel.js";
 import mongoose from "mongoose";
 
@@ -64,10 +64,15 @@ class SchedulingEngineService {
     if (existingConflict && resolvedProvider.location.slotCapacity <= 1) {
       throw new Error(`Time slot ${appointmentTime} on ${apptDate.toISOString().split("T")[0]} is already booked for provider ${providerName || "VAC"}. Please select another slot.`);
     }
+    // "Overbooking Policy ... Configurable" — allowance defaults to 0%,
+    // which reproduces the previous strict >= behavior exactly.
+    const overbookingAllowance = resolvedProvider.location.overbookingAllowancePercent || 0;
+    const effectiveDailyCapacity = Math.floor(resolvedProvider.location.dailyCapacity * (1 + overbookingAllowance / 100));
+    const effectiveSlotCapacity = Math.floor(resolvedProvider.location.slotCapacity * (1 + overbookingAllowance / 100));
     const dailyBookings = await VisaAppointmentModel.countDocuments({ tenantId, providerId, locationId, appointmentDate: apptDate, status: { $nin: ["Cancelled", "Rejected"] }, isSoftDeleted: { $ne: true } });
-    if (dailyBookings >= resolvedProvider.location.dailyCapacity) throw new Error("Provider daily capacity has been reached.");
+    if (dailyBookings >= effectiveDailyCapacity) throw new Error("Provider daily capacity has been reached.");
     const slotBookings = await VisaAppointmentModel.countDocuments({ tenantId, providerId, locationId, appointmentDate: apptDate, appointmentTime, status: { $nin: ["Cancelled", "Rejected"] }, isSoftDeleted: { $ne: true } });
-    if (slotBookings >= resolvedProvider.location.slotCapacity) throw new Error("Appointment time slot capacity has been reached.");
+    if (slotBookings >= effectiveSlotCapacity) throw new Error("Appointment time slot capacity has been reached.");
 
     const appointmentNumber = await this.generateAppointmentNumber(tenantId);
 
@@ -228,10 +233,37 @@ class SchedulingEngineService {
       }
     }
 
-    if (updateData.providerName) appt.providerName = updateData.providerName;
-    if (updateData.location) appt.location = updateData.location;
+    // "Provider" / "Location" as editable fields previously only accepted a
+    // display-string relabel (providerName/location), never actually
+    // changing which real provider/location record the appointment points
+    // to (providerId/locationId stayed untouched) — so it could drift out
+    // of sync with the actual provider and skip re-validation entirely. A
+    // real change re-validates exactly like scheduleAppointment does.
+    if (updateData.providerId && updateData.locationId && (updateData.providerId !== appt.providerId || updateData.locationId !== appt.locationId)) {
+      if (mongoose.connection.readyState === 1) {
+        const provider = await AppointmentProviderModel.findOne({ tenantId, providerId: updateData.providerId, isActive: true });
+        if (!provider) throw new Error("Appointment provider not found or inactive.");
+        const providerLocation = provider.locations.find((item) => item.locationId === updateData.locationId);
+        if (!providerLocation) throw new Error("Appointment provider location not found.");
+        if (providerLocation.blackoutDates.includes(appt.appointmentDate.toISOString().slice(0, 10))) throw new Error("Provider location is unavailable on the selected date.");
+        if (appt.appointmentTime < providerLocation.openingTime || appt.appointmentTime >= providerLocation.closingTime) throw new Error("Selected appointment time is outside provider working hours.");
+        appt.providerId = updateData.providerId;
+        appt.providerName = provider.name;
+        appt.locationId = updateData.locationId;
+        appt.location = providerLocation.name;
+      } else {
+        appt.providerId = updateData.providerId;
+        appt.locationId = updateData.locationId;
+        if (updateData.providerName) appt.providerName = updateData.providerName;
+        if (updateData.location) appt.location = updateData.location;
+      }
+    } else {
+      if (updateData.providerName) appt.providerName = updateData.providerName;
+      if (updateData.location) appt.location = updateData.location;
+    }
     if (updateData.remarks) appt.remarks = updateData.remarks;
     if (updateData.assignedOfficer) appt.assignedOfficer = updateData.assignedOfficer;
+    if (updateData.priority) appt.priority = updateData.priority;
 
     await appt.save();
 
@@ -309,6 +341,15 @@ class SchedulingEngineService {
 
     publishEvent("AppointmentAttendanceRecorded", { appointmentId: appt._id, visaCaseId: appt.visaCaseId, status, tenantId, branchId: appt.branchId });
 
+    // AppointmentAttendanceRecorded is generic across every attendance
+    // status; AppointmentCheckedIn and AppointmentCancelled (named in the
+    // Domain Event Map) were never published on their own.
+    if (appt.status === "Checked In") {
+      publishEvent("AppointmentCheckedIn", { appointmentId: appt._id, visaCaseId: appt.visaCaseId, tenantId, branchId: appt.branchId });
+    } else if (appt.status === "Cancelled") {
+      publishEvent("AppointmentCancelled", { appointmentId: appt._id, visaCaseId: appt.visaCaseId, tenantId, branchId: appt.branchId });
+    }
+
     return appt;
   }
 
@@ -367,6 +408,17 @@ class SchedulingEngineService {
 
     publishEvent("AppointmentResultRecorded", { appointmentId: appt._id, visaCaseId: appt.visaCaseId, outcome, tenantId, branchId: appt.branchId });
     publishEvent("AppointmentCompleted", { appointmentId: appt._id, visaCaseId: appt.visaCaseId, outcome, tenantId, branchId: appt.branchId });
+
+    // AppointmentCompleted is generic across all appointment types;
+    // InterviewCompleted/MedicalCompleted (named in the Domain Event Map)
+    // were never published at all — nothing let a subscriber react
+    // specifically to "an interview just finished" vs. any other appointment.
+    const typeLower = String(appt.appointmentType || "").toLowerCase();
+    if (isSuccess && typeLower.includes("interv")) {
+      publishEvent(VISA_DOMAIN_EVENTS.INTERVIEW_COMPLETED, { appointmentId: appt._id, visaCaseId: appt.visaCaseId, outcome, tenantId, branchId: appt.branchId });
+    } else if (isSuccess && typeLower.includes("medic")) {
+      publishEvent(VISA_DOMAIN_EVENTS.MEDICAL_COMPLETED, { appointmentId: appt._id, visaCaseId: appt.visaCaseId, outcome, tenantId, branchId: appt.branchId });
+    }
 
     return appt;
   }

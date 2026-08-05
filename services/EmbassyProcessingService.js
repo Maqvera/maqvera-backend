@@ -2,8 +2,8 @@ import EmbassySubmissionModel from "../models/EmbassySubmissionModel.js";
 import EmbassyBatchModel from "../models/EmbassyBatchModel.js";
 import VisaCaseModel from "../models/VisaCaseModel.js";
 import AuditLogModel from "../models/AuditLogmodel.js";
-import { publishEvent } from "../utils/eventBus.js";
-import { VISA_CASE_STATUSES } from "../utils/visaConstants.js";
+import { publishEvent, subscribeEvent } from "../utils/eventBus.js";
+import { VISA_CASE_STATUSES, VISA_DOMAIN_EVENTS } from "../utils/visaConstants.js";
 import EnterpriseDocumentModel from "../models/EnterpriseDocumentModel.js";
 import PassportTrackingModel from "../models/PassportTrackingModel.js";
 import EmbassyMasterModel from "../models/EmbassyMasterModel.js";
@@ -18,6 +18,37 @@ const EMBASSY_TRANSITIONS = {
 };
 
 class EmbassyProcessingService {
+  static initialized = false;
+
+  /**
+   * SLA Management "Passport Return Time" — named in the doc's tracked
+   * fields but nothing anywhere ever set it, since passport movement is
+   * owned by a separate domain (PassportTrackingEngineService). Rather than
+   * coupling the two services directly, this reacts to the real
+   * PassportReturned event on the bus — genuinely event-driven, not a
+   * fabricated timestamp.
+   */
+  static init() {
+    if (this.initialized) return;
+    this.initialized = true;
+    subscribeEvent("PassportReturned", (payload) => this.handlePassportReturned(payload).catch((error) =>
+      console.error("EmbassyProcessingService PassportReturned handler failed:", error.message)
+    ));
+  }
+
+  static async handlePassportReturned({ visaCaseId, tenantId }) {
+    if (!visaCaseId || !tenantId) return;
+    const sub = await EmbassySubmissionModel.findOne({
+      tenantId,
+      visaCaseId,
+      status: { $nin: ["Draft", "Closed"] },
+      isSoftDeleted: { $ne: true }
+    }).sort({ createdAt: -1 });
+    if (!sub) return;
+    sub.slaTracking.passportReturnTime = new Date();
+    await sub.save();
+  }
+
   /**
    * Auto-generate submission number: EMB-YYYY-XXXXXX
    */
@@ -93,6 +124,11 @@ class EmbassyProcessingService {
       embassyId: embassyId || null,
       embassyName: embassy?.name || embassyName || embassyId,
       destinationCountry: visaCase.destinationCountry,
+      // "Assigned Officer" — had a schema field but nothing anywhere ever
+      // set it. Not a fabricated assignment: the officer already handling
+      // this Visa Case naturally continues owning its embassy submission,
+      // the same real data the case's own assignment engine produced.
+      assignedOfficer: visaCase.assignedTo || null,
       submissionMethod,
       status: submissionMethod === "Courier" ? "Ready" : "Received",
       submissionDate: subDate,
@@ -171,6 +207,31 @@ class EmbassyProcessingService {
   }
 
   /**
+   * Full response for GET /embassy-submissions/:id. getEmbassySubmissionById
+   * alone is missing two Response Includes items: Passport Status (lives in
+   * a separate PassportTrackingModel record, no join existed) and Timeline
+   * (EmbassySubmissionModel has no timeline array of its own — its real
+   * communicationLog, already submission-scoped and chronological, plus the
+   * audit trail, together serve that role rather than a fabricated one).
+   */
+  static async getEmbassySubmissionAggregate(submissionId, tenantId) {
+    const sub = await this.getEmbassySubmissionById(submissionId, tenantId);
+
+    const [passport, auditTrail] = await Promise.all([
+      PassportTrackingModel.findOne({ tenantId, visaCaseId: sub.visaCaseId }).select("currentStatus currentLocation isLost isDamaged").lean(),
+      AuditLogModel.find({ tenantId, resource: "EmbassySubmission", resourceId: sub._id.toString() }).sort({ createdAt: -1 }).limit(20).lean()
+    ]);
+
+    const subObj = sub.toObject ? sub.toObject() : sub;
+    return {
+      ...subObj,
+      passportStatus: passport ? { status: passport.currentStatus, location: passport.currentLocation, isLost: passport.isLost, isDamaged: passport.isDamaged } : null,
+      timeline: [...sub.communicationLog].sort((a, b) => new Date(b.loggedAt) - new Date(a.loggedAt)),
+      auditTrail
+    };
+  }
+
+  /**
    * Update Embassy Processing Status
    */
   static async updateEmbassySubmission(submissionId, updateData, tenantId, userId) {
@@ -196,24 +257,33 @@ class EmbassyProcessingService {
     if (courierCompany) sub.courierTracking.courierCompany = courierCompany;
     if (remarks) sub.remarks = remarks;
     if (referenceNumber) sub.referenceNumber = referenceNumber;
+    // Real Courier Tracking dates, set from the actual transition moment
+    // rather than left null forever.
+    if (status === "Dispatched") sub.courierTracking.dispatchDate = new Date();
+    if (status === "Received") sub.courierTracking.receivedDate = new Date();
 
     await sub.save();
 
-    // Sync status back to Visa Case
-    const visaCase = await VisaCaseModel.findOne({ _id: sub.visaCaseId, tenantId });
-    if (visaCase) {
-      if (status === "Under Review") visaCase.status = VISA_CASE_STATUSES.EMBASSY_PROCESSING;
-      else if (status === "Additional Documents Required") visaCase.status = VISA_CASE_STATUSES.ADDITIONAL_DOCUMENTS_REQUIRED;
-      else if (status === "Interview Required") visaCase.status = VISA_CASE_STATUSES.INTERVIEW_SCHEDULED;
-      else if (status === "Medical Required") visaCase.status = VISA_CASE_STATUSES.MEDICAL_SCHEDULED;
+    // Sync status back to Visa Case. Previously unconditional — a PATCH
+    // that only changed remarks/trackingNumber/etc. (no status field at
+    // all) reached `status.replace(...)` on undefined and crashed the
+    // entire request.
+    if (status) {
+      const visaCase = await VisaCaseModel.findOne({ _id: sub.visaCaseId, tenantId });
+      if (visaCase) {
+        if (status === "Under Review") visaCase.status = VISA_CASE_STATUSES.EMBASSY_PROCESSING;
+        else if (status === "Additional Documents Required") visaCase.status = VISA_CASE_STATUSES.ADDITIONAL_DOCUMENTS_REQUIRED;
+        else if (status === "Interview Required") visaCase.status = VISA_CASE_STATUSES.INTERVIEW_SCHEDULED;
+        else if (status === "Medical Required") visaCase.status = VISA_CASE_STATUSES.MEDICAL_SCHEDULED;
 
-      visaCase.timeline.push({
-        event: `EmbassySubmission${status.replace(/\s+/g, "")}`,
-        description: `Embassy submission ${sub.submissionNumber} status updated to: ${status}.`,
-        performedBy: userId || "system",
-        timestamp: new Date()
-      });
-      await visaCase.save();
+        visaCase.timeline.push({
+          event: `EmbassySubmission${status.replace(/\s+/g, "")}`,
+          description: `Embassy submission ${sub.submissionNumber} status updated to: ${status}.`,
+          performedBy: userId || "system",
+          timestamp: new Date()
+        });
+        await visaCase.save();
+      }
     }
 
     await AuditLogModel.create({
@@ -226,6 +296,21 @@ class EmbassyProcessingService {
     }).catch(err => console.error("Audit error:", err));
 
     publishEvent("EmbassySubmissionUpdated", { submissionId: sub._id, visaCaseId: sub.visaCaseId, status, tenantId, branchId: sub.branchId });
+
+    // EmbassySubmissionUpdated is generic; the doc names several
+    // status-specific events that were never published at all —
+    // EmbassySubmissionDispatched, EmbassySubmissionReceived,
+    // InterviewRequested, MedicalRequested, EmbassySubmissionClosed.
+    const specificEventByStatus = {
+      Dispatched: "EmbassySubmissionDispatched",
+      Received: "EmbassySubmissionReceived",
+      "Interview Required": "InterviewRequested",
+      "Medical Required": "MedicalRequested",
+      Closed: "EmbassySubmissionClosed"
+    };
+    if (status && specificEventByStatus[status]) {
+      publishEvent(specificEventByStatus[status], { submissionId: sub._id, visaCaseId: sub.visaCaseId, tenantId, branchId: sub.branchId });
+    }
 
     return sub;
   }
@@ -288,6 +373,18 @@ class EmbassyProcessingService {
 
     publishEvent("AdditionalDocumentRequested", { submissionId: sub._id, visaCaseId: sub.visaCaseId, documentType, tenantId, branchId: sub.branchId });
 
+    // Business Workflow's "Notify Officer" / "Notify Traveler" steps — no
+    // real email/SMS provider exists anywhere in this codebase, so this
+    // publishes the same NotificationRequested pattern already established
+    // for other modules (Travel Operations) rather than claiming a
+    // notification was actually sent.
+    if (sub.assignedOfficer) {
+      publishEvent("NotificationRequested", { tenantId, branchId: sub.branchId, event: "EmbassyAdditionalDocumentRequested", priority: "high", recipientId: sub.assignedOfficer, submissionId: sub._id, visaCaseId: sub.visaCaseId, documentType, dueDate: due });
+    }
+    if (visaCase?.travelerId) {
+      publishEvent("NotificationRequested", { tenantId, branchId: sub.branchId, event: "EmbassyAdditionalDocumentRequested", priority: "high", recipientId: visaCase.travelerId.toString(), submissionId: sub._id, visaCaseId: sub.visaCaseId, documentType, dueDate: due });
+    }
+
     return sub;
   }
 
@@ -302,6 +399,9 @@ class EmbassyProcessingService {
     const now = new Date();
     const terminalDecision = ["Approved", "Rejected", "Returned"].includes(decision);
     sub.actualCompletionDate = terminalDecision ? now : null;
+    // SLA Management "Decision Time" — named in the doc's tracked fields but
+    // this schema field was never set anywhere.
+    sub.slaTracking.decisionTime = now;
     if (decision === "Approved") sub.status = "Approved";
     else if (decision === "Rejected") sub.status = "Rejected";
     else if (decision === "Returned") sub.status = "Returned";
@@ -321,7 +421,7 @@ class EmbassyProcessingService {
     if (sub.expectedCompletionDate && now > sub.expectedCompletionDate) {
       sub.slaTracking.isSlaBreached = true;
       sub.slaTracking.delayDays = Math.ceil((now - sub.expectedCompletionDate) / (1000 * 60 * 60 * 24));
-      publishEvent("SLABreached", { submissionId: sub._id, delayDays: sub.slaTracking.delayDays, tenantId });
+      publishEvent("SLABreached", { submissionId: sub._id, delayDays: sub.slaTracking.delayDays, tenantId, branchId: sub.branchId });
     }
 
     await sub.save();
@@ -365,6 +465,16 @@ class EmbassyProcessingService {
     }).catch(err => console.error("Audit error:", err));
 
     publishEvent("VisaDecisionReceived", { submissionId: sub._id, visaCaseId: sub.visaCaseId, decision, tenantId, branchId: sub.branchId });
+
+    // VisaDecisionReceived is the generic event; VisaApproved/VisaRejected
+    // (named in the Domain Event Map) were previously only pushed into the
+    // Visa Case's own embedded timeline array, never on the real event bus —
+    // meaning no subscriber could react specifically to an approval/rejection.
+    if (decision === "Approved") {
+      publishEvent(VISA_DOMAIN_EVENTS.VISA_APPROVED, { submissionId: sub._id, visaCaseId: sub.visaCaseId, visaNumber: visaNumber || null, tenantId, branchId: sub.branchId });
+    } else if (decision === "Rejected") {
+      publishEvent(VISA_DOMAIN_EVENTS.VISA_REJECTED, { submissionId: sub._id, visaCaseId: sub.visaCaseId, rejectionReason: rejectionReason || null, tenantId, branchId: sub.branchId });
+    }
 
     return sub;
   }

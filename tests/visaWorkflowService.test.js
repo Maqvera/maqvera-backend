@@ -2,15 +2,15 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import VisaWorkflowService from "../services/VisaWorkflowService.js";
 
-test("workflow definition exposes the expected states and transitions", () => {
-  const definition = VisaWorkflowService.getWorkflowDefinition();
+test("workflow definition exposes the expected states and transitions", async () => {
+  const definition = await VisaWorkflowService.getWorkflowDefinition();
 
   assert.ok(definition.name.includes("Visa Case Workflow"));
   assert.ok(definition.states.some((state) => state.key === "documents_pending"));
   assert.ok(definition.transitions.some((transition) => transition.fromState === "documents_pending" && transition.toState === "documents_verified"));
 });
 
-test("workflow transition is allowed when guard conditions are satisfied", () => {
+test("workflow transition is allowed when guard conditions are satisfied", async () => {
   const visaCase = {
     status: "documents_pending",
     workflow: {
@@ -28,13 +28,13 @@ test("workflow transition is allowed when guard conditions are satisfied", () =>
     incidents: []
   };
 
-  const result = VisaWorkflowService.evaluateTransition({ visaCase, targetState: "documents_verified", userRoles: ["officer"] });
+  const result = await VisaWorkflowService.evaluateTransition({ visaCase, targetState: "documents_verified", userRoles: ["officer"] });
 
   assert.equal(result.allowed, true);
   assert.deepEqual(result.reasons, []);
 });
 
-test("workflow transition blocks when open incidents exist", () => {
+test("workflow transition blocks when open incidents exist", async () => {
   const visaCase = {
     status: "documents_pending",
     workflow: { currentStep: "documents_pending" },
@@ -43,13 +43,13 @@ test("workflow transition blocks when open incidents exist", () => {
     incidents: [{ status: "open", title: "Missing Police Clearance" }]
   };
 
-  const result = VisaWorkflowService.evaluateTransition({ visaCase, targetState: "documents_verified", userRoles: ["officer"] });
+  const result = await VisaWorkflowService.evaluateTransition({ visaCase, targetState: "documents_verified", userRoles: ["officer"] });
   assert.equal(result.allowed, false);
   assert.ok(result.reasons.some((r) => r.includes("incidents block workflow")));
 });
 
-test("workflow definition includes SLA rules, escalation chain, and approval policies", () => {
-  const definition = VisaWorkflowService.getWorkflowDefinition();
+test("workflow definition includes SLA rules, escalation chain, and approval policies", async () => {
+  const definition = await VisaWorkflowService.getWorkflowDefinition();
 
   assert.ok(Array.isArray(definition.slaRules) && definition.slaRules.length >= 5);
   assert.ok(Array.isArray(definition.escalationChain) && definition.escalationChain.length >= 5);

@@ -41,25 +41,66 @@ class DocumentVerificationService {
 
     const latestVersion = doc.versions.find((version) => version.versionNumber === doc.currentVersion);
     if (!latestVersion) throw new Error("Latest document version is missing.");
-    if (latestVersion.virusScanStatus !== "clean") throw new Error("Document cannot enter verification until virus scanning is clean.");
+    // "skipped" is the honest status a real upload gets (no scanner is
+    // configured — see EnterpriseDocumentService) — only a real "infected"
+    // result should ever block verification. This used to require a literal
+    // "clean" status, which nothing could ever produce, permanently
+    // blocking verification for every real (non-simulated) document.
+    if (latestVersion.virusScanStatus === "infected") throw new Error("Document cannot enter verification — it failed virus scanning.");
     verification.verificationStatus = "processing";
 
-    // Stage 1: Virus Scan
+    // Stage 1: Virus Scan — the result is already known synchronously from
+    // upload time, so this is real, not queued, in every mode.
     verification.virusScanResult = {
       status: latestVersion.virusScanStatus,
       engine: "Document storage scanner",
       scannedAt: new Date()
     };
+    publishEvent("VirusScanCompleted", { verificationId: verification._id, documentId: doc._id, status: latestVersion.virusScanStatus, tenantId, branchId: doc.branchId });
 
-    // Stage 2-5 are queued external processors. This service records their
-    // artifacts; it never fabricates OCR or AI evidence for an officer.
+    // Stage 4: Duplicate Detection by real content checksum — this needs no
+    // OCR/AI provider at all, just the genuine SHA-256/ETag EnterpriseDocumentService
+    // already computes on upload, so it runs in every mode (not gated behind
+    // simulation like the OCR-derived checks below).
+    const checksumMatch = latestVersion.checksum
+      ? await EnterpriseDocumentModel.findOne({
+        tenantId,
+        _id: { $ne: doc._id },
+        "versions.checksum": latestVersion.checksum,
+        isSoftDeleted: { $ne: true }
+      })
+      : null;
+    verification.duplicateDetectionResult = {
+      status: checksumMatch ? "duplicate_suspected" : "clean",
+      duplicateScore: checksumMatch ? 100 : 0,
+      matchedDocumentIds: checksumMatch ? [checksumMatch._id] : [],
+      matchedCaseNumbers: [],
+      analyzedAt: new Date()
+    };
+    verification.duplicateScore = checksumMatch ? 100 : 0;
+
+    // Stage 2-3/5 (OCR/AI/business-rule content analysis) are queued
+    // external processors. This service records their artifacts; it never
+    // fabricates OCR or AI evidence for an officer.
     if (process.env.VERIFICATION_SIMULATION_MODE !== "true") {
       verification.ocrResult.status = "pending";
       verification.aiValidationResult.status = "pending";
       verification.businessRuleResult.status = "pending";
       verification.verificationStatus = "processing";
       await verification.save();
-      await AuditLogModel.create({ tenantId, userId: userId || "system", action: "START_DOCUMENT_VERIFICATION", resource: "EnterpriseVerification", resourceId: verification._id.toString(), details: { documentId: doc._id, version: doc.currentVersion } }).catch(err => console.error("Audit error:", err));
+
+      // "Create Timeline" — was previously only done on the simulation-mode
+      // path, meaning a real (production) verification start left no trace
+      // on the Visa Case's own timeline at all.
+      visaCase.timeline.push({
+        event: "VerificationStarted",
+        description: `Verification started for ${doc.documentType}. Queued for OCR/AI processing.`,
+        performedBy: userId || "system",
+        timestamp: new Date()
+      });
+      await visaCase.save();
+
+      await AuditLogModel.create({ tenantId, userId: userId || "system", action: "START_DOCUMENT_VERIFICATION", resource: "EnterpriseVerification", resourceId: verification._id.toString(), details: { documentId: doc._id, version: doc.currentVersion, duplicateScore: verification.duplicateScore } }).catch(err => console.error("Audit error:", err));
       publishEvent("VerificationStarted", { verificationId: verification._id, documentId: doc._id, visaCaseId: visaCase._id, tenantId, branchId: doc.branchId });
       publishEvent("OCRQueued", { verificationId: verification._id, documentId: doc._id, tenantId });
       publishEvent("AIValidationQueued", { verificationId: verification._id, documentId: doc._id, tenantId });
@@ -106,6 +147,11 @@ class DocumentVerificationService {
       tamperingDetected: false,
       faceDetected: true,
       signatureDetected: true,
+      fakeDocumentIndicatorsDetected: false,
+      hasMissingPages: false,
+      isLowResolution: false,
+      glareDetected: false,
+      photoQualityScore: 94,
       notes: "High quality scan. All security features present.",
       evaluatedAt: new Date()
     };
@@ -117,7 +163,12 @@ class DocumentVerificationService {
       evaluatedAt: new Date()
     };
 
-    // Stage 4: Duplicate Detection Engine
+    // Stage 4: Duplicate Detection Engine — OCR-derived passport-number
+    // matching, as an additional signal alongside the real checksum-based
+    // match already computed above (not a replacement for it: a document
+    // can be a duplicate by either signal, so the two results are merged
+    // by taking the higher-confidence match rather than one overwriting
+    // the other).
     const duplicateMatch = await EnterpriseVerificationModel.findOne({
       tenantId,
       documentId: { $ne: doc._id },
@@ -125,24 +176,15 @@ class DocumentVerificationService {
       isSoftDeleted: { $ne: true }
     });
 
-    if (duplicateMatch) {
+    if (duplicateMatch && verification.duplicateScore < 85) {
       verification.duplicateDetectionResult = {
         status: "duplicate_suspected",
         duplicateScore: 85,
-        matchedDocumentIds: [duplicateMatch.documentId],
+        matchedDocumentIds: [...verification.duplicateDetectionResult.matchedDocumentIds, duplicateMatch.documentId],
         matchedCaseNumbers: [visaCase.caseNumber],
         analyzedAt: new Date()
       };
       verification.duplicateScore = 85;
-    } else {
-      verification.duplicateDetectionResult = {
-        status: "clean",
-        duplicateScore: 0,
-        matchedDocumentIds: [],
-        matchedCaseNumbers: [],
-        analyzedAt: new Date()
-      };
-      verification.duplicateScore = 0;
     }
 
     // Stage 5: Business Rule Engine
@@ -168,8 +210,27 @@ class DocumentVerificationService {
       }
     ];
 
+    // Required Pages / Required Signature / Required Stamp — per-document
+    // config carried from the Requirement Profile, previously had no
+    // backing fields anywhere so no rule could ever reference them.
+    const requirementEntry = visaCase.requiredDocuments.find((r) => r.documentType.toLowerCase() === doc.documentType.toLowerCase());
+    if (requirementEntry?.requiresSignature) {
+      const signaturePassed = verification.aiValidationResult.signatureDetected;
+      rules.push({ ruleCode: "REQUIRED_SIGNATURE", ruleName: "Signature Present", status: signaturePassed ? "passed" : "failed", message: signaturePassed ? "Signature detected." : "No signature detected on document." });
+    }
+    if (requirementEntry?.requiresStamp) {
+      rules.push({ ruleCode: "REQUIRED_STAMP", ruleName: "Official Stamp Present", status: "pending", message: "Stamp verification requires manual officer review — not automatically detectable without a configured AI vision provider." });
+    }
+    if (requirementEntry?.requiredPages) {
+      rules.push({ ruleCode: "REQUIRED_PAGES", ruleName: `Minimum ${requirementEntry.requiredPages} Page(s)`, status: "pending", message: "Page count verification requires manual officer review — not automatically detectable without a configured AI vision provider." });
+    }
+
+    // Overall status previously only ever reflected passportValid — a
+    // failed signature/stamp/page-count rule was silently ignored.
+    const anyRuleFailed = rules.some((rule) => rule.status === "failed");
+    const anyRulePending = rules.some((rule) => rule.status === "pending");
     verification.businessRuleResult = {
-      status: passportValid ? "passed" : "failed",
+      status: anyRuleFailed ? "failed" : anyRulePending ? "pending" : "passed",
       rulesEvaluated: rules,
       minimumValidityPassed: passportValid,
       travelerMatchPassed: true,
@@ -237,9 +298,17 @@ class DocumentVerificationService {
       isSoftDeleted: { $ne: true }
     });
 
+    // "Expiry Status" — the document's own expiry (from Part 4's
+    // expiry-tracking fields), not a verification-pipeline result, but
+    // named in this endpoint's Response Includes list.
+    const expiryStatus = doc.expiryDate
+      ? (doc.isExpired ? "expired" : "valid")
+      : "not_applicable";
+
     if (!verification) return {
       documentId: doc._id, documentType: doc.documentType, currentVersion: doc.currentVersion,
       verificationStatus: "pending", riskScore: 0, riskLevel: "Low", duplicateScore: 0,
+      expiryStatus, overallDecision: "pending", officer: null, completedDate: null,
       stageResults: null, history: [], createdAt: null, updatedAt: null
     };
 
@@ -251,6 +320,12 @@ class DocumentVerificationService {
       riskScore: verification.riskScore,
       riskLevel: verification.riskLevel,
       duplicateScore: verification.duplicateScore,
+      expiryStatus,
+      // Top-level aliases for the doc's literal Response Includes fields —
+      // additive; the same data is still available nested in stageResults.
+      overallDecision: verification.finalDecision?.decision || "pending",
+      officer: verification.manualReviewResult?.reviewedBy || verification.finalDecision?.decidedBy || null,
+      completedDate: verification.manualReviewResult?.reviewedAt || verification.finalDecision?.decidedAt || null,
       stageResults: {
         virusScan: verification.virusScanResult,
         ocr: verification.ocrResult,
@@ -291,8 +366,15 @@ class DocumentVerificationService {
     if (!verification) {
       throw new Error("Verification record not found. Please start verification first.");
     }
-    if (verification.verificationStatus !== "manual_review") {
-      throw new Error("Manual review is only allowed after automated verification stages complete.");
+    // "processing" is included alongside "manual_review": no real OCR/AI
+    // provider is configured anywhere in this codebase (queueing is real,
+    // but nothing ever calls back to complete those stages — see
+    // startVerification), so a document run through the real, non-simulated
+    // pipeline stays in "processing" forever. Without this, manual review —
+    // the one path an officer can always fall back to — would be
+    // permanently unreachable for every real document.
+    if (!["manual_review", "processing"].includes(verification.verificationStatus)) {
+      throw new Error("Manual review is only allowed while verification is in progress or awaiting manual review.");
     }
 
     const isApproved = decision.toLowerCase() === "approved";
@@ -364,6 +446,18 @@ class DocumentVerificationService {
 
     publishEvent("ManualReviewCompleted", { verificationId: verification._id, documentId: doc._id, decision, tenantId });
     publishEvent(isApproved ? "VerificationApproved" : "VerificationRejected", { verificationId: verification._id, documentId: doc._id, tenantId });
+
+    // VerificationApproved/Rejected is this service's own naming;
+    // DocumentVerified and DocumentApproved/DocumentRejected (named in the
+    // Domain Event Maps of Part 1 and Part 4 respectively) were never
+    // published. DocumentVerified is also what SearchEngineService
+    // re-indexes a document on.
+    if (isApproved) {
+      publishEvent("DocumentVerified", { verificationId: verification._id, documentId: doc._id, visaCaseId: doc.referenceId, tenantId, branchId: doc.branchId });
+      publishEvent("DocumentApproved", { verificationId: verification._id, documentId: doc._id, visaCaseId: doc.referenceId, tenantId, branchId: doc.branchId });
+    } else {
+      publishEvent("DocumentRejected", { verificationId: verification._id, documentId: doc._id, visaCaseId: doc.referenceId, reason: remarks || decision, tenantId, branchId: doc.branchId });
+    }
 
     return verification;
   }

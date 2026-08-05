@@ -32,6 +32,15 @@ const VisaRequirementSchema = new mongoose.Schema({
     default: "Adult",
     index: true
   },
+  // Requirement Resolution query param — was accepted by the endpoint
+  // contract but had no backing field anywhere, so it could never actually
+  // affect which profile resolves (e.g. "Business" vs "Tourism" purpose
+  // under the same visa type).
+  travelPurpose: {
+    type: String,
+    default: "ALL",
+    index: true
+  },
   version: {
     type: Number,
     default: 1
@@ -63,7 +72,12 @@ const VisaRequirementSchema = new mongoose.Schema({
       description: { type: String, default: null },
       isMandatory: { type: Boolean, default: true },
       allowedFormats: [{ type: String }],
-      maxFileSizeMb: { type: Number, default: 10 }
+      maxFileSizeMb: { type: Number, default: 10 },
+      // Business Rule Validation "Required Pages / Required Signatures /
+      // Required Stamp ... All configurable" — had no backing fields at all.
+      requiredPages: { type: Number, default: null },
+      requiresSignature: { type: Boolean, default: false },
+      requiresStamp: { type: Boolean, default: false }
     }
   ],
   eligibilityRules: [
@@ -78,7 +92,14 @@ const VisaRequirementSchema = new mongoose.Schema({
       maxAge: { type: Number, default: 120 },
       sponsorRequired: { type: Boolean, default: false },
       returnTicketRequired: { type: Boolean, default: true },
-      financialThresholdAmount: { type: Number, default: 0 }
+      financialThresholdAmount: { type: Number, default: 0 },
+      // Named in the Eligibility Rules examples list but had no backing
+      // fields at all — the other 7 of these 12 examples were real.
+      restrictedOccupations: [{ type: String }],
+      travelHistoryRequired: { type: Boolean, default: false },
+      invitationRequired: { type: Boolean, default: false },
+      blacklistCheckRequired: { type: Boolean, default: true },
+      previousVisaHistoryRequired: { type: Boolean, default: false }
     }
   ],
   processingRules: [
@@ -94,7 +115,9 @@ const VisaRequirementSchema = new mongoose.Schema({
     entryCount: { type: String, enum: ["single", "double", "multiple"], default: "single" },
     gracePeriodDays: { type: Number, default: 0 },
     extensionAllowed: { type: Boolean, default: false },
-    renewalAllowed: { type: Boolean, default: false }
+    renewalAllowed: { type: Boolean, default: false },
+    // Named in the Validity Rules list but had no backing field at all.
+    overstayPolicy: { type: String, default: null }
   },
   fees: {
     applicationFee: { type: Number, default: 0 },
@@ -104,6 +127,9 @@ const VisaRequirementSchema = new mongoose.Schema({
     medicalFee: { type: Number, default: 0 },
     courierFee: { type: Number, default: 0 },
     urgentFee: { type: Number, default: 0 },
+    // Named in the Fee Configuration list but had no backing fields at all.
+    cancellationFee: { type: Number, default: 0 },
+    refundPolicy: { type: String, default: null },
     currency: { type: String, default: "USD" }
   },
   specialNotes: {
@@ -118,6 +144,10 @@ const VisaRequirementSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 VisaRequirementSchema.index({ tenantId: 1, destinationCountry: 1, visaType: 1, nationality: 1, travelerCategory: 1, version: -1 });
+// Business Rule "Unique Profile Combination" — was not enforced at the DB
+// level at all, so two concurrent creations for the same combination could
+// both resolve the same "next version" number and silently collide.
+VisaRequirementSchema.index({ tenantId: 1, destinationCountry: 1, visaType: 1, nationality: 1, travelerCategory: 1, travelPurpose: 1, version: 1 }, { unique: true });
 
 const VisaRequirementModel = mongoose.model("visa_requirement", VisaRequirementSchema);
 

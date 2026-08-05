@@ -7,10 +7,14 @@ The current application is a Node.js/Express modular monolith with MongoDB/Mongo
 | Context | Write ownership | Read model / integration |
 | --- | --- | --- |
 | Visa case, requirements, documents, workflow | Visa services and aggregate models | Timeline events, dashboard summaries, search index |
-| Embassy, appointment, passport, incident | Dedicated domain services | Timeline, analytics, search event consumers |
-| Analytics | `KPIEngine` worker | Summary collections + Redis/memory cache |
-| Search | `SearchEngineService` indexer | `search_index`, saved-search and history collections |
+| Embassy, appointment, passport | Dedicated domain services | Timeline, analytics, search event consumers |
+| Incident | `EnterpriseIncidentEngineService` (shared with Travel — not Visa-only) | Timeline, SLA sweep worker (`incidentSlaScheduler.js`), search index |
+| Timeline & Notes | `EnterpriseTimelineEngineService` (shared with Travel), fed by `VisaTimelineEventBus` | `TravelTimelineModel`, AI context provider, search index |
+| Analytics | `KPIEngine` worker + `analyticsScheduler.js` (incremental + nightly cron) | `VisaAnalyticsSummaryModel`/`VisaCustomerAnalyticsSummaryModel` + Redis/memory cache via `CacheManager` |
+| Search | `SearchEngineService` indexer (shared with Travel) | `search_index`, saved-search and history collections; Redis-cached query results |
 | Files | Document service | Configured local, S3-compatible, or Cloudinary provider |
+
+Incident, Timeline, and Search are deliberately centralized, cross-module engines rather than Visa-only implementations — Travel Plans consume the same services. This matches the "build a shared X Engine" recommendation each of the Visa API doc's Parts 10/11/13 makes for itself.
 
 ## Event contract
 
@@ -27,3 +31,4 @@ All credentials remain in environment variables. `envValidator` validates JWT/MF
 - Dashboards and search read summary/index collections, not operational Visa records.
 - Cross-context updates occur through APIs/events, not direct collection writes.
 - AI/verification results remain advisory; human workflow transitions make final decisions.
+- Background workers (`node-cron`, bootstrapped in `server.js`) own everything that must not run synchronously in a request: analytics refresh, incident SLA sweeps, appointment reminders, document expiry checks. New scheduled behavior belongs in a new `services/*Scheduler.js` following that same `init()`/`stop()` pattern, not inline polling.

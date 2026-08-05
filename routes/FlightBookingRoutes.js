@@ -1,4 +1,6 @@
 import express from "express";
+import rateLimit from "express-rate-limit";
+import authenticateAccessToken from "../middleware/authenticateAccessToken.js";
 import {
   CreateFlightBooking,
   GetFlightBookingById,
@@ -17,6 +19,19 @@ import {
 } from "../controllers/FlightBookingController.js";
 
 const router = express.Router();
+
+const limiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  limit: 100,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: "Too many requests from this IP, please try again after 10 minutes."
+});
+
+// "Authentication: Required (Bearer JWT)" / "Authorization: Required
+// (flight.book)" — every route here was previously completely public,
+// same class of bug already fixed for Flight Search (API-006B).
+router.use(authenticateAccessToken, limiter);
 
 // Create Live PNR Booking from Flight Offer
 router.post("/", CreateFlightBooking);

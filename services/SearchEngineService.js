@@ -1,6 +1,10 @@
+import mongoose from "mongoose";
 import SearchIndexModel from "../models/SearchIndexModel.js";
 import SavedSearchModel from "../models/SavedSearchModel.js";
 import SearchHistoryModel from "../models/SearchHistoryModel.js";
+import EmployeeProfileModel from "../models/EmployeeProfilemodel.js";
+import AuditLogModel from "../models/AuditLogmodel.js";
+import CacheManager from "../utils/cacheManager.js";
 import VisaCaseModel from "../models/VisaCaseModel.js";
 import EnterpriseDocumentModel from "../models/EnterpriseDocumentModel.js";
 import EmbassySubmissionModel from "../models/EmbassySubmissionModel.js";
@@ -21,9 +25,74 @@ import BookingTaskModel from "../models/BookingTaskModel.js";
 import { publishEvent, subscribeEvent } from "../utils/eventBus.js";
 
 const MAX_PAGE_SIZE = Number.parseInt(process.env.ENTERPRISE_SEARCH_MAX_PAGE_SIZE || "100", 10) || 100;
+const CACHE_TTL_SECONDS = Number.parseInt(process.env.SEARCH_CACHE_TTL_SECONDS || "30", 10) || 30;
+const FUZZY_MAX_DISTANCE = Number.parseInt(process.env.SEARCH_FUZZY_MAX_DISTANCE || "2", 10) || 2;
+const FUZZY_CANDIDATE_LIMIT = Number.parseInt(process.env.SEARCH_FUZZY_CANDIDATE_LIMIT || "500", 10) || 500;
 const escapeRegex = (value) => String(value || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const normalizeArray = (value) => Array.isArray(value) ? value.filter(Boolean) : value ? [value] : [];
 const maskPassport = (value) => value ? `${"*".repeat(Math.max(0, value.length - 4))}${value.slice(-4)}` : null;
+
+/** Search Highlighting — "Matched Text, Highlighted Keywords". */
+const buildHighlight = (text, term) => {
+  if (!text || !term) return null;
+  const idx = String(text).toLowerCase().indexOf(String(term).toLowerCase());
+  if (idx === -1) return null;
+  const raw = String(text);
+  return { text: raw, highlighted: `${raw.slice(0, idx)}<mark>${raw.slice(idx, idx + term.length)}</mark>${raw.slice(idx + term.length)}` };
+};
+
+/**
+ * Advanced Search — Boolean Operators (AND/OR), NOT/exclusion, Exact Phrase.
+ * A real, bounded query parser (not a fake pass-through): default AND
+ * across space-separated terms, explicit " OR " splits alternative groups,
+ * a leading "-" or "NOT " excludes a term, and a fully-quoted query is an
+ * exact phrase. Wildcards/nested filters need a real search engine
+ * (OpenSearch/Elasticsearch, per the doc's own "Search Performance"
+ * section) and are intentionally not faked here.
+ */
+const parseSearchQuery = (raw) => {
+  let term = String(raw || "").trim();
+  if (!term) return { orGroups: [], excluded: [], phrase: null };
+  const phraseMatch = term.match(/^"(.+)"$/);
+  if (phraseMatch) return { orGroups: [], excluded: [], phrase: phraseMatch[1] };
+
+  const excluded = [];
+  term = term.replace(/(?:^|\s)(?:NOT\s+|-)("[^"]+"|\S+)/gi, (_, t) => {
+    excluded.push(t.replace(/^"|"$/g, ""));
+    return " ";
+  }).trim();
+
+  const orGroups = term.split(/\s+OR\s+/i)
+    .map((segment) => (segment.match(/"[^"]+"|\S+/g) || [])
+      .filter((t) => !/^AND$/i.test(t))
+      .map((t) => t.replace(/^"|"$/g, "")))
+    .filter((group) => group.length > 0);
+
+  return { orGroups, excluded, phrase: null };
+};
+
+/** Fuzzy Search fallback — bounded Levenshtein distance, only when the
+ * exact/boolean pass returns zero hits. Honest limitation: this scans a
+ * capped candidate pool in JS, not a real fuzzy index — the doc's own
+ * "Search Performance" section names OpenSearch/Elasticsearch as the
+ * eventual real answer for typo-tolerant search at scale. */
+const levenshteinDistance = (a, b) => {
+  const m = a.length;
+  const n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+  const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = 0; i <= m; i += 1) dp[i][0] = i;
+  for (let j = 0; j <= n; j += 1) dp[0][j] = j;
+  for (let i = 1; i <= m; i += 1) {
+    for (let j = 1; j <= n; j += 1) {
+      dp[i][j] = a[i - 1] === b[j - 1]
+        ? dp[i - 1][j - 1]
+        : 1 + Math.min(dp[i - 1][j - 1], dp[i - 1][j], dp[i][j - 1]);
+    }
+  }
+  return dp[m][n];
+};
 
 class SearchEngineService {
   static initialized = false;
@@ -41,6 +110,10 @@ class SearchEngineService {
       CustomerArchived: (p) => this.removeEntity({ ...p, entityType: "Traveler", entityId: p.customerId }),
       DocumentUploaded: (p) => this.indexDocument(p),
       DocumentVersionCreated: (p) => this.indexDocument(p),
+      DocumentVerified: (p) => this.indexDocument(p),
+      DocumentApproved: (p) => this.indexDocument(p),
+      DocumentRejected: (p) => this.indexDocument(p),
+      DocumentExpired: (p) => this.indexDocument(p),
       DocumentArchived: (p) => this.removeEntity({ ...p, entityType: "Document", entityId: p.documentId }),
       EmbassySubmissionCreated: (p) => this.indexEmbassySubmission(p),
       EmbassySubmissionUpdated: (p) => this.indexEmbassySubmission(p),
@@ -98,12 +171,14 @@ class SearchEngineService {
 
   static async indexEntity({ tenantId, branchId = "main", entityType, entityId, title, description = "", keywords = [], matchedFields = [], module, status = "Active", navigationUrl, permissionsRequired = [], facets = {} }) {
     if (!tenantId || !entityType || !entityId || !title || !module || !navigationUrl) return null;
+    const existedBefore = await SearchIndexModel.exists({ tenantId, entityType, entityId: String(entityId) });
     const index = await SearchIndexModel.findOneAndUpdate(
       { tenantId, entityType, entityId: String(entityId) },
       { $set: { tenantId, branchId, entityType, entityId: String(entityId), title, description, keywords, matchedFields, module, status, navigationUrl, permissionsRequired, facets, isSoftDeleted: false } },
       { upsert: true, new: true, setDefaultsOnInsert: true }
     );
-    publishEvent("SearchIndexUpdated", { tenantId, branchId, entityType, entityId: String(entityId) });
+    publishEvent(existedBefore ? "SearchIndexUpdated" : "SearchIndexCreated", { tenantId, branchId, entityType, entityId: String(entityId) });
+    await this._invalidateSearchCache(tenantId);
     return index;
   }
 
@@ -111,6 +186,16 @@ class SearchEngineService {
     if (!tenantId || !entityType || !entityId) return;
     await SearchIndexModel.updateOne({ tenantId, entityType, entityId: String(entityId) }, { $set: { isSoftDeleted: true } });
     publishEvent("SearchIndexDeleted", { tenantId, entityType, entityId: String(entityId) });
+    await this._invalidateSearchCache(tenantId);
+  }
+
+  /** "Search Performance... Redis Cache" — a search index write must
+   * invalidate any cached result pages for that tenant, or a just-created
+   * entity would stay invisible in cached search results for up to
+   * CACHE_TTL_SECONDS. */
+  static async _invalidateSearchCache(tenantId) {
+    await CacheManager.invalidatePattern(`enterprise-search:${tenantId}:*`);
+    publishEvent("SearchCacheRefreshed", { tenantId });
   }
 
   static async indexVisaCase({ tenantId, visaCaseId, branchId }) {
@@ -351,10 +436,30 @@ class SearchEngineService {
   static async globalSearch({ tenantId, query = "", entityType, branchId, permissions = [], filters = {}, page = 1, pageSize = 20, sort = "score", order = "desc" }) {
     const safePage = Math.max(Number.parseInt(page, 10) || 1, 1);
     const safePageSize = Math.min(Math.max(Number.parseInt(pageSize, 10) || 20, 1), MAX_PAGE_SIZE);
+    const term = String(query || "").trim();
+    const permissionList = normalizeArray(permissions).slice().sort();
+
+    // Cache key includes the requester's permission set — search results are
+    // role-filtered, so two users with different permissions must never
+    // share a cached page.
+    const cacheKey = [
+      "enterprise-search", tenantId, branchId || "main",
+      entityType ? normalizeArray(entityType).slice().sort().join(",") : "*",
+      term, JSON.stringify(filters || {}), safePage, safePageSize, sort, order, permissionList.join(",")
+    ].join(":");
+
+    const { data, fromCache } = await CacheManager.getOrCompute(
+      cacheKey,
+      () => this._computeGlobalSearch({ tenantId, term, entityType, branchId, permissionList, filters, safePage, safePageSize, sort, order }),
+      CACHE_TTL_SECONDS
+    );
+    return { results: data.results, meta: { ...data.meta, fromCache } };
+  }
+
+  static async _computeGlobalSearch({ tenantId, term, entityType, branchId, permissionList, filters, safePage, safePageSize, sort, order }) {
     const filter = { tenantId, isSoftDeleted: false };
     if (entityType) filter.entityType = { $in: normalizeArray(entityType) };
     if (branchId && branchId !== "all") filter.branchId = branchId;
-    const permissionList = normalizeArray(permissions);
     filter.$or = [{ permissionsRequired: { $size: 0 } }, { permissionsRequired: { $in: permissionList } }];
     for (const key of ["country", "embassy", "visaType", "status", "officer", "nationality", "priority", "severity"]) {
       if (filters[key]) filter[`facets.${key}`] = { $in: normalizeArray(filters[key]) };
@@ -364,33 +469,75 @@ class SearchEngineService {
       if (filters.dateFrom) filter.createdAt.$gte = new Date(filters.dateFrom);
       if (filters.dateTo) filter.createdAt.$lte = new Date(filters.dateTo);
     }
-    const term = String(query || "").trim();
-    if (term) {
-      const expression = new RegExp(escapeRegex(term), "i");
-      filter.$and = [{ $or: [{ title: expression }, { description: expression }, { keywords: expression }, { "matchedFields.value": expression }] }];
+
+    const fieldMatch = (t) => {
+      const expr = new RegExp(escapeRegex(t), "i");
+      return { $or: [{ title: expr }, { description: expr }, { keywords: expr }, { "matchedFields.value": expr }] };
+    };
+    const parsed = parseSearchQuery(term);
+    if (parsed.phrase) {
+      filter.$and = [...(filter.$and || []), fieldMatch(parsed.phrase)];
+    } else if (parsed.orGroups.length > 0) {
+      filter.$and = [...(filter.$and || []), { $or: parsed.orGroups.map((group) => ({ $and: group.map(fieldMatch) })) }];
     }
-    const totalItems = await SearchIndexModel.countDocuments(filter);
+    if (parsed.excluded.length > 0) {
+      filter.$nor = parsed.excluded.map(fieldMatch);
+    }
+
+    let totalItems = await SearchIndexModel.countDocuments(filter);
     const dbSort = sort === "createdAt" ? { createdAt: order === "asc" ? 1 : -1 } : { relevanceBaseScore: -1, updatedAt: -1 };
-    const documents = await SearchIndexModel.find(filter).sort(dbSort).skip((safePage - 1) * safePageSize).limit(safePageSize).lean();
+    let documents = await SearchIndexModel.find(filter).sort(dbSort).skip((safePage - 1) * safePageSize).limit(safePageSize).lean();
+
     const queryLower = term.toLowerCase();
+    let fuzzyApplied = false;
+    if (totalItems === 0 && queryLower.length >= 3) {
+      const candidateFilter = { tenantId, isSoftDeleted: false, $or: filter.$or };
+      if (filter.branchId) candidateFilter.branchId = filter.branchId;
+      if (filter.entityType) candidateFilter.entityType = filter.entityType;
+      const candidates = await SearchIndexModel.find(candidateFilter).sort({ updatedAt: -1 }).limit(FUZZY_CANDIDATE_LIMIT).lean();
+      const scored = candidates
+        .map((doc) => {
+          const titleWindow = doc.title.toLowerCase().slice(0, queryLower.length + FUZZY_MAX_DISTANCE);
+          const keywordDistances = (doc.keywords || []).map((k) => levenshteinDistance(queryLower, String(k).toLowerCase().slice(0, queryLower.length + FUZZY_MAX_DISTANCE)));
+          const distance = Math.min(levenshteinDistance(queryLower, titleWindow), ...(keywordDistances.length ? keywordDistances : [Infinity]));
+          return { doc, distance };
+        })
+        .filter((item) => item.distance <= FUZZY_MAX_DISTANCE)
+        .sort((a, b) => a.distance - b.distance);
+      if (scored.length > 0) {
+        fuzzyApplied = true;
+        totalItems = scored.length;
+        documents = scored.slice((safePage - 1) * safePageSize, safePage * safePageSize).map((item) => item.doc);
+      }
+    }
+
     // Search Ranking Algorithm: Exact(100) > Prefix(90) > Contains(75) >
-    // Phonetic & Fuzzy(60). True phonetic/fuzzy matching needs a real search
-    // engine (regex can't do typo tolerance) — the 60-tier here honestly
-    // means "matched only in description/keywords/matchedFields, not the
-    // title", the closest achievable analog with the current MongoDB-regex
-    // index until an ElasticSearch/OpenSearch adapter replaces it.
+    // Fuzzy fallback(50) > Phonetic/other(60). True phonetic matching needs a
+    // real search engine — the tiers here are the closest honest analog with
+    // the current MongoDB-regex/Levenshtein index.
     const results = documents.map((doc) => {
       const titleLower = doc.title.toLowerCase();
       const match = (doc.matchedFields || []).find((field) => String(field.value || "").toLowerCase().includes(queryLower));
       let score = doc.relevanceBaseScore ?? 70;
-      if (queryLower) {
+      if (fuzzyApplied) score = 50;
+      else if (queryLower) {
         if (titleLower === queryLower) score = 100;
         else if (titleLower.startsWith(queryLower)) score = 90;
         else if (titleLower.includes(queryLower)) score = 75;
         else score = 60;
       }
-      return { entityType: doc.entityType, entityId: doc.entityId, title: doc.title, description: doc.description, matchedField: match ? match.field : null, module: doc.module, status: doc.status, navigationUrl: doc.navigationUrl, score, createdDate: doc.createdAt, facets: doc.facets || {} };
+      const highlightSource = match ? match.value : doc.title;
+      const highlight = buildHighlight(highlightSource, term) || buildHighlight(doc.title, term);
+      return {
+        entityType: doc.entityType, entityId: doc.entityId, title: doc.title, description: doc.description,
+        matchedField: match ? match.field : null, matchedText: highlight ? highlight.text : null,
+        highlightedMatch: highlight ? highlight.highlighted : null,
+        module: doc.module, status: doc.status, navigationUrl: doc.navigationUrl,
+        score, confidenceScore: score, isFuzzyMatch: fuzzyApplied,
+        createdDate: doc.createdAt, facets: doc.facets || {}
+      };
     }).sort((a, b) => sort === "score" ? (order === "asc" ? a.score - b.score : b.score - a.score) : 0);
+
     // isFallback signals a cold/empty search index for this tenant (nothing
     // has been indexed yet) rather than "this particular query had 0 hits" —
     // lets the client distinguish "no matches" from "search isn't warmed up".
@@ -399,13 +546,26 @@ class SearchEngineService {
       const tenantHasAnyIndex = await SearchIndexModel.exists({ tenantId, isSoftDeleted: false });
       isFallback = !tenantHasAnyIndex;
     }
-    return { results, meta: { page: safePage, pageSize: safePageSize, totalItems, totalPages: Math.ceil(totalItems / safePageSize) || 1, isFallback, source: "enterprise-search-index" } };
+    return { results, meta: { page: safePage, pageSize: safePageSize, totalItems, totalPages: Math.ceil(totalItems / safePageSize) || 1, isFallback, isFuzzyMatch: fuzzyApplied, source: "enterprise-search-index" } };
   }
 
   static async recordSearch({ tenantId, userId, query, filters, resultCount }) {
     if (!tenantId || !userId) return;
     await SearchHistoryModel.create({ tenantId, userId, query, filters, resultCount, accessedAt: new Date() });
+    // Doc names this domain event "SearchRequested"; kept alongside the
+    // existing "SearchPerformed" name so nothing already listening breaks.
+    publishEvent("SearchRequested", { tenantId, userId, query, resultCount });
     publishEvent("SearchPerformed", { tenantId, userId, query, resultCount });
+
+    // "Security... Search Audit Logging" — was entirely absent; every other
+    // read-sensitive module in this codebase (dashboards, incidents, notes)
+    // already writes an AuditLogModel entry for its access, search didn't.
+    if (mongoose.connection?.readyState === 1) {
+      AuditLogModel.create({
+        tenantId, userId, action: "SEARCH_QUERY", module: "EnterpriseSearch",
+        details: { query, filters, resultCount }
+      }).catch((err) => console.error("Search audit log error:", err));
+    }
   }
 
   static async getSuggestions({ tenantId, userId, branchId, permissions = [] }) {
@@ -414,6 +574,7 @@ class SearchEngineService {
       SearchHistoryModel.find({ tenantId, userId }).sort({ accessedAt: -1 }).limit(10).lean(),
       SearchIndexModel.find(scope).sort({ updatedAt: -1 }).limit(10).lean(),
     ]);
+    publishEvent("SearchSuggestionGenerated", { tenantId, userId, count: recentSearches.length + frequentlyAccessed.length });
     return {
       recentSearches: recentSearches.map((item) => ({ query: item.query, filters: item.filters, accessedAt: item.accessedAt })),
       frequentlyAccessed: frequentlyAccessed.map((item) => ({ entityType: item.entityType, entityId: item.entityId, title: item.title, navigationUrl: item.navigationUrl })),
@@ -421,10 +582,92 @@ class SearchEngineService {
   }
 
   static async saveSearch({ tenantId, userId, queryName, queryParams, visibility = "private", isPinned = false }) {
-    return SavedSearchModel.create({ tenantId, userId, name: queryName, queryParams, visibility, isPinned });
+    const saved = await SavedSearchModel.create({ tenantId, userId, name: queryName, queryParams, visibility, isPinned });
+    if (mongoose.connection?.readyState === 1) {
+      AuditLogModel.create({ tenantId, userId, action: "CREATE_SAVED_SEARCH", module: "EnterpriseSearch", resourceId: saved._id.toString(), details: { name: queryName, visibility } })
+        .catch((err) => console.error("Saved search audit log error:", err));
+    }
+    return saved;
   }
-  static async listSavedSearches({ tenantId, userId }) { return SavedSearchModel.find({ tenantId, userId, isSoftDeleted: false }).sort({ isPinned: -1, updatedAt: -1 }).lean(); }
-  static async deleteSavedSearch({ tenantId, userId, savedSearchId }) { return SavedSearchModel.findOneAndUpdate({ _id: savedSearchId, tenantId, userId, isSoftDeleted: false }, { $set: { isSoftDeleted: true } }, { new: true }); }
+
+  /**
+   * "Saved Searches... Department searches" — a `visibility: "department"`
+   * saved search was persisted but never actually surfaced to anyone but its
+   * own author (listSavedSearches only ever queried by userId). Resolves the
+   * requester's department via EmployeeProfileModel and includes department-
+   * visible searches from teammates in the same department.
+   */
+  static async listSavedSearches({ tenantId, userId }) {
+    const own = await SavedSearchModel.find({ tenantId, userId, isSoftDeleted: false }).sort({ isPinned: -1, updatedAt: -1 }).lean();
+    if (mongoose.connection?.readyState !== 1) return own;
+
+    const profile = await EmployeeProfileModel.findOne({ tenantId, identityId: userId }).select("departmentId").lean();
+    if (!profile?.departmentId) return own;
+
+    const teammates = await EmployeeProfileModel.find({ tenantId, departmentId: profile.departmentId, identityId: { $ne: userId } }).select("identityId").lean();
+    const teammateIds = teammates.map((t) => String(t.identityId)).filter(Boolean);
+    if (teammateIds.length === 0) return own;
+
+    const departmentShared = await SavedSearchModel.find({ tenantId, userId: { $in: teammateIds }, visibility: "department", isSoftDeleted: false }).sort({ updatedAt: -1 }).lean();
+    return [...own, ...departmentShared.map((item) => ({ ...item, isOwnSearch: false }))];
+  }
+
+  static async deleteSavedSearch({ tenantId, userId, savedSearchId }) {
+    const deleted = await SavedSearchModel.findOneAndUpdate({ _id: savedSearchId, tenantId, userId, isSoftDeleted: false }, { $set: { isSoftDeleted: true } }, { new: true });
+    if (deleted && mongoose.connection?.readyState === 1) {
+      AuditLogModel.create({ tenantId, userId, action: "DELETE_SAVED_SEARCH", module: "EnterpriseSearch", resourceId: savedSearchId })
+        .catch((err) => console.error("Saved search audit log error:", err));
+    }
+    return deleted;
+  }
+
+  /**
+   * "Search Indexing... Background Workers" / Domain Event "SearchRebuilt".
+   * Reindexes every entity type covered by this Part's dedicated Entity
+   * Specific Search endpoints (Visa Cases, Travelers, Passports, Documents,
+   * Embassy Submissions, Appointments, Incidents) for a tenant, reusing the
+   * same tested per-entity mapping methods the event-driven indexer uses —
+   * no duplicated field-mapping logic. Batched sequentially to avoid
+   * overwhelming the DB connection pool on large tenants.
+   */
+  static async rebuildIndexForTenant({ tenantId, branchId = null }) {
+    if (!tenantId) return { indexed: 0 };
+    const branchFilter = branchId && branchId !== "all" ? { branchId } : {};
+
+    const [visaCases, travelers, documents, submissions, appointments, passports, incidents] = await Promise.all([
+      VisaCaseModel.find({ tenantId, isSoftDeleted: { $ne: true }, ...branchFilter }).select("_id").lean(),
+      CustomerModel.find({ tenantId, status: { $ne: "archived" }, ...branchFilter }).select("_id").lean(),
+      EnterpriseDocumentModel.find({ tenantId, isSoftDeleted: { $ne: true }, ...branchFilter }).select("_id").lean(),
+      EmbassySubmissionModel.find({ tenantId, isSoftDeleted: { $ne: true }, ...branchFilter }).select("_id").lean(),
+      VisaAppointmentModel.find({ tenantId, isSoftDeleted: { $ne: true }, ...branchFilter }).select("_id").lean(),
+      PassportTrackingModel.find({ tenantId, ...branchFilter }).select("_id").lean(),
+      TravelIncidentManagementModel.find({ tenantId, isSoftDeleted: { $ne: true }, ...branchFilter }).select("_id").lean(),
+    ]);
+
+    const tasks = [
+      ...visaCases.map((r) => () => this.indexVisaCase({ tenantId, visaCaseId: r._id })),
+      ...travelers.map((r) => () => this.indexTraveler({ tenantId, customerId: r._id })),
+      ...documents.map((r) => () => this.indexDocument({ tenantId, documentId: r._id })),
+      ...submissions.map((r) => () => this.indexEmbassySubmission({ tenantId, submissionId: r._id })),
+      ...appointments.map((r) => () => this.indexAppointment({ tenantId, appointmentId: r._id })),
+      ...passports.map((r) => () => this.indexPassport({ tenantId, passportId: r._id })),
+      ...incidents.map((r) => () => this.indexIncident({ tenantId, incidentId: r._id })),
+    ];
+
+    const BATCH_SIZE = 25;
+    for (let i = 0; i < tasks.length; i += BATCH_SIZE) {
+      await Promise.allSettled(tasks.slice(i, i + BATCH_SIZE).map((task) => task()));
+    }
+
+    await this._invalidateSearchCache(tenantId);
+    const entityCounts = {
+      visaCases: visaCases.length, travelers: travelers.length, documents: documents.length,
+      embassySubmissions: submissions.length, appointments: appointments.length,
+      passports: passports.length, incidents: incidents.length
+    };
+    publishEvent("SearchRebuilt", { tenantId, branchId: branchId || "all", indexed: tasks.length, entityCounts });
+    return { indexed: tasks.length, entityCounts };
+  }
 }
 
 export default SearchEngineService;

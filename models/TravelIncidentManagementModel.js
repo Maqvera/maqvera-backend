@@ -45,6 +45,25 @@ const TravelIncidentManagementSchema = new mongoose.Schema({
     default: "Operational Exception",
     index: true
   },
+  // Doc's "Report Incident" request example sends category + type + severity
+  // + description with no separate "title" — type (e.g. "Lost Passport") is
+  // the real-world sub-classification under a category, kept as free text
+  // rather than a second rigid taxonomy (mirrors the Passport Tracking
+  // custody-transfer decision to leave toHolder/fromHolder free text).
+  type: {
+    type: String,
+    default: null,
+    index: true
+  },
+  // "Escalation Chain: Officer -> Supervisor -> Branch Manager ->
+  // Operations Manager -> Executive Dashboard" — tracks how far up the
+  // configurable chain (utils/incidentConfig.js escalationChain) this
+  // incident has been pushed by the SLA sweep (services/incidentSlaScheduler.js).
+  escalationLevel: {
+    type: Number,
+    default: 0,
+    min: 0
+  },
   severity: {
     type: String,
     enum: ["Low", "Medium", "High", "Critical", "Emergency"],

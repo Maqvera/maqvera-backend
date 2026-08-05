@@ -156,6 +156,7 @@ class EnterpriseIncidentEngineService {
       travelPlanId,
       sourceModule = "Visa",
       category = "Operational Exception",
+      type = null,
       severity = "Medium",
       title,
       description,
@@ -166,8 +167,16 @@ class EnterpriseIncidentEngineService {
       assignedTeam = null
     } = incidentData;
 
-    if (!title || !description) {
-      throw new Error("Title and description are required for incident creation.");
+    // Doc's own request example ("Report Incident") supplies category/type/
+    // severity/description with no "title" at all — that exact payload
+    // previously hard-failed with "Title and description are required."
+    // `type` (e.g. "Lost Passport") is the real-world sub-classification a
+    // human would use as a title, so derive one instead of forcing a
+    // separate, redundant field on every caller.
+    const resolvedTitle = title || type || null;
+
+    if (!resolvedTitle || !description) {
+      throw new Error("Title (or type) and description are required for incident creation.");
     }
 
     let resolvedBranchId = branchId || "main";
@@ -203,9 +212,10 @@ class EnterpriseIncidentEngineService {
       travelPlanId: travelPlan ? travelPlan._id : (travelPlanId || null),
       sourceModule,
       category,
+      type,
       severity,
       status: assignedTo ? "assigned" : "reported",
-      title,
+      title: resolvedTitle,
       description,
       assignedTo: assignedTo || null,
       assignedToName: assignedToName || null,
@@ -233,14 +243,14 @@ class EnterpriseIncidentEngineService {
     const locksVisaCase = policy ? Boolean(slaStatus.locksVisaCase || categoryConfig?.locksVisaCase) : ["Critical", "Emergency"].includes(severity);
     if (visaCase && locksVisaCase) {
       visaCase.isLocked = true;
-      visaCase.lockReason = `Case auto-locked due to ${severity} incident (${incidentNumber}): ${title}`;
+      visaCase.lockReason = `Case auto-locked due to ${severity} incident (${incidentNumber}): ${resolvedTitle}`;
       if (!visaCase.workflow) visaCase.workflow = {};
       visaCase.workflow.isBlocked = true;
       visaCase.workflow.blockReason = visaCase.lockReason;
       
       visaCase.incidents = Array.isArray(visaCase.incidents) ? visaCase.incidents : [];
       visaCase.incidents.push({
-        title,
+        title: resolvedTitle,
         description,
         severity: severity.toLowerCase(),
         status: "open",
@@ -254,7 +264,7 @@ class EnterpriseIncidentEngineService {
     } else if (visaCase) {
       visaCase.incidents = Array.isArray(visaCase.incidents) ? visaCase.incidents : [];
       visaCase.incidents.push({
-        title,
+        title: resolvedTitle,
         description,
         severity: severity.toLowerCase(),
         status: "open",
@@ -273,7 +283,7 @@ class EnterpriseIncidentEngineService {
       travelPlanId: travelPlan ? travelPlan._id : null,
       eventType: "IncidentReported",
       title: `Incident Reported (${incidentNumber})`,
-      description: `[${severity}] ${title}`,
+      description: `[${severity}] ${resolvedTitle}`,
       performedBy: userId,
       metadata: { incidentId: newIncident._id, incidentNumber, severity, category, visaCase }
     });
@@ -591,6 +601,132 @@ class EnterpriseIncidentEngineService {
     if (mongoose.connection?.readyState === 1) await AuditLogModel.create({ tenantId, branchId: incident.branchId, userId: userId || "system", action: "ADD_INCIDENT_EVIDENCE", resource: "Incident", resourceId: incident._id.toString(), details: { type: item.type, description: item.description } }).catch(() => null);
 
     return item;
+  }
+
+  /**
+   * 6b. UPDATE INVESTIGATION (evidence / interviews / witnesses / corrective
+   * & preventive actions / lessons learned / root cause category).
+   *
+   * This previously lived entirely in the controller (TravelIncidentController
+   * .UpdateIncidentInvestigation), directly mutating the Mongoose document —
+   * a layering violation (CLAUDE.md: "Services hold the actual domain logic
+   * and are the only layer that touches models directly"). It also never
+   * recorded a timeline entry or audit log, unlike every other mutating
+   * incident action, and had no way to record a Witness or a structured
+   * Corrective/Preventive Action despite the schema reserving fields for
+   * exactly that — "CorrectiveActionCreated" was a real Domain Event
+   * constant with nothing that could ever publish it.
+   */
+  static async updateInvestigation(incidentId, data, tenantId, userId) {
+    const { evidenceItem, interviewItem, witnessItem, correctiveActionItem, preventiveActionItem, lessonsLearned, rootCauseCategory } = data;
+    const incident = await this.getIncidentById(incidentId, tenantId);
+
+    if (!incident.investigation) {
+      incident.investigation = { evidence: [], interviews: [], witnesses: [], correctiveActions: [], preventiveActions: [], lessonsLearned: null, rootCauseCategory: "Process" };
+    }
+
+    const changedParts = [];
+    let correctiveActionCreated = null;
+    let preventiveActionCreated = null;
+
+    if (evidenceItem && evidenceItem.description) {
+      incident.investigation.evidence.push({
+        type: evidenceItem.type || "Document",
+        description: evidenceItem.description,
+        url: evidenceItem.url || null,
+        gatheredBy: userId || "system",
+        gatheredAt: new Date()
+      });
+      changedParts.push("evidence");
+    }
+
+    if (interviewItem && interviewItem.intervieweeName && interviewItem.summary) {
+      incident.investigation.interviews.push({
+        intervieweeName: interviewItem.intervieweeName,
+        role: interviewItem.role || "Witness",
+        summary: interviewItem.summary,
+        interviewedBy: userId || "system",
+        interviewedAt: new Date()
+      });
+      changedParts.push("interview");
+    }
+
+    // "Investigation ... Witnesses" — schema array existed but no code path
+    // could ever reach it.
+    if (witnessItem && witnessItem.name) {
+      incident.investigation.witnesses.push({
+        name: witnessItem.name,
+        role: witnessItem.role || null,
+        contact: witnessItem.contact || null
+      });
+      changedParts.push("witness");
+    }
+
+    // "Corrective Actions" section + "CorrectiveActionCreated" Domain Event.
+    if (correctiveActionItem && correctiveActionItem.action) {
+      correctiveActionCreated = {
+        action: correctiveActionItem.action,
+        assignedTo: correctiveActionItem.assignedTo || null,
+        status: "pending",
+        completedAt: null
+      };
+      incident.investigation.correctiveActions.push(correctiveActionCreated);
+      changedParts.push("correctiveAction");
+      if (["reported", "assigned", "in_investigation"].includes(incident.status)) {
+        incident.status = "action_taken";
+      }
+    }
+
+    if (preventiveActionItem && preventiveActionItem.action) {
+      preventiveActionCreated = {
+        action: preventiveActionItem.action,
+        assignedTo: preventiveActionItem.assignedTo || null,
+        status: "pending",
+        completedAt: null
+      };
+      incident.investigation.preventiveActions.push(preventiveActionCreated);
+      changedParts.push("preventiveAction");
+    }
+
+    if (lessonsLearned) {
+      incident.investigation.lessonsLearned = lessonsLearned;
+      changedParts.push("lessonsLearned");
+    }
+    if (rootCauseCategory) {
+      incident.investigation.rootCauseCategory = rootCauseCategory;
+      changedParts.push("rootCauseCategory");
+    }
+
+    if (changedParts.length === 0) {
+      throw new Error("No valid investigation fields provided.");
+    }
+
+    if (["reported", "assigned"].includes(incident.status) && incident.status !== "action_taken") {
+      incident.status = "in_investigation";
+    }
+
+    await incident.save();
+
+    await this.recordTimeline({
+      tenantId,
+      visaCaseId: incident.visaCaseId,
+      travelPlanId: incident.travelPlanId,
+      eventType: "InvestigationStarted",
+      title: `Investigation Updated (${incident.incidentNumber})`,
+      description: `Updated: ${changedParts.join(", ")}`,
+      performedBy: userId
+    });
+
+    if (mongoose.connection?.readyState === 1) await AuditLogModel.create({ tenantId, branchId: incident.branchId, userId: userId || "system", action: "UPDATE_INCIDENT_INVESTIGATION", resource: "Incident", resourceId: incident._id.toString(), details: { changedParts } }).catch(() => null);
+
+    if (correctiveActionCreated) {
+      publishEvent("CorrectiveActionCreated", { incidentId: incident._id, incidentNumber: incident.incidentNumber, action: correctiveActionCreated.action, assignedTo: correctiveActionCreated.assignedTo, tenantId });
+    }
+    if (preventiveActionCreated) {
+      publishEvent("PreventiveActionCreated", { incidentId: incident._id, incidentNumber: incident.incidentNumber, action: preventiveActionCreated.action, assignedTo: preventiveActionCreated.assignedTo, tenantId });
+    }
+
+    return incident.investigation;
   }
 
   /**

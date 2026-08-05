@@ -1,6 +1,17 @@
+import mongoose from "mongoose";
 import GdsIntegrationService from "../services/GdsIntegrationService.js";
+import AuditLogModel from "../models/AuditLogmodel.js";
 import { sendError, sendSuccess } from "../utils/apiResponse.js";
 import { createRequestId } from "../utils/authTokens.js";
+import { getFlightSearchValidationConfig } from "../utils/gdsConfig.js";
+
+const IATA_CODE_PATTERN = /^[A-Z]{3}$/;
+
+const toStartOfDay = (value) => {
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return null;
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+};
 
 /**
  * 1. POST /api/v1/flight-search
@@ -10,6 +21,14 @@ export const SearchFlights = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const tenantId = req.auth?.tenantId || "default";
+    const userId = req.auth?.userId || req.auth?.id || "system";
+    const permissions = req.auth?.permissions || [];
+
+    // "Authorization: Required (flight.search)"
+    if (!permissions.includes("flight.search") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
+
     const {
       tripType = "OneWay",
       origin,
@@ -30,20 +49,81 @@ export const SearchFlights = async (req, res) => {
       return sendError(res, 400, "origin, destination, and departureDate are required.", requestId);
     }
 
-    if (tripType === "RoundTrip" && !returnDate) {
-      return sendError(res, 400, "returnDate is required for RoundTrip search.", requestId);
+    const originCode = String(origin).toUpperCase();
+    const destinationCode = String(destination).toUpperCase();
+    const policy = getFlightSearchValidationConfig();
+
+    // Validation Rules — "Origin/Destination Airport Exists" (structural IATA
+    // format check; no bundled global airport reference table exists in this
+    // codebase, and fabricating a handful of fake airport rows would be
+    // worse than an honest format check), "Departure Date Valid",
+    // "Return Date Valid", "Passenger Count Valid", "Cabin Valid",
+    // "Currency Supported" — none of these were enforced before this fix.
+    if (!IATA_CODE_PATTERN.test(originCode) || !IATA_CODE_PATTERN.test(destinationCode)) {
+      return sendError(res, 400, "origin and destination must be valid 3-letter IATA airport codes.", requestId);
+    }
+    if (originCode === destinationCode) {
+      return sendError(res, 400, "origin and destination cannot be the same airport.", requestId);
+    }
+
+    const today = toStartOfDay(new Date());
+    const departure = toStartOfDay(departureDate);
+    if (!departure) {
+      return sendError(res, 400, "departureDate is not a valid date.", requestId);
+    }
+    if (departure < today) {
+      return sendError(res, 400, "departureDate cannot be in the past.", requestId);
+    }
+    const maxAdvanceDate = new Date(today.getTime() + policy.maxAdvanceBookingDays * 24 * 60 * 60 * 1000);
+    if (departure > maxAdvanceDate) {
+      return sendError(res, 400, `departureDate cannot be more than ${policy.maxAdvanceBookingDays} days in the future.`, requestId);
+    }
+
+    if (tripType === "RoundTrip") {
+      if (!returnDate) {
+        return sendError(res, 400, "returnDate is required for RoundTrip search.", requestId);
+      }
+      const ret = toStartOfDay(returnDate);
+      if (!ret) {
+        return sendError(res, 400, "returnDate is not a valid date.", requestId);
+      }
+      if (ret < departure) {
+        return sendError(res, 400, "returnDate must be on or after departureDate.", requestId);
+      }
+    }
+
+    const adultsCount = Number(adults);
+    const childrenCount = Number(children);
+    const infantsCount = Number(infants);
+    if (!Number.isInteger(adultsCount) || adultsCount < 1) {
+      return sendError(res, 400, "At least 1 adult passenger is required.", requestId);
+    }
+    if (!Number.isInteger(childrenCount) || childrenCount < 0 || !Number.isInteger(infantsCount) || infantsCount < 0) {
+      return sendError(res, 400, "children and infants must be non-negative whole numbers.", requestId);
+    }
+    const totalPassengers = adultsCount + childrenCount + infantsCount;
+    if (totalPassengers > policy.maxPassengers) {
+      return sendError(res, 400, `Total passengers cannot exceed ${policy.maxPassengers}.`, requestId);
+    }
+
+    if (!policy.supportedCabins.includes(cabin)) {
+      return sendError(res, 400, `Unsupported cabin '${cabin}'. Must be one of: ${policy.supportedCabins.join(", ")}.`, requestId);
+    }
+    if (!policy.supportedCurrencies.includes(currency)) {
+      return sendError(res, 400, `Unsupported currency '${currency}'. Must be one of: ${policy.supportedCurrencies.join(", ")}.`, requestId);
     }
 
     const searchParams = {
       tenantId,
+      correlationId: requestId,
       tripType,
-      origin: origin.toUpperCase(),
-      destination: destination.toUpperCase(),
+      origin: originCode,
+      destination: destinationCode,
       departureDate,
       returnDate,
-      adults: Number(adults),
-      children: Number(children),
-      infants: Number(infants),
+      adults: adultsCount,
+      children: childrenCount,
+      infants: infantsCount,
       cabin,
       preferredAirlines,
       directOnly: Boolean(directOnly),
@@ -52,6 +132,17 @@ export const SearchFlights = async (req, res) => {
     };
 
     const searchResponse = await GdsIntegrationService.searchFlights(searchParams);
+
+    // AI Coding Rule "Audit Searches" — fire-and-forget, never blocks a
+    // read-only search response, and skipped entirely when Mongo isn't
+    // connected (a required-DB dependency would defeat the point of caching
+    // live GDS results for fast repeat reads).
+    if (mongoose.connection?.readyState === 1) {
+      AuditLogModel.create({
+        tenantId, userId, action: "FLIGHT_SEARCH", module: "GdsIntegration",
+        requestId, details: { origin: originCode, destination: destinationCode, tripType, provider: searchResponse.provider, totalOffers: searchResponse.meta?.totalOffers }
+      }).catch((err) => console.error("Flight search audit log error:", err));
+    }
 
     return sendSuccess(res, 200, "Live flight search completed successfully.", searchResponse, requestId);
   } catch (err) {
