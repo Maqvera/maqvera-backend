@@ -15,7 +15,8 @@ import { getHotelSearchValidationConfig, getFlightSearchValidationConfig } from 
 export const SearchHotels = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || "default";
+    const tenantId = req.auth?.tenantId;
+    if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     const permissions = req.auth?.permissions || [];
     if (!permissions.includes("hotel.search") && !permissions.includes("admin")) {
       return sendError(res, 403, "Permission denied.", requestId);
@@ -121,7 +122,8 @@ export const GetHotelSearchById = async (req, res) => {
 export const RevalidateHotelOffer = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || "default";
+    const tenantId = req.auth?.tenantId;
+    if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     const permissions = req.auth?.permissions || [];
     if (!permissions.includes("hotel.book") && !permissions.includes("admin")) {
       return sendError(res, 403, "Permission denied.", requestId);
@@ -147,7 +149,8 @@ export const RevalidateHotelOffer = async (req, res) => {
 export const CreateHotelBooking = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || "default";
+    const tenantId = req.auth?.tenantId;
+    if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     const userId = req.auth?.userId || req.auth?.id;
     const permissions = req.auth?.permissions || [];
     if (!permissions.includes("hotel.book") && !permissions.includes("admin")) {
@@ -332,7 +335,8 @@ export const CreateHotelBooking = async (req, res) => {
 export const GetHotelBookingById = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || "default";
+    const tenantId = req.auth?.tenantId;
+    if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     const permissions = req.auth?.permissions || [];
     if (!permissions.includes("hotel.book") && !permissions.includes("hotel.read") && !permissions.includes("admin")) {
       return sendError(res, 403, "Permission denied.", requestId);
@@ -365,7 +369,8 @@ export const GetHotelBookingById = async (req, res) => {
 export const ModifyHotelBooking = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || "default";
+    const tenantId = req.auth?.tenantId;
+    if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     const userId = req.auth?.userId || req.auth?.id;
     const permissions = req.auth?.permissions || [];
     if (!permissions.includes("hotel.book") && !permissions.includes("admin")) {
@@ -456,7 +461,8 @@ export const ModifyHotelBooking = async (req, res) => {
 export const CancelHotelBooking = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || "default";
+    const tenantId = req.auth?.tenantId;
+    if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     const userId = req.auth?.userId || req.auth?.id;
     const permissions = req.auth?.permissions || [];
     if (!permissions.includes("hotel.book") && !permissions.includes("admin")) {
@@ -542,7 +548,8 @@ export const CancelHotelBooking = async (req, res) => {
 export const GenerateHotelVoucher = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || "default";
+    const tenantId = req.auth?.tenantId;
+    if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     const userId = req.auth?.userId || req.auth?.id;
     const permissions = req.auth?.permissions || [];
     if (!permissions.includes("hotel.book") && !permissions.includes("admin")) {
@@ -626,7 +633,8 @@ export const GenerateHotelVoucher = async (req, res) => {
 export const SyncHotelBooking = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || "default";
+    const tenantId = req.auth?.tenantId;
+    if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     const userId = req.auth?.userId || req.auth?.id;
     const permissions = req.auth?.permissions || [];
     if (!permissions.includes("hotel.book") && !permissions.includes("admin")) {

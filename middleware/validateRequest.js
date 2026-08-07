@@ -40,8 +40,26 @@ const email = Joi.string().email({ tlds: false }).lowercase().trim().max(255).re
 const password = Joi.string().min(6).max(128).required();
 const token = Joi.string().hex().min(20).max(256).required();
 
+const tenantKeySlug = Joi.string().trim().lowercase().pattern(/^[a-z0-9-]{3,40}$/).messages({
+  "string.pattern.base": "tenantKey must be lowercase letters, numbers, and hyphens only (3-40 characters).",
+});
+
 export const authSchemas = {
   signup: Joi.object({
+    username: Joi.string().trim().min(2).max(100).required(),
+    email,
+    password,
+    // Optional here because a deployment may set DEFAULT_TENANT_KEY for a
+    // genuinely single-tenant on-prem mode — the controller enforces that at
+    // least one of (body tenantKey, DEFAULT_TENANT_KEY) resolves to a real
+    // tenant, it never silently falls back to "whichever tenant is oldest".
+    tenantKey: tenantKeySlug.optional(),
+  }),
+
+  setupTenant: Joi.object({
+    companyName: Joi.string().trim().min(2).max(200).required(),
+    tenantKey: tenantKeySlug.required(),
+    branchName: Joi.string().trim().max(200).optional().allow(""),
     username: Joi.string().trim().min(2).max(100).required(),
     email,
     password,

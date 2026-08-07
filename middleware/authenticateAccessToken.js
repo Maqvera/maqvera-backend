@@ -12,11 +12,16 @@ const authConfig = getAuthConfig();
 // from their role here — same source (Role.permissions) that
 // resolveDomainContext() in Auth.js uses for GET /auth/me. Cached briefly
 // since roles rarely change and this now runs on every authenticated request.
-const resolveRolePermissions = async (roleName) => {
-    if (!roleName) return [];
-    const { data } = await CacheManager.getOrCompute(`role:permissions:${roleName}`, async () => {
-        const roleRecord = await RoleModel.findOne({ name: roleName, status: "active" }).lean();
-        return roleRecord?.permissions || [];
+//
+// Role.name is unique per tenant, not globally (models/Rolemodel.js), so the
+// lookup must be tenant-scoped too — otherwise two different tenants' same-
+// named roles (e.g. both called "Administrator") would collide and this
+// could resolve to the wrong tenant's permission set/scope entirely.
+const resolveRoleAccess = async (tenantId, roleName) => {
+    if (!roleName || !tenantId) return { permissions: [], scope: "branch" };
+    const { data } = await CacheManager.getOrCompute(`role:access:${tenantId}:${roleName}`, async () => {
+        const roleRecord = await RoleModel.findOne({ tenantId, name: roleName, status: "active" }).lean();
+        return { permissions: roleRecord?.permissions || [], scope: roleRecord?.scope || "branch" };
     });
     return data;
 };
@@ -49,7 +54,9 @@ const authenticateAccessToken = async (req, res, next) => {
     req.accessToken = token;
 
     try {
-        req.auth.permissions = await resolveRolePermissions(payload.role);
+        const { permissions, scope } = await resolveRoleAccess(payload.tenantId, payload.role);
+        req.auth.permissions = permissions;
+        req.auth.roleScope = scope;
     } catch (error) {
         return sendError(res, 500, "Unable to resolve permissions", requestId);
     }

@@ -7,7 +7,7 @@ import { createRequestId } from "../utils/authTokens.js";
 const AI_PERMISSION = "ai.assistant.use";
 
 const buildContext = (req) => ({
-  tenantId: req.auth?.tenantId || "default",
+  tenantId: req.auth?.tenantId || null,
   branchId: req.auth?.branchId || "main",
   userId: req.auth?.userId || req.auth?.id,
   permissions: req.auth?.permissions || []
@@ -27,6 +27,7 @@ export const GetModelCatalog = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasAIAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     return sendSuccess(res, 200, "AI model catalog retrieved successfully.", AIModelRouterService.getModelCatalog(), requestId);
   } catch (err) {
@@ -40,6 +41,7 @@ export const GetProviderHealth = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasAdminAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const status = await AIAssistantService.getProviderStatus();
     return sendSuccess(res, 200, "AI provider health retrieved successfully.", status, requestId);
@@ -54,6 +56,7 @@ export const UpsertRoutingPolicy = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasModelManageAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const { category, preferredProviders, costOptimized, shadowProvider, shadowModel, isActive } = req.body;
     const policy = await AIModelRouterService.upsertRoutingPolicy({ tenantId: ctx.tenantId, branchId: ctx.branchId, userId: ctx.userId, category, preferredProviders, costOptimized, shadowProvider, shadowModel, isActive });
@@ -69,6 +72,7 @@ export const ListRoutingPolicies = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasAIAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const policies = await AIModelRouterService.listRoutingPolicies({ tenantId: ctx.tenantId, branchId: req.query.branchId });
     return sendSuccess(res, 200, "AI routing policies retrieved successfully.", policies, requestId);
@@ -83,6 +87,7 @@ export const DeleteRoutingPolicy = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasModelManageAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const policy = await AIModelRouterService.deleteRoutingPolicy({ tenantId: ctx.tenantId, branchId: req.query.branchId || "main", category: req.params.category });
     return sendSuccess(res, 200, "AI routing policy deleted successfully.", policy, requestId);
@@ -97,6 +102,7 @@ export const CreateABTest = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasModelManageAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const { category, name, description, variantA, variantB, trafficSplitPct } = req.body;
     const test = await AIModelRouterService.createABTest({ tenantId: ctx.tenantId, branchId: ctx.branchId, userId: ctx.userId, category, name, description, variantA, variantB, trafficSplitPct });
@@ -112,6 +118,7 @@ export const StartABTest = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasModelManageAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const test = await AIModelRouterService.startABTest({ tenantId: ctx.tenantId, testId: req.params.testId });
     return sendSuccess(res, 200, "AI A/B test started successfully.", test, requestId);
@@ -126,6 +133,7 @@ export const CancelABTest = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasModelManageAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const test = await AIModelRouterService.cancelABTest({ tenantId: ctx.tenantId, testId: req.params.testId });
     return sendSuccess(res, 200, "AI A/B test cancelled successfully.", test, requestId);
@@ -140,6 +148,7 @@ export const ListABTests = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasAIAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const result = await AIModelRouterService.listABTests({ tenantId: ctx.tenantId, category: req.query.category, status: req.query.status, page: req.query.page, pageSize: req.query.pageSize });
     return sendSuccess(res, 200, "AI A/B tests retrieved successfully.", result, requestId);
@@ -154,6 +163,7 @@ export const GetABTestResults = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasAIAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const result = await AIModelRouterService.getABTestResults({ tenantId: ctx.tenantId, testId: req.params.testId });
     return sendSuccess(res, 200, "AI A/B test results retrieved successfully.", result, requestId);
@@ -168,6 +178,7 @@ export const PromoteABTestWinner = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasModelManageAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const { winner } = req.body;
     if (!winner) return sendError(res, 400, "winner ('A' or 'B') is required.", requestId);
@@ -184,6 +195,7 @@ export const ListShadowTestResults = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasAdminAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const result = await AIModelRouterService.listShadowTestResults({ tenantId: ctx.tenantId, category: req.query.category, page: req.query.page, pageSize: req.query.pageSize });
     return sendSuccess(res, 200, "AI shadow test results retrieved successfully.", result, requestId);

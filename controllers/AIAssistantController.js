@@ -8,7 +8,7 @@ import { createRequestId } from "../utils/authTokens.js";
 const AI_PERMISSION = "ai.assistant.use";
 
 const buildContext = (req) => ({
-  tenantId: req.auth?.tenantId || "default",
+  tenantId: req.auth?.tenantId || null,
   branchId: req.auth?.branchId || "main",
   userId: req.auth?.userId || req.auth?.id,
   userName: req.auth?.name || "User",
@@ -33,6 +33,7 @@ const handleChat = (forcedToolName, defaultMode = "Assistant") => async (req, re
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasAIAccess(ctx.permissions)) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
@@ -100,6 +101,7 @@ export const ListAIConversations = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasAIAccess(ctx.permissions)) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
@@ -116,6 +118,7 @@ export const ArchiveAIConversation = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasAIAccess(ctx.permissions)) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
@@ -132,6 +135,7 @@ export const GetAIConversationContext = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasAIAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const context = await AIAssistantService.getContext({ tenantId: ctx.tenantId, userId: ctx.userId, conversationId: req.params.conversationId });
     return sendSuccess(res, 200, "AI conversation context retrieved successfully.", context, requestId);
@@ -146,6 +150,7 @@ export const ClearAIConversationContext = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasAIAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const conversation = await AIAssistantService.clearContext({ tenantId: ctx.tenantId, userId: ctx.userId, conversationId: req.params.conversationId });
     return sendSuccess(res, 200, "AI conversation context cleared successfully.", { conversationId: conversation._id, context: conversation.context }, requestId);
@@ -160,6 +165,7 @@ export const GetAIProviderStatus = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasAIAccess(ctx.permissions)) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
@@ -176,6 +182,7 @@ export const GetAIAgents = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasAIAccess(ctx.permissions)) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
@@ -205,6 +212,7 @@ export const TransitionAgentState = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasAgentManageAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const { status, priority, reason } = req.body;
     if (!status) return sendError(res, 400, "status is required.", requestId);
@@ -229,6 +237,7 @@ export const AISupervisorChat = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasAIAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     if (!ctx.tenantId || !ctx.userId) return sendError(res, 403, "Tenant and user context are required.", requestId);
 

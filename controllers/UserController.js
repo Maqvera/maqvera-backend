@@ -18,6 +18,7 @@ import { validatePassword, recordPasswordHistory } from "../utils/passwordPolicy
 import { getRequestMeta, createSessionAndTokens } from "./Auth.js";
 import CacheManager from "../utils/cacheManager.js";
 import logger from "../utils/logger.js";
+import { getAccessScope, applyOptionalBranchFilter } from "../utils/accessScope.js";
 
 const authConfig = getAuthConfig();
 
@@ -74,23 +75,23 @@ const sendInvitationEmail = async (email, token, firstName) => {
   });
 };
 
-const findUserAndProfile = async (userId, tenantId) => {
+const findUserAndProfile = async (userId, scope) => {
   let profile = null;
   let user = null;
 
   if (mongoose.Types.ObjectId.isValid(userId)) {
-    profile = await EmployeeProfileModel.findOne({ _id: userId, tenantId, status: { $ne: "archived" } });
+    profile = await EmployeeProfileModel.findOne({ _id: userId, ...scope, status: { $ne: "archived" } });
     if (!profile) {
-      profile = await EmployeeProfileModel.findOne({ identityId: userId, tenantId, status: { $ne: "archived" } });
+      profile = await EmployeeProfileModel.findOne({ identityId: userId, ...scope, status: { $ne: "archived" } });
     }
   }
 
   if (profile?.identityId) {
-    user = await UserModel.findOne({ _id: profile.identityId, tenantId, status: { $ne: "deleted" } });
+    user = await UserModel.findOne({ _id: profile.identityId, tenantId: scope.tenantId, status: { $ne: "deleted" } });
   } else if (mongoose.Types.ObjectId.isValid(userId)) {
-    user = await UserModel.findOne({ _id: userId, tenantId, status: { $ne: "deleted" } });
+    user = await UserModel.findOne({ _id: userId, tenantId: scope.tenantId, status: { $ne: "deleted" } });
     if (user && !profile) {
-      profile = await EmployeeProfileModel.findOne({ email: user.email, tenantId, status: { $ne: "archived" } });
+      profile = await EmployeeProfileModel.findOne({ email: user.email, ...scope, status: { $ne: "archived" } });
     }
   }
 
@@ -135,12 +136,13 @@ const buildEmployeeItem = (profile, user = null, branchObj = null, deptObj = nul
 export const ListUsers = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
 
-    if (!tenantId) {
+    if (!scope) {
       return sendError(res, 403, "Tenant context is required.", requestId);
     }
+    const tenantId = scope.tenantId;
 
     if (!permissions.includes("users.read") && !permissions.includes("employee.read")) {
       return sendError(res, 403, "Permission denied.", requestId);
@@ -156,8 +158,7 @@ export const ListUsers = async (req, res) => {
     const sortField = req.query.sort || "createdAt";
     const order = req.query.order === "asc" ? 1 : -1;
 
-    const filter = { tenantId, status: { $ne: "archived" } };
-    if (branchId) filter.branchId = branchId;
+    const filter = { ...applyOptionalBranchFilter(scope, branchId), status: { $ne: "archived" } };
     if (departmentId) filter.departmentId = departmentId;
     if (status) {
       // Archived (soft-deleted) users are never listable, even via an
@@ -233,12 +234,13 @@ export const ListUsers = async (req, res) => {
 export const CreateUser = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
 
-    if (!tenantId) {
+    if (!scope) {
       return sendError(res, 403, "Tenant context is required.", requestId);
     }
+    const tenantId = scope.tenantId;
 
     if (!permissions.includes("users.create") && !permissions.includes("employee.create")) {
       return sendError(res, 403, "Permission denied.", requestId);
@@ -265,6 +267,11 @@ export const CreateUser = async (req, res) => {
       return sendError(res, 422, "firstName, lastName, email, branchId, and departmentId are required.", requestId);
     }
 
+    // A branch-scoped caller can only ever create employees in their own branch.
+    if (scope.branchId && branchId !== scope.branchId) {
+      return sendError(res, 403, "You do not have permission to create users in another branch.", requestId);
+    }
+
     const branch = await BranchModel.findOne({ branchKey: branchId, tenantKey: tenantId, status: "active" });
     if (!branch) {
       return sendError(res, 422, "Branch not found or inactive.", requestId);
@@ -285,7 +292,7 @@ export const CreateUser = async (req, res) => {
       }
       resolvedRoleIds = foundRoles.map((r) => r._id);
     } else if (role) {
-      const rObj = await RoleModel.findOne({ name: role, status: "active" });
+      const rObj = await RoleModel.findOne({ tenantId, name: role, status: "active" });
       if (rObj) resolvedRoleIds = [rObj._id];
     }
 
@@ -378,19 +385,20 @@ export const CreateUser = async (req, res) => {
 export const GetUser = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
 
-    if (!tenantId) {
+    if (!scope) {
       return sendError(res, 403, "Tenant context is required.", requestId);
     }
+    const tenantId = scope.tenantId;
 
     if (!permissions.includes("users.read") && !permissions.includes("employee.read")) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
     const { userId } = req.params;
-    const { profile, user } = await findUserAndProfile(userId, tenantId);
+    const { profile, user } = await findUserAndProfile(userId, scope);
 
     if (!profile && !user) {
       return sendError(res, 404, "User not found.", requestId);
@@ -459,19 +467,20 @@ export const GetUser = async (req, res) => {
 export const UpdateUser = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
 
-    if (!tenantId) {
+    if (!scope) {
       return sendError(res, 403, "Tenant context is required.", requestId);
     }
+    const tenantId = scope.tenantId;
 
     if (!permissions.includes("users.update") && !permissions.includes("employee.update")) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
     const { userId } = req.params;
-    const { profile, user } = await findUserAndProfile(userId, tenantId);
+    const { profile, user } = await findUserAndProfile(userId, scope);
 
     if (!profile && !user) {
       return sendError(res, 404, "User not found.", requestId);
@@ -550,19 +559,20 @@ export const UpdateUser = async (req, res) => {
 export const DeleteUser = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
 
-    if (!tenantId) {
+    if (!scope) {
       return sendError(res, 403, "Tenant context is required.", requestId);
     }
+    const tenantId = scope.tenantId;
 
     if (!permissions.includes("users.delete") && !permissions.includes("employee.delete")) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
     const { userId } = req.params;
-    const { profile, user } = await findUserAndProfile(userId, tenantId);
+    const { profile, user } = await findUserAndProfile(userId, scope);
 
     if (!profile && !user) {
       return sendError(res, 404, "User not found.", requestId);
@@ -616,12 +626,13 @@ export const ArchiveUser = async (req, res) => {
 export const UpdateUserRole = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
 
-    if (!tenantId) {
+    if (!scope) {
       return sendError(res, 403, "Tenant context is required.", requestId);
     }
+    const tenantId = scope.tenantId;
 
     if (!permissions.includes("users.update") && !permissions.includes("employee.update")) {
       return sendError(res, 403, "Permission denied.", requestId);
@@ -643,7 +654,7 @@ export const UpdateUserRole = async (req, res) => {
       targetRoleIds = foundRoles.map((r) => r._id);
       primaryRoleName = foundRoles[0]?.name || primaryRoleName;
     } else if (role) {
-      const rObj = await RoleModel.findOne({ name: role, status: "active" });
+      const rObj = await RoleModel.findOne({ tenantId, name: role, status: "active" });
       if (rObj) {
         targetRoleIds = [rObj._id];
         primaryRoleName = rObj.name;
@@ -654,7 +665,7 @@ export const UpdateUserRole = async (req, res) => {
       return sendError(res, 422, "Valid role or roleIds required.", requestId);
     }
 
-    const { profile, user } = await findUserAndProfile(userId, tenantId);
+    const { profile, user } = await findUserAndProfile(userId, scope);
     if (!profile && !user) {
       return sendError(res, 404, "User not found.", requestId);
     }
@@ -704,12 +715,13 @@ export const UpdateUserRole = async (req, res) => {
 export const UpdateUserBranch = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
 
-    if (!tenantId) {
+    if (!scope) {
       return sendError(res, 403, "Tenant context is required.", requestId);
     }
+    const tenantId = scope.tenantId;
 
     if (!permissions.includes("users.update") && !permissions.includes("employee.update")) {
       return sendError(res, 403, "Permission denied.", requestId);
@@ -727,7 +739,7 @@ export const UpdateUserBranch = async (req, res) => {
       return sendError(res, 422, "Branch not found or inactive.", requestId);
     }
 
-    const { profile, user } = await findUserAndProfile(userId, tenantId);
+    const { profile, user } = await findUserAndProfile(userId, scope);
     if (!profile && !user) {
       return sendError(res, 404, "User not found.", requestId);
     }
@@ -779,12 +791,13 @@ export const UpdateUserBranch = async (req, res) => {
 export const UpdateUserDepartment = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
 
-    if (!tenantId) {
+    if (!scope) {
       return sendError(res, 403, "Tenant context is required.", requestId);
     }
+    const tenantId = scope.tenantId;
 
     if (!permissions.includes("users.update") && !permissions.includes("employee.update")) {
       return sendError(res, 403, "Permission denied.", requestId);
@@ -802,7 +815,7 @@ export const UpdateUserDepartment = async (req, res) => {
       return sendError(res, 422, "Department not found or inactive.", requestId);
     }
 
-    const { profile, user } = await findUserAndProfile(userId, tenantId);
+    const { profile, user } = await findUserAndProfile(userId, scope);
     if (!profile && !user) {
       return sendError(res, 404, "User not found.", requestId);
     }
@@ -850,12 +863,13 @@ export const UpdateUserDepartment = async (req, res) => {
 export const UpdateUserStatus = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
 
-    if (!tenantId) {
+    if (!scope) {
       return sendError(res, 403, "Tenant context is required.", requestId);
     }
+    const tenantId = scope.tenantId;
 
     if (!permissions.includes("users.update") && !permissions.includes("employee.update")) {
       return sendError(res, 403, "Permission denied.", requestId);
@@ -882,7 +896,7 @@ export const UpdateUserStatus = async (req, res) => {
       return sendError(res, 422, `Invalid status "${status.trim()}". Allowed: active, suspended, inactive, archived, pending invitation.`, requestId);
     }
 
-    const { profile, user } = await findUserAndProfile(userId, tenantId);
+    const { profile, user } = await findUserAndProfile(userId, scope);
     if (!profile && !user) {
       return sendError(res, 404, "User not found.", requestId);
     }
@@ -948,19 +962,20 @@ export const UpdateUserStatus = async (req, res) => {
 export const GetUserPermissions = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
 
-    if (!tenantId) {
+    if (!scope) {
       return sendError(res, 403, "Tenant context is required.", requestId);
     }
+    const tenantId = scope.tenantId;
 
     if (!permissions.includes("users.read") && !permissions.includes("employee.read")) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
     const { userId } = req.params;
-    const { profile, user } = await findUserAndProfile(userId, tenantId);
+    const { profile, user } = await findUserAndProfile(userId, scope);
 
     if (!profile && !user) {
       return sendError(res, 404, "User not found.", requestId);
@@ -971,7 +986,7 @@ export const GetUserPermissions = async (req, res) => {
       const roleRecords = await RoleModel.find({ _id: { $in: profile.roleIds }, status: "active" });
       rolePermissions = [...new Set(roleRecords.flatMap((r) => r.permissions || []))];
     } else if (user?.role) {
-      const roleRecord = await RoleModel.findOne({ name: user.role, status: "active" });
+      const roleRecord = await RoleModel.findOne({ tenantId, name: user.role, status: "active" });
       rolePermissions = roleRecord?.permissions || [];
     }
 
@@ -995,12 +1010,13 @@ export const GetUserPermissions = async (req, res) => {
 export const UpdateUserPermissions = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
 
-    if (!tenantId) {
+    if (!scope) {
       return sendError(res, 403, "Tenant context is required.", requestId);
     }
+    const tenantId = scope.tenantId;
 
     if (!permissions.includes("users.update") && !permissions.includes("employee.update")) {
       return sendError(res, 403, "Permission denied.", requestId);
@@ -1021,7 +1037,7 @@ export const UpdateUserPermissions = async (req, res) => {
       }
     }
 
-    const { profile, user } = await findUserAndProfile(userId, tenantId);
+    const { profile, user } = await findUserAndProfile(userId, scope);
 
     if (!profile && !user) {
       return sendError(res, 404, "User not found.", requestId);
@@ -1062,19 +1078,20 @@ export const UpdateUserPermissions = async (req, res) => {
 export const GetEmploymentHistory = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
 
-    if (!tenantId) {
+    if (!scope) {
       return sendError(res, 403, "Tenant context is required.", requestId);
     }
+    const tenantId = scope.tenantId;
 
     if (!permissions.includes("users.read") && !permissions.includes("employee.read")) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
     const { userId } = req.params;
-    const { profile } = await findUserAndProfile(userId, tenantId);
+    const { profile } = await findUserAndProfile(userId, scope);
 
     if (!profile) {
       return sendError(res, 404, "Employee profile not found.", requestId);
@@ -1111,19 +1128,20 @@ export const GetEmploymentHistory = async (req, res) => {
 export const GetUserPreferences = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
 
-    if (!tenantId) {
+    if (!scope) {
       return sendError(res, 403, "Tenant context is required.", requestId);
     }
+    const tenantId = scope.tenantId;
 
     if (!permissions.includes("users.read") && !permissions.includes("employee.read")) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
     const { userId } = req.params;
-    const { profile } = await findUserAndProfile(userId, tenantId);
+    const { profile } = await findUserAndProfile(userId, scope);
 
     if (!profile) {
       return sendError(res, 404, "User profile not found.", requestId);
@@ -1149,19 +1167,20 @@ export const GetUserPreferences = async (req, res) => {
 export const UpdateUserPreferences = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
 
-    if (!tenantId) {
+    if (!scope) {
       return sendError(res, 403, "Tenant context is required.", requestId);
     }
+    const tenantId = scope.tenantId;
 
     if (!permissions.includes("users.update") && !permissions.includes("employee.update")) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
     const { userId } = req.params;
-    const { profile } = await findUserAndProfile(userId, tenantId);
+    const { profile } = await findUserAndProfile(userId, scope);
 
     if (!profile) {
       return sendError(res, 404, "User profile not found.", requestId);
@@ -1215,12 +1234,13 @@ export const UpdateUserPreferences = async (req, res) => {
 export const InviteUser = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
 
-    if (!tenantId) {
+    if (!scope) {
       return sendError(res, 403, "Tenant context is required.", requestId);
     }
+    const tenantId = scope.tenantId;
 
     if (!permissions.includes("users.create") && !permissions.includes("employee.create")) {
       return sendError(res, 403, "Permission denied.", requestId);
@@ -1241,6 +1261,11 @@ export const InviteUser = async (req, res) => {
       return sendError(res, 422, "Email, firstName, lastName, branchId, and departmentId are required.", requestId);
     }
 
+    // A branch-scoped caller can only ever invite employees into their own branch.
+    if (scope.branchId && branchId !== scope.branchId) {
+      return sendError(res, 403, "You do not have permission to invite users into another branch.", requestId);
+    }
+
     const branch = await BranchModel.findOne({ branchKey: branchId, tenantKey: tenantId, status: "active" });
     if (!branch) {
       return sendError(res, 422, "Branch not found or inactive.", requestId);
@@ -1258,7 +1283,7 @@ export const InviteUser = async (req, res) => {
       return sendError(res, 409, "User with this email already exists in the organization.", requestId);
     }
 
-    const roleRecord = await RoleModel.findOne({ name: role, status: "active" });
+    const roleRecord = await RoleModel.findOne({ tenantId, name: role, status: "active" });
     if (!roleRecord) {
       return sendError(res, 422, `Role "${role}" does not exist or is inactive.`, requestId);
     }
@@ -1327,19 +1352,20 @@ export const InviteUser = async (req, res) => {
 export const ResendUserInvitation = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
 
-    if (!tenantId) {
+    if (!scope) {
       return sendError(res, 403, "Tenant context is required.", requestId);
     }
+    const tenantId = scope.tenantId;
 
     if (!permissions.includes("users.create") && !permissions.includes("employee.create")) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
     const { userId } = req.params;
-    const { profile } = await findUserAndProfile(userId, tenantId);
+    const { profile } = await findUserAndProfile(userId, scope);
 
     if (!profile) {
       return sendError(res, 404, "Employee profile not found.", requestId);

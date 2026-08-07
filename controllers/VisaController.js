@@ -10,18 +10,30 @@ import { sendSuccess, sendError } from "../utils/apiResponse.js";
 import { createRequestId } from "../utils/authTokens.js";
 import EnterpriseTimelineEngineService from "../services/EnterpriseTimelineEngineService.js";
 import AuditLogModel from "../models/AuditLogmodel.js";
+import { getAccessScope } from "../utils/accessScope.js";
+
+// A branch-scoped caller's own branch always wins for a write (their own
+// scope.branchId is authoritative, never client-suppliable) — a tenant-scoped
+// caller may specify a branch in the body, defaulting to "main" like before.
+const resolveWriteBranchId = (scope, req, fallback = "main") => scope.branchId || req.body?.branchId || fallback;
 
 /**
  * GET /api/v1/visa-cases
  * Query parameters: page, pageSize, status, countryId, destinationCountry, visaTypeId, visaType, branchId, travelerId, assignedTo, createdFrom, createdTo, search
+ *
+ * Requires authentication (see routes/VisaRoutes.js) — visa case records
+ * contain customer PII (passport numbers, traveler details) and are
+ * tenant-owned; this was previously a public route trusting a client-supplied
+ * x-tenant-id header for tenant identity, which let anyone read any tenant's
+ * complete visa case list with no authentication at all.
  */
 export const getVisaCases = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
-    const branchId = req.query.branchId || req.auth?.branchId || req.headers["x-branch-id"] || null;
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
 
-    const result = await VisaService.getVisaCases(req.query, tenantId, branchId);
+    const result = await VisaService.getVisaCases(req.query, scope.tenantId, scope.branchId || null);
     return sendSuccess(res, 200, "Visa Cases retrieved successfully.", result, requestId);
   } catch (error) {
     console.error("getVisaCases error:", error);
@@ -36,11 +48,12 @@ export const getVisaCases = async (req, res) => {
 export const createVisaCase = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
-    const branchId = req.auth?.branchId || req.headers["x-branch-id"] || req.body.branchId || "main";
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    const branchId = resolveWriteBranchId(scope, req);
     const userId = req.auth?.userId || req.auth?.id || "system";
 
-    const visaCase = await VisaService.createVisaCase(req.body, tenantId, branchId, userId);
+    const visaCase = await VisaService.createVisaCase(req.body, scope.tenantId, branchId, userId);
     return sendSuccess(res, 201, "Visa Case created successfully.", visaCase, requestId);
   } catch (error) {
     console.error("createVisaCase error:", error);
@@ -52,15 +65,17 @@ export const createVisaCase = async (req, res) => {
 /**
  * GET /api/v1/visa-cases/:visaCaseId
  * Returns complete Visa Case aggregate view
+ *
+ * Requires authentication (see getVisaCases above for why this is no longer public).
  */
 export const getVisaCaseById = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
-    const branchId = req.auth?.branchId || req.headers["x-branch-id"] || null;
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
     const { visaCaseId } = req.params;
 
-    const visaCase = await VisaService.getVisaCaseAggregate(visaCaseId, tenantId, branchId);
+    const visaCase = await VisaService.getVisaCaseAggregate(visaCaseId, scope.tenantId, scope.branchId || null);
     return sendSuccess(res, 200, "Visa Case details retrieved successfully.", visaCase, requestId);
   } catch (error) {
     console.error("getVisaCaseById error:", error);
@@ -72,11 +87,16 @@ export const getVisaCaseById = async (req, res) => {
 /**
  * GET /api/v1/workflows/visa
  * Returns the active workflow definition for visa cases.
+ *
+ * Deliberately public (static/tenant-agnostic per routes/VisaRoutes.js) — an
+ * anonymous caller gets the generic default definition; a logged-in caller
+ * may get their tenant's persisted override. No client-supplied header is
+ * trusted for tenant identity either way.
  */
 export const getVisaWorkflowDefinition = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
+    const tenantId = req.auth?.tenantId || null;
     const definition = await VisaWorkflowService.getWorkflowDefinition(null, tenantId);
     return sendSuccess(res, 200, "Visa workflow definition retrieved successfully.", definition, requestId);
   } catch (error) {
@@ -92,8 +112,8 @@ export const getVisaWorkflowDefinition = async (req, res) => {
 export const getVisaCaseWorkflow = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
-    const branchId = req.auth?.branchId || req.headers["x-branch-id"] || null;
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
     const permissions = req.auth?.permissions || [];
     const { visaCaseId } = req.params;
 
@@ -101,12 +121,12 @@ export const getVisaCaseWorkflow = async (req, res) => {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
-    const visaCase = await VisaService.getVisaCaseById(visaCaseId, tenantId, branchId);
-    const definition = await VisaWorkflowService.getWorkflowDefinition(visaCase.workflow?.version, tenantId);
+    const visaCase = await VisaService.getVisaCaseById(visaCaseId, scope.tenantId, scope.branchId || null);
+    const definition = await VisaWorkflowService.getWorkflowDefinition(visaCase.workflow?.version, scope.tenantId);
     // "Audit Summary" was entirely absent — same aggregate-view gap already
     // fixed for the Visa Case, Document, and Embassy Submission GETs.
     const auditSummary = await AuditLogModel.find({
-      tenantId,
+      tenantId: scope.tenantId,
       $or: [
         { resource: "VisaCase", resourceId: visaCase._id.toString() },
         { "details.visaCaseId": visaCase._id.toString() }
@@ -136,8 +156,8 @@ export const getVisaCaseWorkflow = async (req, res) => {
 export const transitionVisaCaseWorkflow = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
-    const branchId = req.auth?.branchId || req.headers["x-branch-id"] || null;
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
     const userId = req.auth?.userId || req.auth?.id || "system";
     const userRoles = Array.isArray(req.auth?.roles) ? req.auth.roles : [];
     const permissions = req.auth?.permissions || [];
@@ -155,7 +175,7 @@ export const transitionVisaCaseWorkflow = async (req, res) => {
       return sendError(res, 400, "targetState is required.", requestId);
     }
 
-    const visaCase = await VisaService.getVisaCaseById(visaCaseId, tenantId, branchId);
+    const visaCase = await VisaService.getVisaCaseById(visaCaseId, scope.tenantId, scope.branchId || null);
     const result = await VisaWorkflowService.applyTransition({
       visaCase,
       targetState,
@@ -186,12 +206,12 @@ export const transitionVisaCaseWorkflow = async (req, res) => {
 export const updateVisaCase = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
-    const branchId = req.auth?.branchId || req.headers["x-branch-id"] || null;
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
     const userId = req.auth?.userId || req.auth?.id || "system";
     const { visaCaseId } = req.params;
 
-    const updatedCase = await VisaService.updateVisaCase(visaCaseId, req.body, tenantId, branchId, userId);
+    const updatedCase = await VisaService.updateVisaCase(visaCaseId, req.body, scope.tenantId, scope.branchId || null, userId);
     return sendSuccess(res, 200, "Visa Case updated successfully.", updatedCase, requestId);
   } catch (error) {
     console.error("updateVisaCase error:", error);
@@ -207,12 +227,12 @@ export const updateVisaCase = async (req, res) => {
 export const deleteVisaCase = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
-    const branchId = req.auth?.branchId || req.headers["x-branch-id"] || null;
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
     const userId = req.auth?.userId || req.auth?.id || "system";
     const { visaCaseId } = req.params;
 
-    const result = await VisaService.deleteVisaCase(visaCaseId, tenantId, branchId, userId);
+    const result = await VisaService.deleteVisaCase(visaCaseId, scope.tenantId, scope.branchId || null, userId);
     return sendSuccess(res, 200, result.message, result, requestId);
   } catch (error) {
     console.error("deleteVisaCase error:", error);
@@ -224,11 +244,13 @@ export const deleteVisaCase = async (req, res) => {
 /**
  * GET /api/v1/visa-types
  * Returns all supported visa types catalog
+ *
+ * Deliberately public (static/tenant-agnostic per routes/VisaRoutes.js).
  */
 export const getVisaTypes = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
+    const tenantId = req.auth?.tenantId || null;
     const result = await VisaRequirementService.getVisaTypes(req.query, tenantId);
     return sendSuccess(res, 200, "Visa types retrieved successfully.", result, requestId);
   } catch (error) {
@@ -240,11 +262,13 @@ export const getVisaTypes = async (req, res) => {
 /**
  * GET /api/v1/countries/:countryId/visa-requirements
  * Returns requirement profiles for a destination country via Rule Engine
+ *
+ * Deliberately public (reference data per routes/VisaRoutes.js).
  */
 export const getCountryVisaRequirements = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
+    const tenantId = req.auth?.tenantId || null;
     const { countryId } = req.params;
     const result = await VisaRequirementService.getRequirementProfilesForCountry(countryId, req.query, tenantId);
     return sendSuccess(res, 200, "Visa requirements resolved successfully.", result, requestId);
@@ -261,10 +285,11 @@ export const getCountryVisaRequirements = async (req, res) => {
 export const createRequirementProfile = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
     const userId = req.auth?.userId || req.auth?.id || "system";
 
-    const profile = await VisaRequirementService.createRequirementProfile(req.body, tenantId, userId);
+    const profile = await VisaRequirementService.createRequirementProfile(req.body, scope.tenantId, userId);
     return sendSuccess(res, 201, "Requirement profile created successfully.", profile, requestId);
   } catch (error) {
     console.error("createRequirementProfile error:", error);
@@ -280,8 +305,8 @@ export const createRequirementProfile = async (req, res) => {
 export const getVisaCaseDocuments = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
-    const branchId = req.auth?.branchId || req.headers["x-branch-id"] || null;
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
     const permissions = req.auth?.permissions || [];
     const { visaCaseId } = req.params;
 
@@ -293,7 +318,7 @@ export const getVisaCaseDocuments = async (req, res) => {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
-    const result = await EnterpriseDocumentService.getVisaCaseDocuments(visaCaseId, tenantId, branchId, req.query);
+    const result = await EnterpriseDocumentService.getVisaCaseDocuments(visaCaseId, scope.tenantId, scope.branchId || null, req.query);
     return sendSuccess(res, 200, "Visa Case documents retrieved successfully.", result, requestId);
   } catch (error) {
     console.error("getVisaCaseDocuments error:", error);
@@ -309,8 +334,9 @@ export const getVisaCaseDocuments = async (req, res) => {
 export const uploadVisaCaseDocument = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
-    const branchId = req.auth?.branchId || req.headers["x-branch-id"] || "main";
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    const branchId = resolveWriteBranchId(scope, req);
     const userId = req.auth?.userId || req.auth?.id || "system";
     const permissions = req.auth?.permissions || [];
     const { visaCaseId } = req.params;
@@ -328,7 +354,7 @@ export const uploadVisaCaseDocument = async (req, res) => {
     // can never carry multer's processed file object.
     const result = await EnterpriseDocumentService.uploadVisaCaseDocument(
       { ...req.body, visaCaseId, uploadedFile: req.file },
-      tenantId,
+      scope.tenantId,
       branchId,
       userId
     );
@@ -347,8 +373,8 @@ export const uploadVisaCaseDocument = async (req, res) => {
 export const getDocumentById = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
-    const branchId = req.auth?.branchId || req.headers["x-branch-id"] || null;
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
     const permissions = req.auth?.permissions || [];
     const { documentId } = req.params;
 
@@ -356,7 +382,7 @@ export const getDocumentById = async (req, res) => {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
-    const result = await EnterpriseDocumentService.getDocumentById(documentId, tenantId, branchId);
+    const result = await EnterpriseDocumentService.getDocumentById(documentId, scope.tenantId, scope.branchId || null);
     return sendSuccess(res, 200, "Document metadata retrieved successfully.", result, requestId);
   } catch (error) {
     console.error("getDocumentById error:", error);
@@ -372,7 +398,8 @@ export const getDocumentById = async (req, res) => {
 export const updateDocumentMetadata = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
     const userId = req.auth?.userId || req.auth?.id || "system";
     const permissions = req.auth?.permissions || [];
     const { documentId } = req.params;
@@ -381,7 +408,7 @@ export const updateDocumentMetadata = async (req, res) => {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
-    const result = await EnterpriseDocumentService.updateDocumentMetadata(documentId, req.body, tenantId, userId);
+    const result = await EnterpriseDocumentService.updateDocumentMetadata(documentId, req.body, scope.tenantId, userId);
     return sendSuccess(res, 200, "Document metadata updated successfully.", result, requestId);
   } catch (error) {
     console.error("updateDocumentMetadata error:", error);
@@ -397,7 +424,8 @@ export const updateDocumentMetadata = async (req, res) => {
 export const archiveDocument = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
     const userId = req.auth?.userId || req.auth?.id || "system";
     const permissions = req.auth?.permissions || [];
     const { documentId } = req.params;
@@ -406,7 +434,7 @@ export const archiveDocument = async (req, res) => {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
-    const result = await EnterpriseDocumentService.archiveDocument(documentId, tenantId, userId);
+    const result = await EnterpriseDocumentService.archiveDocument(documentId, scope.tenantId, userId);
     return sendSuccess(res, 200, result.message, result, requestId);
   } catch (error) {
     console.error("archiveDocument error:", error);
@@ -422,8 +450,9 @@ export const archiveDocument = async (req, res) => {
 export const startDocumentVerification = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
-    const branchId = req.auth?.branchId || req.headers["x-branch-id"] || "main";
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    const branchId = resolveWriteBranchId(scope, req);
     const userId = req.auth?.userId || req.auth?.id || "system";
     const permissions = req.auth?.permissions || [];
     const { documentId } = req.params;
@@ -432,7 +461,7 @@ export const startDocumentVerification = async (req, res) => {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
-    const result = await DocumentVerificationService.startVerification(documentId, tenantId, branchId, userId);
+    const result = await DocumentVerificationService.startVerification(documentId, scope.tenantId, branchId, userId);
     return sendSuccess(res, 200, "Document verification pipeline started.", result, requestId);
   } catch (error) {
     console.error("startDocumentVerification error:", error);
@@ -448,7 +477,8 @@ export const startDocumentVerification = async (req, res) => {
 export const getDocumentVerificationDetails = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
     const permissions = req.auth?.permissions || [];
     const { documentId } = req.params;
 
@@ -456,7 +486,7 @@ export const getDocumentVerificationDetails = async (req, res) => {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
-    const result = await DocumentVerificationService.getVerificationDetails(documentId, tenantId);
+    const result = await DocumentVerificationService.getVerificationDetails(documentId, scope.tenantId);
     return sendSuccess(res, 200, "Document verification details retrieved.", result, requestId);
   } catch (error) {
     console.error("getDocumentVerificationDetails error:", error);
@@ -472,7 +502,8 @@ export const getDocumentVerificationDetails = async (req, res) => {
 export const submitManualDocumentReview = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
     const userId = req.auth?.userId || req.auth?.id || "system";
     const permissions = req.auth?.permissions || [];
     const { documentId } = req.params;
@@ -485,7 +516,7 @@ export const submitManualDocumentReview = async (req, res) => {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
-    const result = await DocumentVerificationService.submitManualReview(documentId, req.body, tenantId, userId);
+    const result = await DocumentVerificationService.submitManualReview(documentId, req.body, scope.tenantId, userId);
     return sendSuccess(res, 200, "Manual review submitted successfully.", result, requestId);
   } catch (error) {
     console.error("submitManualDocumentReview error:", error);
@@ -501,7 +532,8 @@ export const submitManualDocumentReview = async (req, res) => {
 export const reverifyDocument = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
     const userId = req.auth?.userId || req.auth?.id || "system";
     const permissions = req.auth?.permissions || [];
     const { documentId } = req.params;
@@ -510,7 +542,7 @@ export const reverifyDocument = async (req, res) => {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
-    const result = await DocumentVerificationService.reverifyDocument(documentId, tenantId, userId);
+    const result = await DocumentVerificationService.reverifyDocument(documentId, scope.tenantId, userId);
     return sendSuccess(res, 200, "Document reverification pipeline started.", result, requestId);
   } catch (error) {
     console.error("reverifyDocument error:", error);
@@ -526,8 +558,9 @@ export const reverifyDocument = async (req, res) => {
 export const createEmbassySubmission = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
-    const branchId = req.auth?.branchId || req.headers["x-branch-id"] || "main";
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    const branchId = resolveWriteBranchId(scope, req);
     const userId = req.auth?.userId || req.auth?.id || "system";
     const permissions = req.auth?.permissions || [];
     const { visaCaseId } = req.params;
@@ -536,7 +569,7 @@ export const createEmbassySubmission = async (req, res) => {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
-    const result = await EmbassyProcessingService.createEmbassySubmission(visaCaseId, req.body, tenantId, branchId, userId);
+    const result = await EmbassyProcessingService.createEmbassySubmission(visaCaseId, req.body, scope.tenantId, branchId, userId);
     return sendSuccess(res, 201, "Embassy submission created successfully.", result, requestId);
   } catch (error) {
     console.error("createEmbassySubmission error:", error);
@@ -552,7 +585,8 @@ export const createEmbassySubmission = async (req, res) => {
 export const getEmbassySubmissionById = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
     const permissions = req.auth?.permissions || [];
     const { submissionId } = req.params;
 
@@ -560,7 +594,7 @@ export const getEmbassySubmissionById = async (req, res) => {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
-    const result = await EmbassyProcessingService.getEmbassySubmissionAggregate(submissionId, tenantId);
+    const result = await EmbassyProcessingService.getEmbassySubmissionAggregate(submissionId, scope.tenantId);
     return sendSuccess(res, 200, "Embassy submission details retrieved successfully.", result, requestId);
   } catch (error) {
     console.error("getEmbassySubmissionById error:", error);
@@ -576,7 +610,8 @@ export const getEmbassySubmissionById = async (req, res) => {
 export const updateEmbassySubmission = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
     const userId = req.auth?.userId || req.auth?.id || "system";
     const permissions = req.auth?.permissions || [];
     const { submissionId } = req.params;
@@ -585,7 +620,7 @@ export const updateEmbassySubmission = async (req, res) => {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
-    const result = await EmbassyProcessingService.updateEmbassySubmission(submissionId, req.body, tenantId, userId);
+    const result = await EmbassyProcessingService.updateEmbassySubmission(submissionId, req.body, scope.tenantId, userId);
     return sendSuccess(res, 200, "Embassy submission updated successfully.", result, requestId);
   } catch (error) {
     console.error("updateEmbassySubmission error:", error);
@@ -601,7 +636,8 @@ export const updateEmbassySubmission = async (req, res) => {
 export const requestAdditionalDocuments = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
     const userId = req.auth?.userId || req.auth?.id || "system";
     const permissions = req.auth?.permissions || [];
     const { submissionId } = req.params;
@@ -610,7 +646,7 @@ export const requestAdditionalDocuments = async (req, res) => {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
-    const result = await EmbassyProcessingService.requestAdditionalDocuments(submissionId, req.body, tenantId, userId);
+    const result = await EmbassyProcessingService.requestAdditionalDocuments(submissionId, req.body, scope.tenantId, userId);
     return sendSuccess(res, 200, "Additional document request registered.", result, requestId);
   } catch (error) {
     console.error("requestAdditionalDocuments error:", error);
@@ -626,7 +662,8 @@ export const requestAdditionalDocuments = async (req, res) => {
 export const registerEmbassyDecision = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
     const userId = req.auth?.userId || req.auth?.id || "system";
     const permissions = req.auth?.permissions || [];
     const { submissionId } = req.params;
@@ -639,7 +676,7 @@ export const registerEmbassyDecision = async (req, res) => {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
-    const result = await EmbassyProcessingService.registerEmbassyDecision(submissionId, req.body, tenantId, userId);
+    const result = await EmbassyProcessingService.registerEmbassyDecision(submissionId, req.body, scope.tenantId, userId);
     return sendSuccess(res, 200, "Embassy decision registered successfully.", result, requestId);
   } catch (error) {
     console.error("registerEmbassyDecision error:", error);
@@ -655,8 +692,9 @@ export const registerEmbassyDecision = async (req, res) => {
 export const createSubmissionBatch = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
-    const branchId = req.auth?.branchId || req.headers["x-branch-id"] || "main";
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    const branchId = resolveWriteBranchId(scope, req);
     const userId = req.auth?.userId || req.auth?.id || "system";
     const permissions = req.auth?.permissions || [];
 
@@ -664,7 +702,7 @@ export const createSubmissionBatch = async (req, res) => {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
-    const result = await EmbassyProcessingService.createSubmissionBatch(req.body, tenantId, branchId, userId);
+    const result = await EmbassyProcessingService.createSubmissionBatch(req.body, scope.tenantId, branchId, userId);
     return sendSuccess(res, 201, "Embassy submission batch created successfully.", result, requestId);
   } catch (error) {
     console.error("createSubmissionBatch error:", error);
@@ -680,8 +718,8 @@ export const createSubmissionBatch = async (req, res) => {
 export const getVisaCaseAppointments = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
-    const branchId = req.auth?.branchId || req.headers["x-branch-id"] || null;
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
     const permissions = req.auth?.permissions || [];
     const { visaCaseId } = req.params;
 
@@ -689,7 +727,7 @@ export const getVisaCaseAppointments = async (req, res) => {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
-    const result = await SchedulingEngineService.getAppointmentsForCase(visaCaseId, req.query, tenantId, branchId);
+    const result = await SchedulingEngineService.getAppointmentsForCase(visaCaseId, req.query, scope.tenantId, scope.branchId || null);
     return sendSuccess(res, 200, "Appointments retrieved successfully.", result, requestId);
   } catch (error) {
     console.error("getVisaCaseAppointments error:", error);
@@ -705,8 +743,9 @@ export const getVisaCaseAppointments = async (req, res) => {
 export const scheduleVisaCaseAppointment = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
-    const branchId = req.auth?.branchId || req.headers["x-branch-id"] || "main";
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    const branchId = resolveWriteBranchId(scope, req);
     const userId = req.auth?.userId || req.auth?.id || "system";
     const permissions = req.auth?.permissions || [];
     const { visaCaseId } = req.params;
@@ -715,7 +754,7 @@ export const scheduleVisaCaseAppointment = async (req, res) => {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
-    const result = await SchedulingEngineService.scheduleAppointment(visaCaseId, req.body, tenantId, branchId, userId);
+    const result = await SchedulingEngineService.scheduleAppointment(visaCaseId, req.body, scope.tenantId, branchId, userId);
     return sendSuccess(res, 201, "Appointment scheduled successfully.", result, requestId);
   } catch (error) {
     console.error("scheduleVisaCaseAppointment error:", error);
@@ -731,7 +770,8 @@ export const scheduleVisaCaseAppointment = async (req, res) => {
 export const updateAppointment = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
     const userId = req.auth?.userId || req.auth?.id || "system";
     const permissions = req.auth?.permissions || [];
     const { appointmentId } = req.params;
@@ -740,7 +780,7 @@ export const updateAppointment = async (req, res) => {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
-    const result = await SchedulingEngineService.updateAppointment(appointmentId, req.body, tenantId, userId);
+    const result = await SchedulingEngineService.updateAppointment(appointmentId, req.body, scope.tenantId, userId);
     return sendSuccess(res, 200, "Appointment updated successfully.", result, requestId);
   } catch (error) {
     console.error("updateAppointment error:", error);
@@ -756,7 +796,8 @@ export const updateAppointment = async (req, res) => {
 export const recordAppointmentAttendance = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
     const userId = req.auth?.userId || req.auth?.id || "system";
     const permissions = req.auth?.permissions || [];
     const { appointmentId } = req.params;
@@ -765,7 +806,7 @@ export const recordAppointmentAttendance = async (req, res) => {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
-    const result = await SchedulingEngineService.recordAttendance(appointmentId, req.body, tenantId, userId);
+    const result = await SchedulingEngineService.recordAttendance(appointmentId, req.body, scope.tenantId, userId);
     return sendSuccess(res, 200, "Attendance recorded successfully.", result, requestId);
   } catch (error) {
     console.error("recordAppointmentAttendance error:", error);
@@ -781,7 +822,8 @@ export const recordAppointmentAttendance = async (req, res) => {
 export const recordAppointmentResult = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
     const userId = req.auth?.userId || req.auth?.id || "system";
     const permissions = req.auth?.permissions || [];
     const { appointmentId } = req.params;
@@ -790,7 +832,7 @@ export const recordAppointmentResult = async (req, res) => {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
-    const result = await SchedulingEngineService.recordAppointmentResult(appointmentId, req.body, tenantId, userId);
+    const result = await SchedulingEngineService.recordAppointmentResult(appointmentId, req.body, scope.tenantId, userId);
     return sendSuccess(res, 200, "Appointment outcome result recorded.", result, requestId);
   } catch (error) {
     console.error("recordAppointmentResult error:", error);
@@ -806,8 +848,8 @@ export const recordAppointmentResult = async (req, res) => {
 export const getVisaCasePassport = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
-    const branchId = req.auth?.branchId || req.headers["x-branch-id"] || null;
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
     const permissions = req.auth?.permissions || [];
     const { visaCaseId } = req.params;
 
@@ -815,7 +857,7 @@ export const getVisaCasePassport = async (req, res) => {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
-    const passport = await PassportTrackingEngineService.getPassportByVisaCaseId(visaCaseId, tenantId, branchId);
+    const passport = await PassportTrackingEngineService.getPassportByVisaCaseId(visaCaseId, scope.tenantId, scope.branchId || null);
     return sendSuccess(res, 200, "Passport tracking record retrieved successfully.", passport, requestId);
   } catch (error) {
     console.error("getVisaCasePassport error:", error);
@@ -831,8 +873,9 @@ export const getVisaCasePassport = async (req, res) => {
 export const receiveVisaCasePassport = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
-    const branchId = req.auth?.branchId || req.headers["x-branch-id"] || "main";
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    const branchId = resolveWriteBranchId(scope, req);
     const userId = req.auth?.userId || req.auth?.id || "system";
     const permissions = req.auth?.permissions || [];
     const { visaCaseId } = req.params;
@@ -843,7 +886,7 @@ export const receiveVisaCasePassport = async (req, res) => {
 
     const passport = await PassportTrackingEngineService.receivePassport(
       { visaCaseId, ...req.body },
-      tenantId,
+      scope.tenantId,
       branchId,
       userId
     );
@@ -862,7 +905,8 @@ export const receiveVisaCasePassport = async (req, res) => {
 export const transferPassportCustody = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
     const userId = req.auth?.userId || req.auth?.id || "system";
     const permissions = req.auth?.permissions || [];
     const { passportId } = req.params;
@@ -873,7 +917,7 @@ export const transferPassportCustody = async (req, res) => {
 
     const passport = await PassportTrackingEngineService.transferCustody(
       { passportId, ...req.body },
-      tenantId,
+      scope.tenantId,
       userId
     );
     return sendSuccess(res, 200, "Passport custody transferred successfully.", passport, requestId);
@@ -891,7 +935,8 @@ export const transferPassportCustody = async (req, res) => {
 export const dispatchPassportToEmbassy = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
     const userId = req.auth?.userId || req.auth?.id || "system";
     const permissions = req.auth?.permissions || [];
     const { passportId } = req.params;
@@ -902,7 +947,7 @@ export const dispatchPassportToEmbassy = async (req, res) => {
 
     const passport = await PassportTrackingEngineService.dispatchToEmbassy(
       { passportId, ...req.body },
-      tenantId,
+      scope.tenantId,
       userId
     );
     return sendSuccess(res, 200, "Passport dispatched to embassy successfully.", passport, requestId);
@@ -920,7 +965,8 @@ export const dispatchPassportToEmbassy = async (req, res) => {
 export const receivePassportFromEmbassy = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
     const userId = req.auth?.userId || req.auth?.id || "system";
     const userRoles = req.auth?.roles || [];
     const permissions = req.auth?.permissions || [];
@@ -932,7 +978,7 @@ export const receivePassportFromEmbassy = async (req, res) => {
 
     const passport = await PassportTrackingEngineService.receiveFromEmbassy(
       { passportId, ...req.body },
-      tenantId,
+      scope.tenantId,
       userId,
       userRoles
     );
@@ -951,7 +997,8 @@ export const receivePassportFromEmbassy = async (req, res) => {
 export const collectPassport = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
     const userId = req.auth?.userId || req.auth?.id || "system";
     const permissions = req.auth?.permissions || [];
     const { passportId } = req.params;
@@ -962,7 +1009,7 @@ export const collectPassport = async (req, res) => {
 
     const passport = await PassportTrackingEngineService.collectPassport(
       { passportId, ...req.body },
-      tenantId,
+      scope.tenantId,
       userId
     );
     return sendSuccess(res, 200, "Passport collection registered successfully.", passport, requestId);
@@ -981,8 +1028,9 @@ export const collectPassport = async (req, res) => {
 export const reportPassportLostOrDamaged = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
-    const branchId = req.auth?.branchId || req.headers["x-branch-id"] || "main";
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    const branchId = resolveWriteBranchId(scope, req);
     const userId = req.auth?.userId || req.auth?.id || "system";
     const permissions = req.auth?.permissions || [];
     const { passportId } = req.params;
@@ -993,7 +1041,7 @@ export const reportPassportLostOrDamaged = async (req, res) => {
 
     const passport = await PassportTrackingEngineService.reportLostOrDamagedPassport(
       { passportId, ...req.body },
-      tenantId,
+      scope.tenantId,
       branchId,
       userId
     );
@@ -1012,8 +1060,8 @@ export const reportPassportLostOrDamaged = async (req, res) => {
 export const getVisaCaseIncidents = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
-    const branchId = req.auth?.branchId || req.headers["x-branch-id"] || null;
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
     const permissions = req.auth?.permissions || [];
     const { visaCaseId } = req.params;
 
@@ -1021,7 +1069,7 @@ export const getVisaCaseIncidents = async (req, res) => {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
-    const { items, pagination } = await VisaService.getVisaCaseIncidents(visaCaseId, req.query, tenantId, branchId);
+    const { items, pagination } = await VisaService.getVisaCaseIncidents(visaCaseId, req.query, scope.tenantId, scope.branchId || null);
     return sendSuccess(res, 200, "Visa Case incidents retrieved successfully.", { data: items, meta: pagination }, requestId);
   } catch (error) {
     console.error("getVisaCaseIncidents error:", error);
@@ -1037,8 +1085,9 @@ export const getVisaCaseIncidents = async (req, res) => {
 export const reportVisaCaseIncident = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
-    const branchId = req.auth?.branchId || req.headers["x-branch-id"] || "main";
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    const branchId = resolveWriteBranchId(scope, req);
     const userId = req.auth?.userId || req.auth?.id || "system";
     const permissions = req.auth?.permissions || [];
     const { visaCaseId } = req.params;
@@ -1047,7 +1096,7 @@ export const reportVisaCaseIncident = async (req, res) => {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
-    const incident = await VisaService.addVisaCaseIncident(visaCaseId, req.body, tenantId, branchId, userId);
+    const incident = await VisaService.addVisaCaseIncident(visaCaseId, req.body, scope.tenantId, branchId, userId);
     return sendSuccess(res, 201, "Incident reported successfully.", incident, requestId);
   } catch (error) {
     console.error("reportVisaCaseIncident error:", error);
@@ -1063,8 +1112,8 @@ export const reportVisaCaseIncident = async (req, res) => {
 export const getVisaCaseTimeline = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
-    const branchId = req.auth?.branchId || req.headers["x-branch-id"] || "main";
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
     const userId = req.auth?.userId || req.auth?.id || null;
     const permissions = req.auth?.permissions || [];
     const { visaCaseId } = req.params;
@@ -1073,7 +1122,7 @@ export const getVisaCaseTimeline = async (req, res) => {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
-    const timelineData = await VisaService.getVisaCaseTimeline(visaCaseId, req.query, tenantId, branchId, {
+    const timelineData = await VisaService.getVisaCaseTimeline(visaCaseId, req.query, scope.tenantId, scope.branchId || "main", {
       userId,
       isAdmin: permissions.includes("admin")
     });
@@ -1097,8 +1146,9 @@ export const getVisaCaseTimeline = async (req, res) => {
 export const addVisaCaseNote = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
-    const branchId = req.auth?.branchId || req.headers["x-branch-id"] || "main";
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    const branchId = resolveWriteBranchId(scope, req);
     const userId = req.auth?.userId || req.auth?.id || "system";
     const userName = req.auth?.name || "Staff";
     const userRole = req.auth?.roles?.[0] || req.auth?.role || "Staff";
@@ -1109,7 +1159,7 @@ export const addVisaCaseNote = async (req, res) => {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
-    const note = await VisaService.addVisaCaseNote(visaCaseId, req.body, tenantId, branchId, userId, {
+    const note = await VisaService.addVisaCaseNote(visaCaseId, req.body, scope.tenantId, branchId, userId, {
       requestId,
       ipAddress: req.ip,
       device: req.get("user-agent") || null
@@ -1129,8 +1179,8 @@ export const addVisaCaseNote = async (req, res) => {
 export const getVisaCaseAIContext = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
-    const branchId = req.auth?.branchId || req.headers["x-branch-id"] || "main";
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
     const permissions = req.auth?.permissions || [];
     const { visaCaseId } = req.params;
 
@@ -1138,7 +1188,7 @@ export const getVisaCaseAIContext = async (req, res) => {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
-    const aiContext = await VisaService.getVisaCaseAIContext(visaCaseId, tenantId, branchId);
+    const aiContext = await VisaService.getVisaCaseAIContext(visaCaseId, scope.tenantId, scope.branchId || "main");
     return sendSuccess(res, 200, "AI context generated successfully.", aiContext, requestId);
   } catch (error) {
     console.error("getVisaCaseAIContext error:", error);
@@ -1151,18 +1201,17 @@ export const getVisaCaseAIContext = async (req, res) => {
 export const getTimelineEventById = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
     const permissions = req.auth?.permissions || [];
 
     if (!permissions.includes("visa.timeline.read") && !permissions.includes("visa.read") && !permissions.includes("admin")) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
-    const event = await EnterpriseTimelineEngineService.getEventDetail(req.params.eventId, tenantId);
+    const event = await EnterpriseTimelineEngineService.getEventDetail(req.params.eventId, scope.tenantId);
     return sendSuccess(res, 200, "Timeline event retrieved successfully.", event, requestId);
   } catch (error) {
     return sendError(res, error.message?.includes("not found") ? 404 : 500, error.message || "Failed to retrieve timeline event.", requestId);
   }
 };
-
-

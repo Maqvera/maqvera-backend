@@ -9,6 +9,7 @@ import { publishEvent } from "../utils/eventBus.js";
 import { createRequestId } from "../utils/authTokens.js";
 import { getHotelConfig } from "../utils/hotelConfig.js";
 import { getAllowedNextActions, executeWorkflowTransition } from "../utils/WorkflowEngine.js";
+import { getAccessScope } from "../utils/accessScope.js";
 
 const hotelConfig = getHotelConfig();
 
@@ -38,19 +39,20 @@ const recordTravelTimeline = async ({ travelPlanId, tenantId, eventType, title, 
 export const ListTravelPlanHotels = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
     const { travelPlanId } = req.params;
 
-    if (!tenantId) {
+    if (!scope) {
       return sendError(res, 403, "Tenant context is required.", requestId);
     }
+    const tenantId = scope.tenantId;
 
     if (!permissions.includes("travel.read") && !permissions.includes("travel_plans.read") && !permissions.includes("admin")) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
-    const travelPlan = await TravelPlanModel.findOne({ _id: travelPlanId, tenantId });
+    const travelPlan = await TravelPlanModel.findOne({ _id: travelPlanId, ...scope });
     if (!travelPlan) {
       return sendError(res, 404, "Travel plan not found.", requestId);
     }
@@ -111,20 +113,21 @@ export const ListTravelPlanHotels = async (req, res) => {
 export const AddTravelPlanHotels = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const userId = req.auth?.userId || req.auth?.id;
     const permissions = req.auth?.permissions || [];
     const { travelPlanId } = req.params;
 
-    if (!tenantId) {
+    if (!scope) {
       return sendError(res, 403, "Tenant context is required.", requestId);
     }
+    const tenantId = scope.tenantId;
 
     if (!permissions.includes("travel.write") && !permissions.includes("travel_plans.write") && !permissions.includes("admin")) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
-    const travelPlan = await TravelPlanModel.findOne({ _id: travelPlanId, tenantId });
+    const travelPlan = await TravelPlanModel.findOne({ _id: travelPlanId, ...scope });
     if (!travelPlan) {
       return sendError(res, 404, "Travel plan not found.", requestId);
     }
@@ -289,20 +292,21 @@ export const AddTravelPlanHotels = async (req, res) => {
 export const UpdateTravelPlanHotel = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const userId = req.auth?.userId || req.auth?.id;
     const permissions = req.auth?.permissions || [];
     const { travelPlanId, hotelAssignmentId } = req.params;
 
-    if (!tenantId) {
+    if (!scope) {
       return sendError(res, 403, "Tenant context is required.", requestId);
     }
+    const tenantId = scope.tenantId;
 
     if (!permissions.includes("travel.write") && !permissions.includes("travel_plans.write") && !permissions.includes("admin")) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
-    const hotel = await TravelHotelAssignmentModel.findOne({ _id: hotelAssignmentId, travelPlanId, tenantId });
+    const hotel = await TravelHotelAssignmentModel.findOne({ _id: hotelAssignmentId, travelPlanId, ...scope });
     if (!hotel) {
       return sendError(res, 404, "Hotel assignment not found.", requestId);
     }
@@ -350,7 +354,7 @@ export const UpdateTravelPlanHotel = async (req, res) => {
       if (!Array.isArray(req.body.assignedTravelers)) {
         return sendError(res, 400, "assignedTravelers must be an array of traveler IDs.", requestId);
       }
-      const travelPlan = await TravelPlanModel.findOne({ _id: travelPlanId, tenantId });
+      const travelPlan = await TravelPlanModel.findOne({ _id: travelPlanId, ...scope });
       if (!travelPlan) {
         return sendError(res, 404, "Travel plan not found.", requestId);
       }
@@ -437,15 +441,16 @@ export const UpdateTravelPlanHotel = async (req, res) => {
 export const AllocateRooms = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const userId = req.auth?.userId || req.auth?.id;
     const permissions = req.auth?.permissions || [];
     const { travelPlanId } = req.params;
     const { hotelAssignmentId, rooms } = req.body;
 
-    if (!tenantId) {
+    if (!scope) {
       return sendError(res, 403, "Tenant context is required.", requestId);
     }
+    const tenantId = scope.tenantId;
 
     if (!permissions.includes("travel.write") && !permissions.includes("travel_plans.write") && !permissions.includes("admin")) {
       return sendError(res, 403, "Permission denied.", requestId);
@@ -459,12 +464,12 @@ export const AllocateRooms = async (req, res) => {
       return sendError(res, 400, "rooms array is required.", requestId);
     }
 
-    const travelPlan = await TravelPlanModel.findOne({ _id: travelPlanId, tenantId });
+    const travelPlan = await TravelPlanModel.findOne({ _id: travelPlanId, ...scope });
     if (!travelPlan) {
       return sendError(res, 404, "Travel plan not found.", requestId);
     }
 
-    const hotel = await TravelHotelAssignmentModel.findOne({ _id: hotelAssignmentId, travelPlanId, tenantId });
+    const hotel = await TravelHotelAssignmentModel.findOne({ _id: hotelAssignmentId, travelPlanId, ...scope });
     if (!hotel) {
       return sendError(res, 404, "Hotel assignment not found.", requestId);
     }
@@ -653,15 +658,16 @@ export const AllocateRooms = async (req, res) => {
 export const UpdateHotelExecutionStatus = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const userId = req.auth?.userId || req.auth?.id;
     const permissions = req.auth?.permissions || [];
     const { travelPlanId, hotelAssignmentId } = req.params;
     const { status, actualCheckIn, actualCheckOut, action, comments } = req.body;
 
-    if (!tenantId) {
+    if (!scope) {
       return sendError(res, 403, "Tenant context is required.", requestId);
     }
+    const tenantId = scope.tenantId;
 
     if (!permissions.includes("travel.write") && !permissions.includes("travel_plans.write") && !permissions.includes("admin")) {
       return sendError(res, 403, "Permission denied.", requestId);
@@ -671,7 +677,7 @@ export const UpdateHotelExecutionStatus = async (req, res) => {
       return sendError(res, 400, "status is required.", requestId);
     }
 
-    const hotel = await TravelHotelAssignmentModel.findOne({ _id: hotelAssignmentId, travelPlanId, tenantId });
+    const hotel = await TravelHotelAssignmentModel.findOne({ _id: hotelAssignmentId, travelPlanId, ...scope });
     if (!hotel) {
       return sendError(res, 404, "Hotel assignment not found.", requestId);
     }
@@ -763,15 +769,16 @@ export const UpdateHotelExecutionStatus = async (req, res) => {
 export const ReportHotelIncident = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const userId = req.auth?.userId || req.auth?.id;
     const permissions = req.auth?.permissions || [];
     const { travelPlanId, hotelAssignmentId } = req.params;
     const { incidentType, severity, description, resolution } = req.body;
 
-    if (!tenantId) {
+    if (!scope) {
       return sendError(res, 403, "Tenant context is required.", requestId);
     }
+    const tenantId = scope.tenantId;
 
     if (!permissions.includes("travel.write") && !permissions.includes("travel_plans.write") && !permissions.includes("admin")) {
       return sendError(res, 403, "Permission denied.", requestId);
@@ -788,7 +795,7 @@ export const ReportHotelIncident = async (req, res) => {
       return sendError(res, 400, `Invalid severity '${severity}'. Must be one of: ${hotelConfig.incidentSeverities.join(", ")}.`, requestId);
     }
 
-    const hotel = await TravelHotelAssignmentModel.findOne({ _id: hotelAssignmentId, travelPlanId, tenantId });
+    const hotel = await TravelHotelAssignmentModel.findOne({ _id: hotelAssignmentId, travelPlanId, ...scope });
     if (!hotel) {
       return sendError(res, 404, "Hotel assignment not found.", requestId);
     }

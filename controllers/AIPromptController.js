@@ -6,7 +6,7 @@ import { createRequestId } from "../utils/authTokens.js";
 const AI_PERMISSION = "ai.assistant.use";
 
 const buildContext = (req) => ({
-  tenantId: req.auth?.tenantId || "default",
+  tenantId: req.auth?.tenantId || null,
   branchId: req.auth?.branchId || "main",
   userId: req.auth?.userId || req.auth?.id,
   permissions: req.auth?.permissions || [],
@@ -24,6 +24,7 @@ export const CreatePrompt = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasPromptManageAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const { promptType, key, language, name, description, content } = req.body;
     const result = await AIPromptService.createPrompt({ tenantId: ctx.tenantId, branchId: ctx.branchId, userId: ctx.userId, promptType, key, language, name, description, content });
@@ -39,6 +40,7 @@ export const CreatePromptVersion = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasPromptManageAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const { content, description } = req.body;
     const version = await AIPromptService.createVersion({ tenantId: ctx.tenantId, userId: ctx.userId, promptId: req.params.promptId, content, description });
@@ -54,6 +56,7 @@ export const TransitionPromptVersionStatus = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasPromptManageAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const { status, reason } = req.body;
     if (!status) return sendError(res, 400, "status is required.", requestId);
@@ -73,6 +76,7 @@ export const RollbackPrompt = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasPromptManageAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const { targetVersion } = req.body;
     if (!targetVersion) return sendError(res, 400, "targetVersion is required.", requestId);
@@ -89,6 +93,7 @@ export const ListPrompts = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasAIAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const result = await AIPromptService.listPrompts({ tenantId: ctx.tenantId, branchId: ctx.branchId, promptType: req.query.promptType, page: req.query.page, pageSize: req.query.pageSize });
     return sendSuccess(res, 200, "Prompts retrieved successfully.", result, requestId);
@@ -103,6 +108,7 @@ export const GetPromptById = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasAIAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const [result, metrics] = await Promise.all([
       AIPromptService.getPromptWithVersions({ tenantId: ctx.tenantId, promptId: req.params.promptId }),
@@ -120,6 +126,7 @@ export const CreateTestCase = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasPromptManageAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const { name, variables, userMessage, expectedContains, expectedNotContains } = req.body;
     const testCase = await AIPromptService.createTestCase({ tenantId: ctx.tenantId, userId: ctx.userId, promptId: req.params.promptId, name, variables, userMessage, expectedContains, expectedNotContains });
@@ -135,6 +142,7 @@ export const ListTestCases = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasAIAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const testCases = await AIPromptService.listTestCases({ tenantId: ctx.tenantId, promptId: req.params.promptId });
     return sendSuccess(res, 200, "Test cases retrieved successfully.", testCases, requestId);
@@ -149,6 +157,7 @@ export const DeleteTestCase = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasPromptManageAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const testCase = await AIPromptService.deleteTestCase({ tenantId: ctx.tenantId, testCaseId: req.params.testCaseId });
     return sendSuccess(res, 200, "Test case deleted successfully.", testCase, requestId);
@@ -163,6 +172,7 @@ export const RunPromptTestSuite = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasPromptManageAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const result = await AIPromptService.runTestSuite({ tenantId: ctx.tenantId, userId: ctx.userId, promptId: req.params.promptId, version: Number(req.params.version) });
     return sendSuccess(res, 200, "Prompt test suite run completed.", result, requestId);

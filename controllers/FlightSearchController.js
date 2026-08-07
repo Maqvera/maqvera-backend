@@ -20,7 +20,8 @@ const toStartOfDay = (value) => {
 export const SearchFlights = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || "default";
+    const tenantId = req.auth?.tenantId;
+    if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     const userId = req.auth?.userId || req.auth?.id || "system";
     const permissions = req.auth?.permissions || [];
 

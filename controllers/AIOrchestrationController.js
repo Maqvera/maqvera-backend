@@ -5,7 +5,7 @@ import { createRequestId } from "../utils/authTokens.js";
 const AI_PERMISSION = "ai.assistant.use";
 
 const buildContext = (req) => ({
-  tenantId: req.auth?.tenantId || "default",
+  tenantId: req.auth?.tenantId || null,
   branchId: req.auth?.branchId || "main",
   userId: req.auth?.userId || req.auth?.id,
   userName: req.auth?.name || "User",
@@ -20,6 +20,7 @@ export const ListTools = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasAIAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const tools = AIOrchestrationService.getToolCatalog(ctx.permissions, req.query.format);
     return sendSuccess(res, 200, "AI tool catalog retrieved successfully.", { tools }, requestId);
@@ -34,6 +35,7 @@ export const GetToolById = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasAIAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const tool = AIOrchestrationService.getToolById(req.params.toolId, ctx.permissions);
     if (!tool) return sendError(res, 404, "Tool not found or not permitted for this user.", requestId);
@@ -49,6 +51,7 @@ export const ValidateToolCall = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasAIAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const { toolName, arguments: toolArguments } = req.body;
     if (!toolName) return sendError(res, 400, "toolName is required.", requestId);
@@ -65,6 +68,7 @@ export const CreatePlan = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasAIAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     if (!ctx.tenantId || !ctx.userId) return sendError(res, 403, "Tenant and user context are required.", requestId);
     const { prompt, conversationId } = req.body;
@@ -84,6 +88,7 @@ export const ExecutePlan = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasAIAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const { executionId } = req.body;
     if (!executionId) return sendError(res, 400, "executionId is required.", requestId);
@@ -102,6 +107,7 @@ export const CancelExecution = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasAIAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const execution = await AIOrchestrationService.cancelExecution({ tenantId: ctx.tenantId, userId: ctx.userId, executionId: req.params.executionId, reason: req.body?.reason });
     return sendSuccess(res, 200, `Execution ${execution.status === "cancelled" ? "cancelled" : "cancellation requested"}.`, execution, requestId);
@@ -116,6 +122,7 @@ export const ArchiveExecution = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasAIAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const execution = await AIOrchestrationService.archiveExecution({ tenantId: ctx.tenantId, userId: ctx.userId, executionId: req.params.executionId });
     return sendSuccess(res, 200, "Execution archived successfully.", execution, requestId);
@@ -130,6 +137,7 @@ export const DecideApproval = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasAIAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const { approvalRequestId, decision, reason } = req.body;
     if (!approvalRequestId || !decision) return sendError(res, 400, "approvalRequestId and decision are required.", requestId);
@@ -148,6 +156,7 @@ export const ListExecutions = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasAIAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const result = await AIOrchestrationService.listExecutions({ tenantId: ctx.tenantId, userId: ctx.userId, page: req.query.page, pageSize: req.query.pageSize });
     return sendSuccess(res, 200, "AI executions retrieved successfully.", result, requestId);
@@ -162,6 +171,7 @@ export const GetWorkflowMetrics = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasAIAccess(ctx.permissions) || !ctx.permissions.includes("admin")) return sendError(res, 403, "Permission denied.", requestId);
     const metrics = await AIOrchestrationService.getWorkflowMetrics({ tenantId: ctx.tenantId });
     return sendSuccess(res, 200, "AI workflow metrics retrieved successfully.", metrics, requestId);
@@ -176,6 +186,7 @@ export const GetExecutionById = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasAIAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const execution = await AIOrchestrationService.getExecutionById({ tenantId: ctx.tenantId, userId: ctx.userId, executionId: req.params.executionId });
     return sendSuccess(res, 200, "AI execution details retrieved successfully.", execution, requestId);
@@ -190,6 +201,7 @@ export const GetOrchestrationProviderStatus = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasAIAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const statusData = await AIOrchestrationService.getProviderStatus();
     return sendSuccess(res, 200, "AI orchestration provider status retrieved successfully.", statusData, requestId);

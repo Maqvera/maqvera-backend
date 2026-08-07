@@ -1,5 +1,62 @@
 # Auth API Contract
 
+## Role Scope (Branch vs. Tenant-wide access)
+
+`Role.name` (`models/Rolemodel.js`) is unique **per tenant**, not globally — each tenant owns and can independently customize its own role catalog. Every role also carries a `scope`:
+- `"branch"` (default) — the role can only access data in the caller's own `branchId`.
+- `"tenant"` — the role can access every branch within its own tenant, but never crosses into another tenant. The `Administrator` role every tenant gets at `POST /auth/setup` is seeded with `scope: "tenant"`.
+
+`authenticateAccessToken` resolves the caller's role (tenant-scoped lookup: `{ tenantId, name }`) on every request and attaches `req.auth.roleScope`, which `GET /auth/me` also echoes back as `roleScope`. Controllers derive their Mongo filter from this via `getAccessScope(req)` (`utils/accessScope.js`) instead of a hand-rolled `{ tenantId }`/`{ tenantId, branchId }` filter — see `docs/05-api/05-customer-api.md`'s "Access Scope" section for a concrete example of the enforced behavior.
+
+## Tenant Provisioning
+
+### POST /api/v1/auth/setup
+
+Public, rate-limited, unauthenticated. Self-service registration for a brand-new company: creates a real `Tenant`, its first `Branch`, and the tenant's first user with its own tenant-scoped `Administrator` role (`scope: "tenant"`, independently editable per tenant — not shared with any other tenant's role catalog), in one call. This is the only runtime code path that creates a `Tenant` document — every other write path (`Signup`, `AcceptUserInvitation`) joins a tenant that already exists.
+
+#### Business rules
+- `tenantKey` must be unique across all tenants; a duplicate is rejected with `409`.
+- `email` must be unique across all users (email is a global identity, not scoped per tenant); a duplicate is rejected with `409`.
+- The new admin user is created unverified, exactly like `Signup` — an email verification link is issued and must be used before login (subject to the same `strictDomainAuth`/`emailVerified` gating as every other account).
+- If any step after tenant/branch creation fails, the tenant and branch already created are deleted (no Mongoose transaction is used anywhere in this codebase — this is a best-effort compensating rollback, not a transactional guarantee).
+
+#### Request body
+```json
+{
+  "companyName": "Acme Travels",
+  "tenantKey": "acme-travels",
+  "branchName": "Head Office",
+  "username": "acmeadmin",
+  "email": "admin@acmetravels.com",
+  "password": "StrongPass1!"
+}
+```
+- `tenantKey`: lowercase slug, `^[a-z0-9-]{3,40}$`.
+- `branchName`: optional, defaults to `"Head Office"`.
+
+#### Success response
+```json
+{
+  "success": true,
+  "message": "Company registered successfully. Please check your email for the verification link.",
+  "data": {
+    "id": "...",
+    "username": "acmeadmin",
+    "email": "admin@acmetravels.com",
+    "tenantId": "acme-travels",
+    "branchId": "MAIN"
+  }
+}
+```
+
+## Signup
+
+### POST /api/v1/auth/signup
+
+Joins an **existing** tenant — it never creates one. `tenantKey` is required in the request body unless the deployment sets `DEFAULT_TENANT_KEY` (a deliberate operator opt-in for a genuinely single-tenant on-prem deployment, resolved explicitly — never an implicit "pick whichever tenant is oldest" fallback). A missing/invalid/inactive `tenantKey` (and no `DEFAULT_TENANT_KEY` configured) is rejected with `422`.
+
+New companies should call `POST /auth/setup` instead. Existing tenants adding teammates should prefer the invitation flow (`InviteUser` / `AcceptUserInvitation`), which is already authenticated and tenant-scoped by construction.
+
 ## Session Management
 
 ### GET /api/v1/auth/sessions

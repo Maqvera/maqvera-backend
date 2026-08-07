@@ -3,6 +3,7 @@ import VisaAnalyticsEngine from "../services/VisaAnalyticsEngine.js";
 import AuditLogModel from "../models/AuditLogmodel.js";
 import { sendError, sendSuccess } from "../utils/apiResponse.js";
 import { createRequestId } from "../utils/authTokens.js";
+import { getAccessScope } from "../utils/accessScope.js";
 
 const MANAGEMENT_ROLES = new Set([
   "administrator",
@@ -19,12 +20,19 @@ const resolveRole = (req) => String(req.auth?.role || req.auth?.roles?.[0] || ""
 
 const dashboardScope = (req) => {
   const role = resolveRole(req);
-  const requestedBranch = req.query.branchId || req.auth?.branchId || "main";
-  if (requestedBranch === "all" && !MANAGEMENT_ROLES.has(role)) {
+  // Branch-scoped roles (models/Rolemodel.js scope: "branch") are always
+  // locked to their own branch, regardless of ?branchId= — previously only
+  // the literal "all" was blocked, so a branch-scoped, non-management caller
+  // could still request a DIFFERENT specific branch's dashboard by name.
+  // Tenant-scoped roles may request "all" (subject to the separate
+  // MANAGEMENT_ROLES business-permission gate below) or narrow to one branch.
+  const accessScope = getAccessScope(req);
+  const requestedBranch = accessScope?.branchId || req.query.branchId || "all";
+  if (!accessScope?.branchId && requestedBranch === "all" && !MANAGEMENT_ROLES.has(role)) {
     throw new Error("Branch-wide dashboard access requires a management role.");
   }
   return {
-    tenantId: req.auth?.tenantId,
+    tenantId: accessScope?.tenantId || null,
     branchId: requestedBranch,
     userId: req.auth?.userId || req.auth?.id || null,
     customerId: req.query.customerId || req.auth?.customerId || null,

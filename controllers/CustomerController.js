@@ -16,6 +16,7 @@ import { publishEvent } from "../utils/eventBus.js";
 import { createRequestId } from "../utils/authTokens.js";
 import { getCustomerConfig } from "../utils/customerConfig.js";
 import { getStorageConfig } from "../utils/storageConfig.js";
+import { getAccessScope, applyOptionalBranchFilter } from "../utils/accessScope.js";
 
 const customerConfig = getCustomerConfig();
 const storageConfig = getStorageConfig();
@@ -370,8 +371,14 @@ export const ListCustomers = async (req, res) => {
       return sendError(res, 403, "Elevated permission required to view archived customers.", requestId);
     }
 
-    const filter = { tenantId, status: { $ne: "archived" } };
-    if (branchId) filter.branchId = branchId;
+    const scope = getAccessScope(req);
+    if (!scope) {
+      return sendError(res, 403, "Tenant context is required.", requestId);
+    }
+    // A branch-scoped caller's own branch always wins — the ?branchId= query
+    // param can only narrow a tenant-scoped (all-branch) caller, never widen
+    // a branch-restricted one onto a branch they don't belong to.
+    const filter = { ...applyOptionalBranchFilter(scope, branchId), status: { $ne: "archived" } };
     if (customerType) filter.type = customerType.toLowerCase();
     if (category) filter.category = category.toLowerCase();
     if (status) filter.status = status.toLowerCase();
@@ -431,9 +438,9 @@ export const ListCustomers = async (req, res) => {
 export const SearchCustomers = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
     const permissions = req.auth?.permissions || [];
-    if (!tenantId) {
+    const scope = getAccessScope(req);
+    if (!scope) {
       return sendError(res, 403, "Tenant context is required.", requestId);
     }
     if (!permissions.includes("customers.read") && !permissions.includes("customer.read")) {
@@ -451,7 +458,7 @@ export const SearchCustomers = async (req, res) => {
     // number never benefit from word-tokenized full-text search — matched
     // by direct case-insensitive substring instead.
     const identifierMatches = await CustomerModel.find({
-      tenantId, status: { $ne: "archived" },
+      ...scope, status: { $ne: "archived" },
       $or: [
         { phone: new RegExp(query, "i") },
         { email: new RegExp(query, "i") },
@@ -469,7 +476,7 @@ export const SearchCustomers = async (req, res) => {
     let textMatches = [];
     try {
       textMatches = await CustomerModel.find(
-        { tenantId, status: { $ne: "archived" }, $text: { $search: query } },
+        { ...scope, status: { $ne: "archived" }, $text: { $search: query } },
         { score: { $meta: "textScore" } }
       ).sort({ score: { $meta: "textScore" } }).limit(20).lean();
     } catch (textSearchError) {
@@ -488,10 +495,10 @@ export const SearchCustomers = async (req, res) => {
     // Visa Number / Reference Number cannot be searched the same way today —
     // VisaCaseModel links via travelerId, not customerId, so there is no real
     // join key back to Customer yet.
-    const bookingMatches = await BookingHeaderModel.find({ tenantId, bookingNumber: new RegExp(query, "i") }).select("customerId").limit(10).lean();
+    const bookingMatches = await BookingHeaderModel.find({ ...scope, bookingNumber: new RegExp(query, "i") }).select("customerId").limit(10).lean();
     if (bookingMatches.length > 0) {
       const bookingCustomerIds = [...new Set(bookingMatches.map((b) => b.customerId?.toString()).filter(Boolean))];
-      const bookingCustomers = await CustomerModel.find({ _id: { $in: bookingCustomerIds }, tenantId, status: { $ne: "archived" } }).lean();
+      const bookingCustomers = await CustomerModel.find({ _id: { $in: bookingCustomerIds }, ...scope, status: { $ne: "archived" } }).lean();
       bookingCustomers.forEach((c) => {
         const id = c._id.toString();
         if (!resultsById.has(id)) resultsById.set(id, { customer: c, score: 95 });
@@ -505,7 +512,7 @@ export const SearchCustomers = async (req, res) => {
     // substitute for a real search engine (Atlas Search/Elasticsearch/Meilisearch,
     // none of which are configured in this codebase) at large data volumes.
     if (resultsById.size === 0) {
-      const candidatePool = await CustomerModel.find({ tenantId, status: { $ne: "archived" } })
+      const candidatePool = await CustomerModel.find({ ...scope, status: { $ne: "archived" } })
         .sort({ createdAt: -1 })
         .limit(300)
         .lean();
@@ -534,12 +541,13 @@ export const SearchCustomers = async (req, res) => {
 export const CreateCustomer = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
 
-    if (!tenantId) {
+    if (!scope) {
       return sendError(res, 403, "Tenant context is required.", requestId);
     }
+    const tenantId = scope.tenantId;
 
     if (!permissions.includes("customers.create") && !permissions.includes("customer.create")) {
       return sendError(res, 403, "Permission denied.", requestId);
@@ -664,8 +672,20 @@ export const CreateCustomer = async (req, res) => {
       }
     }
 
-    let resolvedBranchKey = branchId;
-    const branch = await BranchModel.findOne({ branchKey: branchId, tenantKey: tenantId, status: "active" });
+    // A branch-scoped caller can only ever create customers in their own
+    // branch — the request body's branchId is honored only for tenant-scoped
+    // (all-branch) callers, exactly the write-side mirror of ListCustomers'
+    // read-side branch enforcement. Must check the RAW req.body.branchId,
+    // not the destructured `branchId` above — that one already defaulted to
+    // customerConfig.defaultBranchKey when the client sent nothing, so it is
+    // never actually undefined and would otherwise always look "explicit".
+    if (scope.branchId && req.body.branchId && req.body.branchId !== scope.branchId) {
+      return sendError(res, 403, "You do not have permission to create customers in another branch.", requestId);
+    }
+    const requestedBranchKey = scope.branchId || branchId;
+
+    let resolvedBranchKey = requestedBranchKey;
+    const branch = await BranchModel.findOne({ branchKey: requestedBranchKey, tenantKey: tenantId, status: "active" });
     if (!branch) {
       const defaultBranch = await BranchModel.findOne({ tenantKey: tenantId, status: "active" });
       if (defaultBranch) resolvedBranchKey = defaultBranch.branchKey;
@@ -755,10 +775,10 @@ export const CreateCustomer = async (req, res) => {
 export const GetCustomer = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
 
-    if (!tenantId) {
+    if (!scope) {
       return sendError(res, 403, "Tenant context is required.", requestId);
     }
 
@@ -767,7 +787,7 @@ export const GetCustomer = async (req, res) => {
     }
 
     const { customerId } = req.params;
-    const customer = await CustomerModel.findOne({ _id: customerId, tenantId }).lean();
+    const customer = await CustomerModel.findOne({ _id: customerId, ...scope }).lean();
 
     if (!customer) {
       return sendError(res, 404, "Customer not found.", requestId);
@@ -811,19 +831,20 @@ export const GetCustomer = async (req, res) => {
 export const UpdateCustomer = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
 
-    if (!tenantId) {
+    if (!scope) {
       return sendError(res, 403, "Tenant context is required.", requestId);
     }
+    const tenantId = scope.tenantId;
 
     if (!permissions.includes("customers.update") && !permissions.includes("customer.update")) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
     const { customerId } = req.params;
-    const customer = await CustomerModel.findOne({ _id: customerId, tenantId, status: { $ne: "archived" } });
+    const customer = await CustomerModel.findOne({ _id: customerId, ...scope, status: { $ne: "archived" } });
 
     if (!customer) {
       return sendError(res, 404, "Customer not found.", requestId);
@@ -1039,19 +1060,20 @@ export const UpdateCustomer = async (req, res) => {
 export const ArchiveCustomer = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
 
-    if (!tenantId) {
+    if (!scope) {
       return sendError(res, 403, "Tenant context is required.", requestId);
     }
+    const tenantId = scope.tenantId;
 
     if (!permissions.includes("customers.delete") && !permissions.includes("customer.delete")) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
     const { customerId } = req.params;
-    const customer = await CustomerModel.findOne({ _id: customerId, tenantId, status: { $ne: "archived" } });
+    const customer = await CustomerModel.findOne({ _id: customerId, ...scope, status: { $ne: "archived" } });
 
     if (!customer) {
       return sendError(res, 404, "Customer not found.", requestId);

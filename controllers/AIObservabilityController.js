@@ -6,7 +6,7 @@ import { sendError, sendSuccess } from "../utils/apiResponse.js";
 import { createRequestId } from "../utils/authTokens.js";
 
 const buildContext = (req) => ({
-  tenantId: req.auth?.tenantId || "default",
+  tenantId: req.auth?.tenantId || null,
   branchId: req.auth?.branchId || "main",
   userId: req.auth?.userId || req.auth?.id,
   permissions: req.auth?.permissions || []
@@ -45,6 +45,7 @@ export const GetRequestMetrics = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasAdminAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const metrics = await AIObservabilityService.getRequestMetrics({ tenantId: ctx.tenantId, ...parseRange(req) });
     return sendSuccess(res, 200, "AI request metrics retrieved successfully.", metrics, requestId);
@@ -59,6 +60,7 @@ export const GetLLMMetrics = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasAdminAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const metrics = await AIObservabilityService.getLLMMetrics({ tenantId: ctx.tenantId, ...parseRange(req) });
     return sendSuccess(res, 200, "AI LLM metrics retrieved successfully.", metrics, requestId);
@@ -73,6 +75,7 @@ export const GetToolMetrics = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasAdminAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const metrics = await AIObservabilityService.getToolMetrics({ tenantId: ctx.tenantId, ...parseRange(req) });
     return sendSuccess(res, 200, "AI tool metrics retrieved successfully.", metrics, requestId);
@@ -87,6 +90,7 @@ export const GetRAGMetrics = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasAdminAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const metrics = await AIObservabilityService.getRAGMetrics({ tenantId: ctx.tenantId, ...parseRange(req) });
     return sendSuccess(res, 200, "AI RAG metrics retrieved successfully.", metrics, requestId);
@@ -101,6 +105,7 @@ export const GetAgentMetrics = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasAdminAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const metrics = await AIObservabilityService.getAgentMetrics({ tenantId: ctx.tenantId, ...parseRange(req) });
     return sendSuccess(res, 200, "AI agent usage metrics retrieved successfully.", metrics, requestId);
@@ -115,6 +120,7 @@ export const GetMemoryMetrics = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasAdminAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const metrics = await AIObservabilityService.getMemoryMetrics({ tenantId: ctx.tenantId });
     return sendSuccess(res, 200, "AI memory metrics retrieved successfully.", metrics, requestId);
@@ -129,6 +135,7 @@ export const GetQualityMetrics = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasAdminAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const metrics = await AIObservabilityService.getQualityMetrics({ tenantId: ctx.tenantId, ...parseRange(req) });
     return sendSuccess(res, 200, "AI quality metrics retrieved successfully.", metrics, requestId);
@@ -143,6 +150,7 @@ export const GetCostMetrics = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasAdminAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const metrics = await AIObservabilityService.getCostMetrics({ tenantId: ctx.tenantId, ...parseRange(req), groupBy: req.query.groupBy === "month" ? "month" : "day" });
     return sendSuccess(res, 200, "AI cost metrics retrieved successfully.", metrics, requestId);
@@ -157,6 +165,7 @@ export const GetPromptDashboard = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasAdminAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const dashboard = await AIObservabilityService.getPromptDashboard({ tenantId: ctx.tenantId });
     return sendSuccess(res, 200, "AI prompt dashboard retrieved successfully.", dashboard, requestId);
@@ -171,6 +180,7 @@ export const GetSecurityMetrics = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasAdminAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const metrics = await AIObservabilityService.getSecurityMetrics({ tenantId: ctx.tenantId, ...parseRange(req) });
     return sendSuccess(res, 200, "AI security metrics retrieved successfully.", metrics, requestId);
@@ -185,6 +195,7 @@ export const GetProviderDashboard = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasAdminAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const providerStatus = await gatherProviderStatus();
     return sendSuccess(res, 200, "AI provider dashboard retrieved successfully.", providerStatus, requestId);
@@ -199,6 +210,7 @@ export const GetHealthScore = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasAdminAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const providerStatus = await gatherProviderStatus();
     const health = await AIObservabilityService.getHealthScore({ tenantId: ctx.tenantId, providerStatus });
@@ -214,6 +226,7 @@ export const GetExecutiveDashboard = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasAdminAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const providerStatus = await gatherProviderStatus();
     const dashboard = await AIObservabilityService.getExecutiveDashboard({ tenantId: ctx.tenantId, providerStatus });
@@ -229,6 +242,7 @@ export const ListAlerts = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasAdminAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const result = await AIObservabilityService.listAlerts({ tenantId: ctx.tenantId, status: req.query.status, page: req.query.page, pageSize: req.query.pageSize });
     return sendSuccess(res, 200, "AI alerts retrieved successfully.", result, requestId);
@@ -243,6 +257,7 @@ export const EvaluateAlerts = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasObservabilityManageAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const providerStatus = await gatherProviderStatus();
     const result = await AIObservabilityService.evaluateAlerts({ tenantId: ctx.tenantId, branchId: ctx.branchId, providerStatus });

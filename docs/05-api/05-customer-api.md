@@ -49,6 +49,16 @@ Traveler (Person Traveling)
 - `POST /api/v1/customers` — Creation with duplicate detection
 - `GET /api/v1/customers/{customerId}` — Full profile view
 
+## Access Scope (Company + Branch Isolation)
+
+Every one of the CRUD endpoints above (`ListCustomers`, `SearchCustomers`, `CreateCustomer`, `GetCustomer`, `UpdateCustomer`, `ArchiveCustomer`) is filtered through `getAccessScope(req)` (`utils/accessScope.js`), derived from the caller's Role (`models/Rolemodel.js`, `scope: "branch" | "tenant"`):
+
+- **`scope: "branch"` (default)** — the caller only sees/acts on customers in their own `branchId`, within their own tenant. `GET /customers?branchId=...` can never widen this — a branch-scoped caller's own branch always wins over the query param.
+- **`scope: "tenant"`** — the caller sees/acts on every branch within their own tenant (never another tenant). `?branchId=` may be used to narrow to one branch.
+- **`POST /customers`** mirrors this on the write side: a branch-scoped caller cannot create a customer under a different branch by naming it in the request body (`403`) — the new customer is always created in the caller's own branch. A tenant-scoped caller may specify any active branch within their tenant.
+
+Sub-resource endpoints under `/customers/{customerId}/...` (documents, notes, family, passports, phones, emails, addresses, preferences, emergency contacts) currently enforce tenant isolation only (`{ _id: customerId, tenantId }`) — branch-level enforcement has not yet been extended to them.
+
 ---
 
 # Part 3 — Customer Profile Management APIs

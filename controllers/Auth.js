@@ -19,6 +19,7 @@ import { publishEvent } from "../utils/eventBus.js";
 import { sendError, sendSuccess } from "../utils/apiResponse.js";
 import { authenticator } from "otplib";
 import { getAuthConfig } from "../utils/authConfig.js";
+import { ensureAdministratorRole } from "../utils/authDomainDefaults.js";
 import { validatePassword, recordPasswordHistory, getPasswordPolicy } from "../utils/passwordPolicy.js";
 import CacheManager from "../utils/cacheManager.js";
 import { parseUserAgent } from "../utils/userAgentParser.js";
@@ -213,25 +214,24 @@ const resolveDomainContext = async (user) => {
   const [tenant, branch, role] = await Promise.all([
     user.tenantId ? TenantModel.findOne({ tenantKey: user.tenantId, status: "active" }).lean() : null,
     user.branchId ? BranchModel.findOne({ branchKey: user.branchId, tenantKey: user.tenantId, status: "active" }).lean() : null,
-    user.role ? RoleModel.findOne({ name: user.role, status: "active" }).lean() : null,
+    // Role.name is unique per tenant, not globally — must filter by the
+    // user's own tenant, or this could resolve a different tenant's
+    // same-named role (wrong permission set/scope entirely).
+    user.role && user.tenantId ? RoleModel.findOne({ tenantId: user.tenantId, name: user.role, status: "active" }).lean() : null,
   ]);
-  return { tenant, branch, role, permissions: role?.permissions || [] };
+  return { tenant, branch, role, permissions: role?.permissions || [], roleScope: role?.scope || "branch" };
 };
 
-const resolveDefaultDomainAssignments = async () => {
-  const { DEFAULT_TENANT_KEY, DEFAULT_BRANCH_KEY, DEFAULT_ROLE_NAME } = process.env;
-  const tenant = DEFAULT_TENANT_KEY
-    ? await TenantModel.findOne({ tenantKey: DEFAULT_TENANT_KEY, status: "active" }).lean()
-    : await TenantModel.findOne({ status: "active" }).sort({ createdAt: 1 }).lean();
-  const branch = tenant
-    ? DEFAULT_BRANCH_KEY
-      ? await BranchModel.findOne({ branchKey: DEFAULT_BRANCH_KEY, tenantKey: tenant.tenantKey, status: "active" }).lean()
-      : await BranchModel.findOne({ tenantKey: tenant.tenantKey, status: "active" }).sort({ createdAt: 1 }).lean()
-    : null;
-  const role = DEFAULT_ROLE_NAME
-    ? await RoleModel.findOne({ name: DEFAULT_ROLE_NAME, status: "active" }).lean()
-    : await RoleModel.findOne({ status: "active" }).sort({ createdAt: 1 }).lean();
-  return { tenant, branch, role, permissions: role?.permissions || [] };
+// Signup must always land a new user in an explicit, caller-specified
+// tenant — never in "whichever tenant happens to be oldest in the DB", which
+// used to silently merge every company that ever signed up into one tenant.
+// DEFAULT_TENANT_KEY is the one deliberate exception: an operator opting a
+// genuinely single-tenant on-prem deployment into treating it as the
+// implicit target — not a fallback that activates on its own.
+const resolveSignupTenant = async (tenantKey) => {
+  const key = tenantKey || process.env.DEFAULT_TENANT_KEY || null;
+  if (!key) return null;
+  return TenantModel.findOne({ tenantKey: key, status: "active" }).lean();
 };
 
 // Returns a clean, explicit preferences object — never the raw Mongo
@@ -381,32 +381,97 @@ export const createSessionAndTokens = async (user, meta, rememberMe = false) => 
 
 export const Signup = async (Req, Res) => {
   try {
-    const { username, email, password } = Req.body;
+    const { username, email, password, tenantKey } = Req.body;
     const meta = getRequestMeta(Req);
     const existing = await UserModel.findOne({ email });
     if (existing) {
       return sendError(Res, 409, "User already exists.", meta.requestId);
     }
-    const domainDefaults = await resolveDefaultDomainAssignments();
-    const { valid, errors } = await validatePassword(password, domainDefaults.tenant?.tenantKey || null);
+    const tenant = await resolveSignupTenant(tenantKey);
+    if (!tenant) {
+      return sendError(Res, 422, "A valid company identifier (tenantKey) is required to sign up. Registering a brand-new company? Use POST /auth/setup instead.", meta.requestId);
+    }
+    const branch = await BranchModel.findOne({ tenantKey: tenant.tenantKey, status: "active" }).sort({ createdAt: 1 }).lean();
+    const { valid, errors } = await validatePassword(password, tenant.tenantKey);
     if (!valid) {
       return sendError(Res, 422, "Password does not meet policy requirements.", meta.requestId, { errors });
     }
     const hash = await bcrypt.hash(password, 10);
     const user = await UserModel.create({
       username, email, password: hash,
-      tenantId: domainDefaults.tenant?.tenantKey || null,
-      branchId: domainDefaults.branch?.branchKey || null,
-      role: domainDefaults.role?.name || "User",
+      tenantId: tenant.tenantKey,
+      branchId: branch?.branchKey || null,
+      role: "User",
     });
     await recordPasswordHistory(user._id, hash, "change", meta.requestId);
     await issueEmailVerificationToken({ user, requestId: meta.requestId, ipAddress: meta.ipAddress, deviceId: meta.deviceId, userAgent: meta.userAgent });
     return sendSuccess(Res, 201, "Signup successful. Please check your email for verification link.", {
-      id: user._id, username: user.username, email: user.email,
+      id: user._id, username: user.username, email: user.email, tenantId: tenant.tenantKey,
     }, meta.requestId);
   } catch (error) {
     logger.error("Signup error", { error: error.message });
     return sendError(Res, 500, "Something went wrong", Req.requestId || uuidv4());
+  }
+};
+
+// New-company self-registration: creates a real tenant + its first branch +
+// a shared "Administrator" role (see utils/authDomainDefaults.js) + the
+// tenant's first admin user, in one call. This is the ONLY code path that
+// creates a TenantModel document at runtime — every other write path in the
+// app (Signup, AcceptUserInvitation) joins a tenant that already exists.
+export const SetupTenant = async (Req, Res) => {
+  const meta = getRequestMeta(Req);
+  try {
+    const { companyName, tenantKey, branchName, username, email, password } = Req.body;
+
+    const existingTenant = await TenantModel.findOne({ tenantKey });
+    if (existingTenant) {
+      return sendError(Res, 409, "This company identifier is already in use.", meta.requestId);
+    }
+    const existingUser = await UserModel.findOne({ email });
+    if (existingUser) {
+      return sendError(Res, 409, "User already exists.", meta.requestId);
+    }
+    const { valid, errors } = await validatePassword(password, tenantKey);
+    if (!valid) {
+      return sendError(Res, 422, "Password does not meet policy requirements.", meta.requestId, { errors });
+    }
+
+    // No Mongoose session/transaction here — no write path in this codebase
+    // uses one (standalone MongoDB is assumed, not a replica set). Instead:
+    // create sequentially, and if a later step fails, compensate by deleting
+    // whatever was already created rather than leaving an orphaned tenant.
+    let tenant = null;
+    let branch = null;
+    try {
+      tenant = await TenantModel.create({ tenantKey, name: companyName, status: "active" });
+      branch = await BranchModel.create({ branchKey: "MAIN", tenantKey: tenant.tenantKey, name: branchName || "Head Office", status: "active" });
+      const role = await ensureAdministratorRole(tenant.tenantKey);
+
+      const hash = await bcrypt.hash(password, 10);
+      const user = await UserModel.create({
+        username, email, password: hash,
+        tenantId: tenant.tenantKey,
+        branchId: branch.branchKey,
+        role: role.name,
+      });
+      await recordPasswordHistory(user._id, hash, "change", meta.requestId);
+      await issueEmailVerificationToken({ user, requestId: meta.requestId, ipAddress: meta.ipAddress, deviceId: meta.deviceId, userAgent: meta.userAgent });
+
+      await createAudit({ action: "tenant.setup", outcome: "success", user, requestId: meta.requestId, ipAddress: meta.ipAddress, device: meta.deviceId, browser: meta.userAgent, metadata: { tenantKey: tenant.tenantKey, branchKey: branch.branchKey } });
+      publishEvent("TenantProvisioned", { tenantId: tenant.tenantKey, branchId: branch.branchKey, adminUserId: user._id.toString(), companyName: tenant.name, requestId: meta.requestId });
+
+      return sendSuccess(Res, 201, "Company registered successfully. Please check your email for the verification link.", {
+        id: user._id, username: user.username, email: user.email, tenantId: tenant.tenantKey, branchId: branch.branchKey,
+      }, meta.requestId);
+    } catch (innerError) {
+      if (branch) await BranchModel.deleteOne({ _id: branch._id }).catch(() => {});
+      if (tenant) await TenantModel.deleteOne({ _id: tenant._id }).catch(() => {});
+      throw innerError;
+    }
+  } catch (error) {
+    logger.error("SetupTenant error", { error: error.message });
+    return sendError(Res, 500, "Something went wrong", meta.requestId);
   }
 };
 
@@ -720,6 +785,7 @@ export const Me = async (Req, Res) => {
       tenant: { id: domain.tenant?._id || user.tenantId, name: domain.tenant?.name || null, key: domain.tenant?.tenantKey || user.tenantId },
       branch: { id: domain.branch?._id || user.branchId, name: domain.branch?.name || null, key: domain.branch?.branchKey || user.branchId },
       permissions: domain.permissions,
+      roleScope: domain.roleScope,
       preferences,
     }, meta.requestId);
   } catch (error) {

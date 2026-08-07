@@ -7,6 +7,7 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "nodemon server.js",
     "seed:auth": "node scripts/seedAuthDomain.js",
+    "migrate:tenant-scope": "node scripts/migrateTenantScopeUniqueness.js",
     "seed:visa-workflow": "node scripts/seedVisaWorkflowDefinition.js",
     "seed:incident-policy": "node scripts/seedIncidentPolicy.js",
     "seed:timeline-policy": "node scripts/seedTimelinePolicy.js"

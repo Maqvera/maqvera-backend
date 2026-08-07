@@ -9,7 +9,7 @@ const AI_PERMISSION = "ai.assistant.use";
 const KNOWLEDGE_MANAGE_PERMISSION = "ai.knowledge.manage";
 
 const buildContext = (req) => ({
-  tenantId: req.auth?.tenantId || "default",
+  tenantId: req.auth?.tenantId || null,
   branchId: req.auth?.branchId || "main",
   userId: req.auth?.userId || req.auth?.id,
   userName: req.auth?.name || "User",
@@ -45,6 +45,7 @@ export const CreateKnowledgeDocument = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasKnowledgeManageAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
 
     const { title, category, visibilityLevel, tags, language, author } = req.body;
@@ -81,6 +82,7 @@ export const UpdateKnowledgeDocument = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasKnowledgeManageAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
 
     const { title, category, visibilityLevel, content, tags, language, author } = req.body;
@@ -103,6 +105,7 @@ export const ArchiveKnowledgeDocument = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasKnowledgeManageAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const doc = await AIKnowledgeService.archiveDocument({ tenantId: ctx.tenantId, userId: ctx.userId, documentId: req.params.documentId });
     return sendSuccess(res, 200, "Knowledge document archived successfully.", doc, requestId);
@@ -117,6 +120,7 @@ export const ListKnowledgeDocuments = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasAIAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const result = await AIKnowledgeService.listDocuments({
       tenantId: ctx.tenantId, branchId: ctx.branchId, category: req.query.category,
@@ -134,6 +138,7 @@ export const GetKnowledgeDocumentById = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasAIAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const doc = await AIKnowledgeService.getDocumentById({ tenantId: ctx.tenantId, documentId: req.params.documentId });
     return sendSuccess(res, 200, "Knowledge document retrieved successfully.", doc, requestId);
@@ -148,6 +153,7 @@ export const SearchKnowledgeBase = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const ctx = buildContext(req);
+    if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasAIAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const { query, topK, includeArchived } = req.body;
     if (!query) return sendError(res, 400, "query is required.", requestId);

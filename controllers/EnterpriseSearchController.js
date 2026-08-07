@@ -2,6 +2,13 @@ import SearchEngineService from "../services/SearchEngineService.js";
 import { sendError, sendSuccess } from "../utils/apiResponse.js";
 import { createRequestId } from "../utils/authTokens.js";
 import { publishEvent } from "../utils/eventBus.js";
+import { getAccessScope } from "../utils/accessScope.js";
+
+// Branch-scoped roles (models/Rolemodel.js scope: "branch") are always
+// locked to their own branch, regardless of ?branchId= — previously only the
+// literal "all" was blocked, so a branch-scoped caller could still request a
+// DIFFERENT specific branch's search results/suggestions by name.
+const resolveSearchBranch = (scope, requestedBranchId) => scope.branchId || requestedBranchId || "all";
 
 /**
  * 1. GET /api/v1/search
@@ -10,12 +17,13 @@ import { publishEvent } from "../utils/eventBus.js";
 export const GlobalSearch = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const userId = req.auth?.userId || req.auth?.id;
 
-    if (!tenantId) {
+    if (!scope) {
       return sendError(res, 403, "Tenant context is required.", requestId);
     }
+    const tenantId = scope.tenantId;
 
     const {
       q = "",
@@ -31,7 +39,7 @@ export const GlobalSearch = async (req, res) => {
     const parsedPage = Math.max(parseInt(page, 10), 1);
     // The search service applies the environment-configured upper bound.
     const parsedPageSize = Math.max(parseInt(pageSize, 10) || 20, 1);
-    const resolvedBranchId = branchId || req.auth?.branchId || "main";
+    const resolvedBranchId = resolveSearchBranch(scope, branchId);
     if (resolvedBranchId === "all" && !(req.auth?.permissions || []).includes("search.branch.all")) {
       return sendError(res, 403, "Branch-wide search requires search.branch.all permission.", requestId);
     }
@@ -71,13 +79,13 @@ export const GlobalSearch = async (req, res) => {
 export const GetSearchSuggestions = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
 
-    if (!tenantId) {
+    if (!scope) {
       return sendError(res, 403, "Tenant context is required.", requestId);
     }
 
-    const suggestions = await SearchEngineService.getSuggestions({ tenantId, userId: req.auth?.userId || req.auth?.id, branchId: req.query.branchId || req.auth?.branchId || "main", permissions: req.auth?.permissions || [] });
+    const suggestions = await SearchEngineService.getSuggestions({ tenantId: scope.tenantId, userId: req.auth?.userId || req.auth?.id, branchId: resolveSearchBranch(scope, req.query.branchId), permissions: req.auth?.permissions || [] });
 
     return sendSuccess(res, 200, "Search suggestions retrieved successfully.", suggestions, requestId);
   } catch (err) {
@@ -93,13 +101,14 @@ export const GetSearchSuggestions = async (req, res) => {
 export const SaveSearchQuery = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const userId = req.auth?.userId || req.auth?.id;
     const { queryName, queryParams, visibility, isPinned } = req.body;
 
-    if (!tenantId) {
+    if (!scope) {
       return sendError(res, 403, "Tenant context is required.", requestId);
     }
+    const tenantId = scope.tenantId;
 
     if (!queryName || !queryParams) {
       return sendError(res, 400, "queryName and queryParams are required.", requestId);
@@ -126,10 +135,10 @@ export const SaveSearchQuery = async (req, res) => {
 export const ListSavedSearches = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const userId = req.auth?.userId || req.auth?.id;
-    if (!tenantId || !userId) return sendError(res, 403, "Tenant and user context are required.", requestId);
-    const searches = await SearchEngineService.listSavedSearches({ tenantId, userId });
+    if (!scope || !userId) return sendError(res, 403, "Tenant and user context are required.", requestId);
+    const searches = await SearchEngineService.listSavedSearches({ tenantId: scope.tenantId, userId });
     return sendSuccess(res, 200, "Saved searches retrieved successfully.", searches, requestId);
   } catch (err) { return sendError(res, 500, err.message || "Failed to fetch saved searches.", requestId); }
 };
@@ -137,10 +146,10 @@ export const ListSavedSearches = async (req, res) => {
 export const DeleteSavedSearch = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const userId = req.auth?.userId || req.auth?.id;
-    if (!tenantId || !userId) return sendError(res, 403, "Tenant and user context are required.", requestId);
-    const saved = await SearchEngineService.deleteSavedSearch({ tenantId, userId, savedSearchId: req.params.savedSearchId });
+    if (!scope || !userId) return sendError(res, 403, "Tenant and user context are required.", requestId);
+    const saved = await SearchEngineService.deleteSavedSearch({ tenantId: scope.tenantId, userId, savedSearchId: req.params.savedSearchId });
     if (!saved) return sendError(res, 404, "Saved search not found.", requestId);
     return sendSuccess(res, 200, "Saved search deleted successfully.", null, requestId);
   } catch (err) { return sendError(res, 500, err.message || "Failed to delete saved search.", requestId); }
@@ -155,17 +164,17 @@ export const DeleteSavedSearch = async (req, res) => {
 export const RebuildSearchIndex = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
 
-    if (!tenantId) {
+    if (!scope) {
       return sendError(res, 403, "Tenant context is required.", requestId);
     }
     if (!permissions.includes("search.rebuild") && !permissions.includes("admin")) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
-    const result = await SearchEngineService.rebuildIndexForTenant({ tenantId, branchId: req.body?.branchId || req.query.branchId || null });
+    const result = await SearchEngineService.rebuildIndexForTenant({ tenantId: scope.tenantId, branchId: scope.branchId || req.body?.branchId || req.query.branchId || null });
     return sendSuccess(res, 200, "Search index rebuild completed.", result, requestId);
   } catch (err) {
     console.error("RebuildSearchIndex Error:", err);
