@@ -15,8 +15,12 @@ import {
   AIRecommend,
   ListAIConversations,
   ArchiveAIConversation,
+  GetAIConversationContext,
+  ClearAIConversationContext,
   GetAIProviderStatus,
-  GetAIAgents
+  GetAIAgents,
+  TransitionAgentState,
+  AISupervisorChat
 } from "../controllers/AIAssistantController.js";
 
 const router = express.Router();
@@ -47,7 +51,11 @@ router.post("/summarize", AISummarize);
 router.post("/recommend", AIRecommend);
 router.get("/conversations", ListAIConversations);
 router.post("/conversations/:conversationId/archive", ArchiveAIConversation);
+router.get("/conversations/:conversationId/context", GetAIConversationContext);
+router.post("/conversations/:conversationId/context/clear", ClearAIConversationContext);
+router.post("/supervisor", AISupervisorChat);
 router.get("/providers/status", GetAIProviderStatus);
 router.get("/agents", GetAIAgents);
+router.patch("/agents/:agentId/state", TransitionAgentState);
 
 export default router;

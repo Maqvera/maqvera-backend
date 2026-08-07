@@ -1,5 +1,7 @@
 import AIAssistantService from "../services/AIAssistantService.js";
 import AIAgentRegistry from "../services/ai/AIAgentRegistry.js";
+import AISupervisorService from "../services/ai/AISupervisorService.js";
+import { getAIAgentConfig } from "../utils/aiAgentConfig.js";
 import { sendError, sendSuccess } from "../utils/apiResponse.js";
 import { createRequestId } from "../utils/authTokens.js";
 
@@ -15,6 +17,10 @@ const buildContext = (req) => ({
 });
 
 const hasAIAccess = (permissions) => permissions.includes(AI_PERMISSION) || permissions.includes("admin");
+const hasAgentManageAccess = (permissions) => {
+  const { managePermission } = getAIAgentConfig();
+  return permissions.includes(managePermission) || permissions.includes("admin");
+};
 
 /**
  * Shared handler factory for every /ai/* endpoint — each is a thin
@@ -44,7 +50,8 @@ const handleChat = (forcedToolName, defaultMode = "Assistant") => async (req, re
       message,
       conversationId: conversationId || null,
       mode: mode || defaultMode,
-      forcedToolName
+      forcedToolName,
+      requestId
     });
 
     return sendSuccess(res, 200, "AI response generated successfully.", result, requestId);
@@ -120,6 +127,34 @@ export const ArchiveAIConversation = async (req, res) => {
   }
 };
 
+/** EXT-027 §16 "Manual clear supported". GET /api/v1/ai/conversations/:conversationId/context — read-only inspection of this session's remembered flight/hotel/passenger/booking context. */
+export const GetAIConversationContext = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const ctx = buildContext(req);
+    if (!hasAIAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
+    const context = await AIAssistantService.getContext({ tenantId: ctx.tenantId, userId: ctx.userId, conversationId: req.params.conversationId });
+    return sendSuccess(res, 200, "AI conversation context retrieved successfully.", context, requestId);
+  } catch (err) {
+    console.error("GetAIConversationContext Error:", err);
+    return sendError(res, err.message?.includes("not found") ? 404 : 500, err.message || "Failed to retrieve conversation context.", requestId);
+  }
+};
+
+/** POST /api/v1/ai/conversations/:conversationId/context/clear */
+export const ClearAIConversationContext = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const ctx = buildContext(req);
+    if (!hasAIAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
+    const conversation = await AIAssistantService.clearContext({ tenantId: ctx.tenantId, userId: ctx.userId, conversationId: req.params.conversationId });
+    return sendSuccess(res, 200, "AI conversation context cleared successfully.", { conversationId: conversation._id, context: conversation.context }, requestId);
+  } catch (err) {
+    console.error("ClearAIConversationContext Error:", err);
+    return sendError(res, err.message?.includes("not found") ? 404 : 500, err.message || "Failed to clear conversation context.", requestId);
+  }
+};
+
 /** GET /api/v1/ai/providers/status */
 export const GetAIProviderStatus = async (req, res) => {
   const requestId = req.requestId || createRequestId();
@@ -136,7 +171,7 @@ export const GetAIProviderStatus = async (req, res) => {
   }
 };
 
-/** EXT-035 §9 "Agent Discovery". GET /api/v1/ai/agents — the real agent registry, each agent's own real tool subset for the caller's actual permissions, and a real (never fabricated) recent health score derived from AIToolExecutionModel history. */
+/** EXT-035 §9 "Agent Discovery". GET /api/v1/ai/agents — the real agent registry, each agent's own real tool subset for the caller's actual permissions, real (never fabricated) recent health score, and its real, tenant-resolved §21 lifecycle state. */
 export const GetAIAgents = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
@@ -144,19 +179,67 @@ export const GetAIAgents = async (req, res) => {
     if (!hasAIAccess(ctx.permissions)) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
-    const agents = await Promise.all(AIAgentRegistry.list().map(async (agent) => ({
-      agentId: agent.agentId,
-      name: agent.name,
-      description: agent.description,
-      capabilities: agent.capabilities,
-      version: agent.version,
-      status: agent.status,
-      availableTools: AIAgentRegistry.getToolsForAgent(agent.agentId, ctx.permissions).map((t) => t.name),
-      health: await AIAgentRegistry.getHealthScore(agent.agentId, { tenantId: ctx.tenantId })
-    })));
+    const agents = await Promise.all(AIAgentRegistry.list().map(async (agent) => {
+      const state = await AIAgentRegistry.getEffectiveState(agent.agentId, ctx.tenantId);
+      return {
+        agentId: agent.agentId,
+        name: agent.name,
+        description: agent.description,
+        capabilities: agent.capabilities,
+        version: agent.version,
+        effectiveStatus: state.status,
+        effectivePriority: state.priority,
+        availableTools: AIAgentRegistry.getToolsForAgent(agent.agentId, ctx.permissions).map((t) => t.name),
+        health: await AIAgentRegistry.getHealthScore(agent.agentId, { tenantId: ctx.tenantId })
+      };
+    }));
     return sendSuccess(res, 200, "AI agents retrieved successfully.", agents, requestId);
   } catch (err) {
     console.error("GetAIAgents Error:", err);
     return sendError(res, 500, err.message || "Failed to retrieve AI agents.", requestId);
+  }
+};
+
+/** EXT-035 §21 "Agent Lifecycle." PATCH /api/v1/ai/agents/:agentId/state — a real, tenant-scoped, DB-persisted transition, never mutating the static registry. */
+export const TransitionAgentState = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const ctx = buildContext(req);
+    if (!hasAgentManageAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
+    const { status, priority, reason } = req.body;
+    if (!status) return sendError(res, 400, "status is required.", requestId);
+    const state = await AIAgentRegistry.transitionState({ tenantId: ctx.tenantId, userId: ctx.userId, agentId: req.params.agentId, status, priority, reason });
+    return sendSuccess(res, 200, `Agent '${req.params.agentId}' transitioned to '${status}'.`, state, requestId);
+  } catch (err) {
+    console.error("TransitionAgentState Error:", err);
+    return sendError(res, err.message?.includes("Unknown agentId") ? 404 : err.message?.includes("must be one of") ? 400 : 500, err.message || "Failed to transition agent state.", requestId);
+  }
+};
+
+/**
+ * EXT-035 §6/§13 "Supervisor Agent ... Agent Collaboration." POST
+ * /api/v1/ai/supervisor — dynamically decides which specialized agent(s)
+ * are relevant and, for a genuinely multi-capability request, runs them in
+ * real parallel and merges their results. A request needing 0 or 1 agents
+ * transparently reuses the existing /ai/chat pipeline (see
+ * `supervisorDecision.coordinated: false` in the response) — this endpoint
+ * is additive, not a replacement for the simpler single-pass /ai/chat.
+ */
+export const AISupervisorChat = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const ctx = buildContext(req);
+    if (!hasAIAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
+    if (!ctx.tenantId || !ctx.userId) return sendError(res, 403, "Tenant and user context are required.", requestId);
+
+    const { message, conversationId, mode } = req.body;
+    if (!message) return sendError(res, 400, "message is required.", requestId);
+
+    const result = await AISupervisorService.coordinate({ ...ctx, message, conversationId: conversationId || null, mode: mode || "Assistant", requestId });
+    return sendSuccess(res, 200, "AI supervisor response generated successfully.", result, requestId);
+  } catch (err) {
+    console.error("AISupervisorChat Error:", err);
+    const statusCode = err.code === "AI_UNAVAILABLE" ? 503 : err.message?.includes("required") || err.message?.includes("exceeds") ? 400 : 500;
+    return sendError(res, statusCode, err.message || "Failed to process AI supervisor request.", requestId);
   }
 };

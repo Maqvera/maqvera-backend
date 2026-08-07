@@ -19,7 +19,8 @@ class AnthropicAdapter extends BaseAIProviderAdapter {
     return Boolean(this.client);
   }
 
-  async chatWithTools({ messages, tools = [], systemPrompt }) {
+  /** EXT-034 — `model` optionally overrides the configured ANTHROPIC_MODEL for this one call (how AIModelRouterService pins a specific A/B-test variant). */
+  async chatWithTools({ messages, tools = [], systemPrompt, model }) {
     if (!this.client) {
       throw new Error("Anthropic provider is not configured (ANTHROPIC_API_KEY missing).");
     }
@@ -31,7 +32,7 @@ class AnthropicAdapter extends BaseAIProviderAdapter {
     }));
 
     const response = await this.client.messages.create({
-      model: this.config.model,
+      model: model || this.config.model,
       system: systemPrompt,
       max_tokens: getAIConfig().maxOutputTokens,
       messages: messages.map((m) => ({ role: m.role === "assistant" ? "assistant" : "user", content: m.content })),

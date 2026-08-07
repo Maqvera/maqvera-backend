@@ -25,6 +25,11 @@ import flightSearchRoute from "./routes/FlightSearchRoutes.js";
 import flightBookingRoute from "./routes/FlightBookingRoutes.js";
 import aiAssistantRoute from "./routes/AIAssistantRoutes.js";
 import aiOrchestrationRoute from "./routes/AIOrchestrationRoutes.js";
+import aiKnowledgeRoute from "./routes/AIKnowledgeRoutes.js";
+import aiPromptRoute from "./routes/AIPromptRoutes.js";
+import aiGuardrailRoute from "./routes/AIGuardrailRoutes.js";
+import aiObservabilityRoute from "./routes/AIObservabilityRoutes.js";
+import aiModelRouterRoute from "./routes/AIModelRouterRoutes.js";
 import externalFlightRoute from "./routes/ExternalFlightRoutes.js";
 import externalAmadeusRoute from "./routes/ExternalAmadeusRoutes.js";
 import amadeusIntegrationRoute from "./routes/AmadeusIntegrationRoutes.js";
@@ -48,6 +53,10 @@ import AppointmentReminderScheduler from "./services/appointmentReminderSchedule
 import IncidentSlaScheduler from "./services/incidentSlaScheduler.js";
 import ReferenceDataScheduler from "./services/referenceDataScheduler.js";
 import FlightScheduleSyncScheduler from "./services/flightScheduleSyncScheduler.js";
+import AIWorkflowRecoveryScheduler from "./services/aiWorkflowRecoveryScheduler.js";
+import AIContextExpiryScheduler from "./services/aiContextExpiryScheduler.js";
+import AIApprovalTimeoutScheduler from "./services/aiApprovalTimeoutScheduler.js";
+import AIObservabilityAlertScheduler from "./services/aiObservabilityAlertScheduler.js";
 
 validateEnv();
 
@@ -62,6 +71,10 @@ const bootstrapEnterpriseServices = async () => {
   await IncidentSlaScheduler.init();
   await ReferenceDataScheduler.init();
   await FlightScheduleSyncScheduler.init();
+  await AIWorkflowRecoveryScheduler.init();
+  await AIContextExpiryScheduler.init();
+  await AIApprovalTimeoutScheduler.init();
+  await AIObservabilityAlertScheduler.init();
 };
 
 const app = express();
@@ -112,6 +125,11 @@ app.use("/api/v1/flight-bookings", flightBookingRoute);
 app.use("/api/v1", hotelDistributionRoute);
 app.use("/api/v1/ai", aiAssistantRoute);
 app.use("/api/v1/ai", aiOrchestrationRoute);
+app.use("/api/v1/ai/knowledge", aiKnowledgeRoute);
+app.use("/api/v1/ai/prompts", aiPromptRoute);
+app.use("/api/v1/ai/guardrails", aiGuardrailRoute);
+app.use("/api/v1/ai/observability", aiObservabilityRoute);
+app.use("/api/v1/ai/models", aiModelRouterRoute);
 app.use("/api/v1/external", externalFlightRoute);
 app.use("/api/v1/external/amadeus", externalAmadeusRoute);
 app.use("/api/v1/integrations/amadeus", amadeusIntegrationRoute);

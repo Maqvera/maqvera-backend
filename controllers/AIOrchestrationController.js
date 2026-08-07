@@ -67,10 +67,10 @@ export const CreatePlan = async (req, res) => {
     const ctx = buildContext(req);
     if (!hasAIAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     if (!ctx.tenantId || !ctx.userId) return sendError(res, 403, "Tenant and user context are required.", requestId);
-    const { prompt } = req.body;
+    const { prompt, conversationId } = req.body;
     if (!prompt) return sendError(res, 400, "prompt is required.", requestId);
 
-    const plan = await AIOrchestrationService.createPlan({ tenantId: ctx.tenantId, branchId: ctx.branchId, userId: ctx.userId, permissions: ctx.permissions, prompt });
+    const plan = await AIOrchestrationService.createPlan({ tenantId: ctx.tenantId, branchId: ctx.branchId, userId: ctx.userId, userName: ctx.userName, role: ctx.role, permissions: ctx.permissions, prompt, conversationId: conversationId || null });
     return sendSuccess(res, 201, "Execution plan created. No tools have been executed yet.", plan, requestId);
   } catch (err) {
     console.error("CreatePlan Error:", err);
@@ -88,12 +88,40 @@ export const ExecutePlan = async (req, res) => {
     const { executionId } = req.body;
     if (!executionId) return sendError(res, 400, "executionId is required.", requestId);
 
-    const execution = await AIOrchestrationService.executePlan({ ...ctx, executionId });
+    const execution = await AIOrchestrationService.executePlan({ ...ctx, executionId, requestId });
     return sendSuccess(res, 200, "Execution plan processed.", execution, requestId);
   } catch (err) {
     console.error("ExecutePlan Error:", err);
     const statusCode = err.message?.includes("not found") ? 404 : err.message?.includes("already") ? 409 : err.code === "AI_UNAVAILABLE" ? 503 : 500;
     return sendError(res, statusCode, err.message || "Failed to execute plan.", requestId);
+  }
+};
+
+/** EXT-028 §15 "Cancellation". POST /api/v1/ai/executions/:executionId/cancel */
+export const CancelExecution = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const ctx = buildContext(req);
+    if (!hasAIAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
+    const execution = await AIOrchestrationService.cancelExecution({ tenantId: ctx.tenantId, userId: ctx.userId, executionId: req.params.executionId, reason: req.body?.reason });
+    return sendSuccess(res, 200, `Execution ${execution.status === "cancelled" ? "cancelled" : "cancellation requested"}.`, execution, requestId);
+  } catch (err) {
+    console.error("CancelExecution Error:", err);
+    return sendError(res, err.message?.includes("not found") ? 404 : err.message?.includes("already") ? 409 : 500, err.message || "Failed to cancel execution.", requestId);
+  }
+};
+
+/** EXT-036 §5/§21 "Archived". POST /api/v1/ai/executions/:executionId/archive */
+export const ArchiveExecution = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const ctx = buildContext(req);
+    if (!hasAIAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
+    const execution = await AIOrchestrationService.archiveExecution({ tenantId: ctx.tenantId, userId: ctx.userId, executionId: req.params.executionId });
+    return sendSuccess(res, 200, "Execution archived successfully.", execution, requestId);
+  } catch (err) {
+    console.error("ArchiveExecution Error:", err);
+    return sendError(res, err.message?.includes("not found") ? 404 : err.message?.includes("cannot be archived") || err.message?.includes("already archived") ? 409 : 500, err.message || "Failed to archive execution.", requestId);
   }
 };
 
@@ -126,6 +154,20 @@ export const ListExecutions = async (req, res) => {
   } catch (err) {
     console.error("ListExecutions Error:", err);
     return sendError(res, 500, err.message || "Failed to list AI executions.", requestId);
+  }
+};
+
+/** EXT-029 §18 "Monitoring". GET /api/v1/ai/executions/metrics — admin-only, mirrors AmadeusMetricsController's own gate on operational metrics. Must be registered before the "/executions/:executionId" wildcard route. */
+export const GetWorkflowMetrics = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const ctx = buildContext(req);
+    if (!hasAIAccess(ctx.permissions) || !ctx.permissions.includes("admin")) return sendError(res, 403, "Permission denied.", requestId);
+    const metrics = await AIOrchestrationService.getWorkflowMetrics({ tenantId: ctx.tenantId });
+    return sendSuccess(res, 200, "AI workflow metrics retrieved successfully.", metrics, requestId);
+  } catch (err) {
+    console.error("GetWorkflowMetrics Error:", err);
+    return sendError(res, 500, err.message || "Failed to retrieve AI workflow metrics.", requestId);
   }
 };
 

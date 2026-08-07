@@ -22,7 +22,8 @@ class OpenAIAdapter extends BaseAIProviderAdapter {
     return Boolean(this.client);
   }
 
-  async chatWithTools({ messages, tools = [], systemPrompt }) {
+  /** EXT-034 — `model` optionally overrides the configured OPENAI_MODEL for this one call (how AIModelRouterService pins a specific A/B-test variant). */
+  async chatWithTools({ messages, tools = [], systemPrompt, model }) {
     if (!this.client) {
       throw new Error("OpenAI provider is not configured (OPENAI_API_KEY missing).");
     }
@@ -38,7 +39,7 @@ class OpenAIAdapter extends BaseAIProviderAdapter {
     }));
 
     const response = await this.client.chat.completions.create({
-      model: this.config.model,
+      model: model || this.config.model,
       messages: openAiMessages,
       tools: openAiTools.length > 0 ? openAiTools : undefined,
       max_tokens: getAIConfig().maxOutputTokens
