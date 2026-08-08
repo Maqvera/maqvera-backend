@@ -51,9 +51,9 @@ Traveler (Person Traveling)
 
 ## Access Scope (Company-Wide, RBAC-Gated)
 
-Every one of the CRUD endpoints above (`ListCustomers`, `SearchCustomers`, `CreateCustomer`, `GetCustomer`, `UpdateCustomer`, `ArchiveCustomer`) is filtered through `getAccessScope(req)` (`utils/accessScope.js`), which returns `{ tenantId }` for any authenticated caller (or `null`, rejected with `403`, if unauthenticated). **There is no branch-level data isolation** — see `docs/06-external-integrations/03-final-architecture-no-branches-rbac.md`. Every user of a tenant sees and can act on every customer in that tenant, regardless of their own `branchId`; `branchId` on a customer record is descriptive/organizational only, never an access filter, and `?branchId=`/body `branchId` is never used to widen or narrow visibility. Cross-tenant access is always rejected regardless of any query/body/header value.
+Every one of the CRUD endpoints above (`ListCustomers`, `SearchCustomers`, `CreateCustomer`, `GetCustomer`, `UpdateCustomer`, `ArchiveCustomer`) is filtered through `getAccessScope(req)` (`utils/accessScope.js`), which returns `{ tenantId }` for any authenticated caller (or `null`, rejected with `403`, if unauthenticated). **There is no branch-level data isolation** — see `docs/06-external-integrations/03-final-architecture-no-branches-rbac.md`. Every user of a tenant sees and can act on every customer in that tenant. Cross-tenant access is always rejected regardless of any query/body/header value.
 
-Which of these endpoints a caller may actually use is governed by their role's `permissions` (e.g. `customer.read`, `customer.create`, `customer.update`, `customer.delete` — see `controllers/RoleController.js` for how a company admin configures this per role), not by tenant/branch scoping.
+Which of these endpoints a caller may actually use is governed by their role's `permissions` (e.g. `customer.read`, `customer.create`, `customer.update`, `customer.delete` — see `controllers/RoleController.js` for how a company admin configures this per role), not by tenant scoping.
 
 Sub-resource endpoints under `/customers/{customerId}/...` (documents, notes, family, passports, phones, emails, addresses, preferences, emergency contacts) enforce the same tenant isolation (`{ _id: customerId, tenantId }`).
 

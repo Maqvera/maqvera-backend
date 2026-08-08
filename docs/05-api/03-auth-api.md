@@ -2,35 +2,33 @@
 
 ## Role-Based Access Control (RBAC)
 
-`Role.name` (`models/Rolemodel.js`) is unique **per tenant**, not globally — each tenant owns and can independently customize its own role catalog via `POST/PATCH/DELETE /api/v1/roles` (see `controllers/RoleController.js`). There is no branch-scoped vs. tenant-scoped role distinction — **the tenant (company) is the only data-isolation boundary**. Every authenticated user of a tenant shares that tenant's business data (customers, bookings, visa cases, etc.) regardless of their own `branchId`, which is retained only as a descriptive/organizational field, never as an access filter. See `docs/06-external-integrations/03-final-architecture-no-branches-rbac.md` for the full rationale.
+`Role.name` (`models/Rolemodel.js`) is unique **per tenant**, not globally — each tenant owns and can independently customize its own role catalog via `POST/PATCH/DELETE /api/v1/roles` (see `controllers/RoleController.js`). **The tenant (company) is the only data-isolation boundary** — every authenticated user of a tenant shares that tenant's business data (customers, bookings, visa cases, etc.); there is no narrower dimension any user is restricted to. See `docs/06-external-integrations/03-final-architecture-no-branches-rbac.md` for the full rationale.
 
-What a user may actually *do* is governed entirely by their role's `permissions` array (e.g. `"customer.read"`, `"booking.create"`, `"admin"`). `authenticateAccessToken` resolves the caller's role (tenant-scoped lookup: `{ tenantId, name }`) on every request and attaches the resolved list as `req.auth.permissions`, which `GET /auth/me` also echoes back as `permissions`. Controllers derive their Mongo filter from `getAccessScope(req)` (`utils/accessScope.js`), which returns `{ tenantId }` (or `null` if unauthenticated) — never a hand-rolled `{ tenantId, branchId }` filter — and separately check `req.auth.permissions` for the specific permission key(s) an action requires. See `docs/05-api/05-customer-api.md`'s "Access Scope" section for a concrete example of the tenant-scoping behavior.
+What a user may actually *do* is governed entirely by their role's `permissions` array (e.g. `"customer.read"`, `"booking.create"`, `"admin"`). `authenticateAccessToken` resolves the caller's role (tenant-scoped lookup: `{ tenantId, name }`) on every request and attaches the resolved list as `req.auth.permissions`, which `GET /auth/me` also echoes back as `permissions`. Controllers derive their Mongo filter from `getAccessScope(req)` (`utils/accessScope.js`), which returns `{ tenantId }` (or `null` if unauthenticated) — never a hand-rolled tenant filter read from a client-supplied header — and separately check `req.auth.permissions` for the specific permission key(s) an action requires. See `docs/05-api/05-customer-api.md`'s "Access Scope" section for a concrete example of the tenant-scoping behavior.
 
 ## Tenant Provisioning
 
 ### POST /api/v1/auth/setup
 
-Public, rate-limited, unauthenticated. Self-service registration for a brand-new company: creates a real `Tenant`, its first `Branch`, and the tenant's first user with its own tenant-scoped `Administrator` role (`scope: "tenant"`, independently editable per tenant — not shared with any other tenant's role catalog), in one call. This is the only runtime code path that creates a `Tenant` document — every other write path (`Signup`, `AcceptUserInvitation`) joins a tenant that already exists.
+Public, rate-limited, unauthenticated. Self-service registration for a brand-new company: creates a real `Tenant` and the tenant's first user with its own tenant-scoped `Administrator` role (`scope: "tenant"`, independently editable per tenant — not shared with any other tenant's role catalog), in one call. This is the only runtime code path that creates a `Tenant` document — every other write path (`Signup`, `AcceptUserInvitation`) joins a tenant that already exists.
 
 #### Business rules
 - `tenantKey` must be unique across all tenants; a duplicate is rejected with `409`.
 - `email` must be unique across all users (email is a global identity, not scoped per tenant); a duplicate is rejected with `409`.
 - The new admin user is created unverified, exactly like `Signup` — an email verification link is issued and must be used before login (subject to the same `strictDomainAuth`/`emailVerified` gating as every other account).
-- If any step after tenant/branch creation fails, the tenant and branch already created are deleted (no Mongoose transaction is used anywhere in this codebase — this is a best-effort compensating rollback, not a transactional guarantee).
+- If any step after tenant creation fails, the tenant already created is deleted (no Mongoose transaction is used anywhere in this codebase — this is a best-effort compensating rollback, not a transactional guarantee).
 
 #### Request body
 ```json
 {
   "companyName": "Acme Travels",
   "tenantKey": "acme-travels",
-  "branchName": "Head Office",
   "username": "acmeadmin",
   "email": "admin@acmetravels.com",
   "password": "StrongPass1!"
 }
 ```
 - `tenantKey`: lowercase slug, `^[a-z0-9-]{3,40}$`.
-- `branchName`: optional, defaults to `"Head Office"`.
 
 #### Success response
 ```json
@@ -41,8 +39,7 @@ Public, rate-limited, unauthenticated. Self-service registration for a brand-new
     "id": "...",
     "username": "acmeadmin",
     "email": "admin@acmetravels.com",
-    "tenantId": "acme-travels",
-    "branchId": "MAIN"
+    "tenantId": "acme-travels"
   }
 }
 ```

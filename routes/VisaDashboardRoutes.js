@@ -6,7 +6,6 @@ import {
   getVisaOperationsDashboard,
   getVisaOfficerDashboard,
   getVisaEmbassyDashboard,
-  getVisaBranchDashboard,
   getVisaFinanceDashboard,
   getVisaCustomerDashboard,
   getVisaComplianceDashboard,
@@ -29,7 +28,6 @@ router.get("/executive", getVisaExecutiveDashboard);
 router.get("/operations", getVisaOperationsDashboard);
 router.get("/officer", getVisaOfficerDashboard);
 router.get("/embassy", getVisaEmbassyDashboard);
-router.get("/branch", getVisaBranchDashboard);
 router.get("/finance", getVisaFinanceDashboard);
 router.get("/customer", getVisaCustomerDashboard);
 router.get("/compliance", getVisaComplianceDashboard);

@@ -3,7 +3,6 @@ import mongoose from "mongoose";
 const FlightBookingSchema = new mongoose.Schema(
   {
     tenantId: { type: String, required: true, index: true },
-    branchId: { type: String, default: "main", index: true },
     bookingId: { type: mongoose.Schema.Types.ObjectId, ref: "BookingHeader", index: true, default: null },
     travelPlanId: { type: mongoose.Schema.Types.ObjectId, ref: "TravelPlan", index: true, default: null },
     // EXT-004 — "Aggregate Relationship: Travel Plan > Flight Assignment >

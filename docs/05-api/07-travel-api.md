@@ -337,7 +337,7 @@ Used by Operations Dashboard, Airport Team, Hotel Team, Tour Guides, Branch Mana
 Only travel plans belonging to the authenticated tenant are returned.
 
 ### 11. Business Workflow
-User -> Open Travel Operations -> GET /travel-plans -> Validate JWT -> Validate Permission -> Apply Tenant Filter -> Apply Branch Filter -> Apply Search Filters -> Apply Pagination -> Return Travel Plans
+User -> Open Travel Operations -> GET /travel-plans -> Validate JWT -> Validate Permission -> Apply Tenant Filter -> Apply Search Filters -> Apply Pagination -> Return Travel Plans
 
 ### 12. Endpoint Information
 - Method: GET
@@ -348,7 +348,7 @@ User -> Open Travel Operations -> GET /travel-plans -> Validate JWT -> Validate 
 - Idempotent: Yes
 
 ### 13. Query Parameters
-`page=1`, `pageSize=20`, `travelStatus=Ready`, `bookingId=UUID`, `departureDateFrom`, `departureDateTo`, `arrivalDateFrom`, `arrivalDateTo`, `travelType=Umrah`, `assignedCoordinator=UUID`, `branchId=UUID`, `sort=departureDate`, `order=asc`
+`page=1`, `pageSize=20`, `travelStatus=Ready`, `bookingId=UUID`, `departureDateFrom`, `departureDateTo`, `arrivalDateFrom`, `arrivalDateTo`, `travelType=Umrah`, `assignedCoordinator=UUID`, `sort=departureDate`, `order=asc`
 
 ### 14. Business Rules
 - Only same tenant travel plans.
@@ -1111,10 +1111,7 @@ Analytics Engine
 ### 10. Business Purpose
 Returns the primary operational dashboard metrics.
 
-### 11. Query Parameters
-- `branchId`: String (Filter by branch, default: `all`)
-
-### 12. Response Includes
+### 11. Response Includes
 - Active Travel Plans
 - Today's Departures & Arrivals
 - Travelers In Transit & Checked In
@@ -1192,7 +1189,7 @@ Returns real-time operational alerts (Flight Delays, Transport Issues, Low Atten
 ✓ Precomputed Summary Tables & Materialized Views  
 ✓ Async Background Refresh (Never lock transactional tables)  
 ✓ Centralized Analytics Engine  
-✓ Multi-Tenant & Branch Isolation  
+✓ Multi-Tenant Isolation  
 ✓ Read-Only Analytics  
 
 ---
@@ -1218,10 +1215,10 @@ Instead of searching module by module, users perform one search that returns all
                              ▼
                     Search Orchestrator
                              │
-        ┌────────────────────┼────────────────────┐
-        │                    │                    │
-        ▼                    ▼                    ▼
- Permission Filter     Tenant Filter        Branch Filter
+        ┌──────────────────────────────────┐
+        │                                   │
+        ▼                                   ▼
+ Permission Filter                    Tenant Filter
         │
         ▼
                 Search Index Engine
@@ -1276,7 +1273,6 @@ Performs global search across all authorized ERP entities.
 - `page`: Integer (default: 1)
 - `pageSize`: Integer (default: 20, max: 100)
 - `entityType`: String (`TravelPlan`, `Booking`, `Customer`, `Traveler`, `Flight`, `Hotel`, `Transport`, `Incident`, `Task`, `Note`, `Document`, `Visa`)
-- `branchId`: String (default: `all`)
 - `sort`: String (default: `score`)
 - `order`: String (`desc` | `asc`)
 
@@ -1364,7 +1360,6 @@ Phonetic & Fuzzy Match (Score = 60)
 ✓ Dedicated Search Index Engine  
 ✓ Domain Event Index Syncing  
 ✓ Multi-Tenant Isolation  
-✓ Branch Filtering  
 ✓ Multi-level Relevance Ranking  
 ✓ Zero Transactional Lock  
 ✓ Future ElasticSearch / OpenSearch Adapter Ready  
@@ -1538,8 +1533,6 @@ JWT Authentication
       ↓
 Tenant Validation (`tenantId` mandatory filter)
       ↓
-Branch Validation (`branchId` isolation)
-      ↓
 Permission Validation (RBAC & Policy Check)
       ↓
 Business Validation
@@ -1578,7 +1571,7 @@ Audit Logging
 ✓ Domain-Driven Design & Bounded Context Enforced  
 ✓ CQRS Read Model & Redis Caching  
 ✓ Event-Driven EventBus & Canonical Domain Event Schema  
-✓ Multi-Tenant (`tenantId`) & Multi-Branch (`branchId`) Isolation  
+✓ Multi-Tenant (`tenantId`) Isolation  
 ✓ Case Management & CAPA Engine  
 ✓ Business Process Orchestration Layer (`TravelOrchestrationEngine.js`)  
 ✓ Standalone Enterprise Search Engine  

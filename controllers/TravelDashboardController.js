@@ -27,16 +27,12 @@ export const GetPrimaryDashboard = async (req, res) => {
       return sendError(res, 403, "Tenant context is required.", requestId);
     }
     const tenantId = scope.tenantId;
-    // Branch-scoped roles are always locked to their own branch, regardless
-    // of ?branchId= — previously any authenticated caller could request any
-    // branch's (or "all" branches') dashboard by name, with no restriction.
-    const branchId = scope.branchId || req.query.branchId || "all";
 
     if (!permissions.includes("travel.read") && !permissions.includes("travel_plans.read") && !permissions.includes("admin")) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
-    const { data, fromCache } = await AnalyticsEngine.buildPrimaryDashboard({ tenantId, branchId });
+    const { data, fromCache } = await AnalyticsEngine.buildPrimaryDashboard({ tenantId });
 
     let filteredData = { ...data };
     if (!hasIncidentAccess(permissions)) {
@@ -62,7 +58,7 @@ export const GetPrimaryDashboard = async (req, res) => {
 
     return sendSuccess(res, 200, "Primary dashboard retrieved successfully.", {
       data: filteredData,
-      meta: { fromCache, branchId, refreshedAt: new Date() }
+      meta: { fromCache, refreshedAt: new Date() }
     }, requestId);
   } catch (err) {
     console.error("GetPrimaryDashboard Error:", err);
@@ -84,13 +80,12 @@ export const GetDashboardKPIs = async (req, res) => {
       return sendError(res, 403, "Tenant context is required.", requestId);
     }
     const tenantId = scope.tenantId;
-    const branchId = scope.branchId || req.query.branchId || "all";
 
     if (!permissions.includes("travel.read") && !permissions.includes("travel_plans.read") && !permissions.includes("admin")) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
-    const { data, fromCache } = await AnalyticsEngine.calculateKPIs({ tenantId, branchId });
+    const { data, fromCache } = await AnalyticsEngine.calculateKPIs({ tenantId });
 
     let filteredData = data;
     if (!hasIncidentAccess(permissions)) {

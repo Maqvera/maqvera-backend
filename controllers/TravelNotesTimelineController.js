@@ -559,12 +559,6 @@ export const AddTimelineAttachment = async (req, res) => {
       resolvedSize = buffer.length;
     }
 
-    // Not branch-filtered: TravelTimelineModel.branchId defaults to "main"
-    // whenever a creator omits it (recordCanonicalDomainEvent above never
-    // sets it), so real non-"main"-branch timeline events are already
-    // mis-stamped — filtering by the caller's real branchId here would make
-    // those events wrongly invisible rather than enforcing anything real.
-    // Tracked as a separate data-integrity gap, not fixed in this pass.
     const timelineEvent = await TravelTimelineModel.findOne({
       $or: [{ eventId: timelineEventId }, { _id: timelineEventId }],
       tenantId

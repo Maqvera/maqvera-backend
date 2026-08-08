@@ -7,7 +7,6 @@ const AI_PERMISSION = "ai.assistant.use";
 
 const buildContext = (req) => ({
   tenantId: req.auth?.tenantId || null,
-  branchId: req.auth?.branchId || "main",
   userId: req.auth?.userId || req.auth?.id,
   permissions: req.auth?.permissions || [],
   role: req.auth?.role || req.auth?.roles?.[0] || ""
@@ -30,7 +29,7 @@ export const CreatePolicy = async (req, res) => {
     if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasGuardrailManageAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const { category, name, description, ruleType, toolName, allowedRoles, riskLevelThreshold } = req.body;
-    const policy = await AIGuardrailService.createPolicy({ tenantId: ctx.tenantId, branchId: ctx.branchId, userId: ctx.userId, category, name, description, ruleType, toolName, allowedRoles, riskLevelThreshold });
+    const policy = await AIGuardrailService.createPolicy({ tenantId: ctx.tenantId, userId: ctx.userId, category, name, description, ruleType, toolName, allowedRoles, riskLevelThreshold });
     return sendSuccess(res, 201, "AI guardrail policy created successfully.", policy, requestId);
   } catch (err) {
     console.error("CreatePolicy Error:", err);

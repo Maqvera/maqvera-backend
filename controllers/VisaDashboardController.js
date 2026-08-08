@@ -8,9 +8,7 @@ import { getAccessScope } from "../utils/accessScope.js";
 // Dashboard access is governed entirely by RBAC permissions (admin-configurable
 // via /api/v1/roles), never by hardcoded role names — see
 // docs/06-external-integrations/03-final-architecture-no-branches-rbac.md.
-// "branchId" below is a descriptive/optional query narrowing parameter, not an
-// isolation boundary — every user of the tenant can already see every branch's
-// data; there is no branch-scoped restriction to check.
+// Every user of the tenant sees the same company-wide dashboard data.
 const hasManagementAccess = (permissions) => permissions.includes("visa.dashboard.management") || permissions.includes("admin");
 
 const dashboardScope = (req) => {
@@ -18,7 +16,6 @@ const dashboardScope = (req) => {
   const permissions = req.auth?.permissions || [];
   return {
     tenantId: accessScope?.tenantId || null,
-    branchId: req.query.branchId || "all",
     userId: req.auth?.userId || req.auth?.id || null,
     customerId: req.query.customerId || req.auth?.customerId || null,
     embassyId: req.query.embassyId || null,
@@ -51,7 +48,6 @@ const handle = (method, message, { managementOnly = false, dashboardType = "unkn
     if (mongoose.connection?.readyState === 1) {
       AuditLogModel.create({
         tenantId: scope.tenantId,
-        branchId: scope.branchId,
         userId: scope.userId || "system",
         action: "VIEW_DASHBOARD",
         module: "VisaAnalytics",
@@ -67,7 +63,6 @@ const handle = (method, message, { managementOnly = false, dashboardType = "unkn
         ...result.data,
         meta: {
           fromCache: result.fromCache,
-          branchId: scope.branchId,
           generatedAt: result.data?.generatedAt || null,
         },
       },
@@ -100,12 +95,6 @@ export const getVisaEmbassyDashboard = handle(
   VisaAnalyticsEngine.embassyDashboard,
   "Embassy Visa dashboard retrieved successfully.",
   { dashboardType: "embassy" }
-);
-
-export const getVisaBranchDashboard = handle(
-  VisaAnalyticsEngine.branchDashboard,
-  "Branch Visa dashboard retrieved successfully.",
-  { dashboardType: "branch" }
 );
 
 export const getVisaFinanceDashboard = handle(

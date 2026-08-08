@@ -33,7 +33,7 @@ const makeRes = () => ({
   json(payload) { this.body = payload; return this; },
 });
 
-const authFor = (tenantId, branchId) => ({ tenantId, branchId, id: "tester", userId: "tester", permissions: ["admin"] });
+const authFor = (tenantId) => ({ tenantId, id: "tester", userId: "tester", permissions: ["admin"] });
 
 test("Visa case reads never cross tenant boundaries, and a missing tenant context is rejected rather than defaulted", { skip: !dbAvailable && dbSkipReason }, async (t) => {
   const { getVisaCases, getVisaCaseById } = await import("../controllers/VisaController.js");
@@ -48,17 +48,17 @@ test("Visa case reads never cross tenant boundaries, and a missing tenant contex
   });
 
   const caseA = await VisaCaseModel.create({
-    tenantId: tenantA, branchId: "MAIN", caseNumber: `VC-A-${suffix}`,
+    tenantId: tenantA, caseNumber: `VC-A-${suffix}`,
     travelerId: new mongoose.Types.ObjectId(), destinationCountry: "Testland"
   });
   await VisaCaseModel.create({
-    tenantId: tenantB, branchId: "MAIN", caseNumber: `VC-B-${suffix}`,
+    tenantId: tenantB, caseNumber: `VC-B-${suffix}`,
     travelerId: new mongoose.Types.ObjectId(), destinationCountry: "Testland"
   });
 
   // Tenant A can list its own case, and only its own.
   const listResA = makeRes();
-  await getVisaCases({ auth: authFor(tenantA, "MAIN"), query: {} }, listResA);
+  await getVisaCases({ auth: authFor(tenantA), query: {} }, listResA);
   assert.equal(listResA.statusCode, 200, JSON.stringify(listResA.body));
   const caseNumbersA = listResA.body.data.items.map((c) => c.caseNumber);
   assert.ok(caseNumbersA.includes(`VC-A-${suffix}`));
@@ -66,12 +66,12 @@ test("Visa case reads never cross tenant boundaries, and a missing tenant contex
 
   // Tenant B cannot fetch tenant A's case by ID.
   const getResB = makeRes();
-  await getVisaCaseById({ auth: authFor(tenantB, "MAIN"), params: { visaCaseId: caseA._id.toString() } }, getResB);
+  await getVisaCaseById({ auth: authFor(tenantB), params: { visaCaseId: caseA._id.toString() } }, getResB);
   assert.equal(getResB.statusCode, 404, JSON.stringify(getResB.body));
 
   // Tenant A can fetch its own case by ID.
   const getResA = makeRes();
-  await getVisaCaseById({ auth: authFor(tenantA, "MAIN"), params: { visaCaseId: caseA._id.toString() } }, getResA);
+  await getVisaCaseById({ auth: authFor(tenantA), params: { visaCaseId: caseA._id.toString() } }, getResA);
   assert.equal(getResA.statusCode, 200, JSON.stringify(getResA.body));
 
   // No auth context at all -> rejected, never defaulted to a fake tenant.
@@ -100,18 +100,18 @@ test("Incident reads never cross tenant boundaries, and a missing tenant context
   });
 
   const listResA = makeRes();
-  await ListIncidents({ auth: authFor(tenantA, "MAIN"), query: {} }, listResA);
+  await ListIncidents({ auth: authFor(tenantA), query: {} }, listResA);
   assert.equal(listResA.statusCode, 200, JSON.stringify(listResA.body));
   const incidentNumbersA = listResA.body.data.data.map((i) => i.incidentNumber);
   assert.ok(incidentNumbersA.includes(`INC-A-${suffix}`));
   assert.ok(!incidentNumbersA.includes(`INC-B-${suffix}`), "tenant A must never see tenant B's incident in the list");
 
   const getResB = makeRes();
-  await GetIncidentDetails({ auth: authFor(tenantB, "MAIN"), params: { incidentId: incidentA._id.toString() } }, getResB);
+  await GetIncidentDetails({ auth: authFor(tenantB), params: { incidentId: incidentA._id.toString() } }, getResB);
   assert.equal(getResB.statusCode, 404, JSON.stringify(getResB.body));
 
   const getResA = makeRes();
-  await GetIncidentDetails({ auth: authFor(tenantA, "MAIN"), params: { incidentId: incidentA._id.toString() } }, getResA);
+  await GetIncidentDetails({ auth: authFor(tenantA), params: { incidentId: incidentA._id.toString() } }, getResA);
   assert.equal(getResA.statusCode, 200, JSON.stringify(getResA.body));
 
   const noAuthRes = makeRes();

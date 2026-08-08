@@ -53,7 +53,7 @@ const issueTicketWithRetry = async (ticketParams) => {
  * exist in Amadeus's real API surface.
  */
 class AmadeusFlightTicketingService {
-  static async issueTicket({ tenantId, branchId, userId, userName, bookingId, pnr, requestId }) {
+  static async issueTicket({ tenantId, userId, userName, bookingId, pnr, requestId }) {
     // Validation Rules §8.
     if (!bookingId || !pnr) {
       throwStructured("bookingId and pnr are required.", "INVALID_REQUEST", 400);
@@ -63,12 +63,6 @@ class AmadeusFlightTicketingService {
     const booking = await FlightBookingModel.findOne({ _id: bookingId, tenantId });
     if (!booking) {
       throwStructured("Flight booking not found for this tenant.", "BOOKING_NOT_FOUND", 404);
-    }
-
-    // "Same Branch" — a booking created under one branch cannot be ticketed
-    // by a request scoped to a different branch.
-    if (branchId && booking.branchId && booking.branchId !== branchId) {
-      throwStructured("Flight booking belongs to a different branch.", "BRANCH_MISMATCH", 403);
     }
 
     // "PNR Exists" + must match the airline record locator on file — guards
@@ -112,7 +106,7 @@ class AmadeusFlightTicketingService {
       if (mongoose.connection?.readyState === 1) {
         AuditLogModel.create({
           tenantId, userId, action: "AMADEUS_TICKET_ISSUE_FAILED", module: "ExternalIntegrations",
-          requestId, branchId, targetId: booking._id.toString(), details: { pnr: booking.pnr, reason: err.message }
+          requestId, targetId: booking._id.toString(), details: { pnr: booking.pnr, reason: err.message }
         }).catch((auditErr) => console.error("Ticket issuance failure audit log error:", auditErr));
       }
       throwStructured("Ticket issuance failed. Please retry.", "PROVIDER_UNAVAILABLE", 503);
@@ -184,7 +178,7 @@ class AmadeusFlightTicketingService {
     const notificationChannels = ["Email", "SMS", "WhatsApp", "Push"];
     for (const channel of notificationChannels) {
       publishEvent("NotificationRequested", {
-        tenantId, branchId, event: "FlightTicketIssued", priority: "high", channel,
+        tenantId, event: "FlightTicketIssued", priority: "high", channel,
         recipientId: booking.contact?.email || booking.contact?.phone || null,
         flightBookingId: booking._id, pnr: booking.pnr
       });
@@ -194,7 +188,7 @@ class AmadeusFlightTicketingService {
     if (mongoose.connection?.readyState === 1) {
       AuditLogModel.create({
         tenantId, userId, action: "AMADEUS_TICKET_ISSUED", module: "ExternalIntegrations",
-        requestId, branchId, targetId: booking._id.toString(),
+        requestId, targetId: booking._id.toString(),
         details: { pnr: booking.pnr, ticketNumbers: ticketResult.ticketNumbers, travelPlanId: booking.travelPlanId?.toString() || null }
       }).catch((err) => console.error("Ticket issuance audit log error:", err));
     }

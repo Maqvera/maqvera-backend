@@ -94,10 +94,9 @@ const makeRes = () => ({
 
 const dbSkipReason = "No reachable MongoDB configured (set URI in .env) — skipping live integration test.";
 
-test("SetupTenant creates a real tenant, branch, Administrator role, and admin user end-to-end", { skip: !dbAvailable && dbSkipReason }, async (t) => {
+test("SetupTenant creates a real tenant, Administrator role, and admin user end-to-end", { skip: !dbAvailable && dbSkipReason }, async (t) => {
   const { SetupTenant } = await import("../controllers/Auth.js");
   const TenantModel = (await import("../models/Tenantmodel.js")).default;
-  const BranchModel = (await import("../models/Branchmodel.js")).default;
   const UserModel = (await import("../models/Usermodel.js")).default;
 
   const suffix = Date.now();
@@ -106,7 +105,6 @@ test("SetupTenant creates a real tenant, branch, Administrator role, and admin u
 
   t.after(async () => {
     await UserModel.deleteMany({ email });
-    await BranchModel.deleteMany({ tenantKey });
     await TenantModel.deleteMany({ tenantKey });
   });
 
@@ -123,20 +121,15 @@ test("SetupTenant creates a real tenant, branch, Administrator role, and admin u
   assert.ok(tenant, "tenant document must be persisted");
   assert.equal(tenant.status, "active");
 
-  const branch = await BranchModel.findOne({ tenantKey, branchKey: "MAIN" });
-  assert.ok(branch, "branch document must be persisted");
-
   const user = await UserModel.findOne({ email });
   assert.ok(user, "user document must be persisted");
   assert.equal(user.tenantId, tenantKey);
-  assert.equal(user.branchId, "MAIN");
   assert.equal(user.role, "Administrator");
 });
 
 test("SetupTenant rejects a duplicate tenantKey", { skip: !dbAvailable && dbSkipReason }, async (t) => {
   const { SetupTenant } = await import("../controllers/Auth.js");
   const TenantModel = (await import("../models/Tenantmodel.js")).default;
-  const BranchModel = (await import("../models/Branchmodel.js")).default;
   const UserModel = (await import("../models/Usermodel.js")).default;
 
   const suffix = Date.now();
@@ -146,7 +139,6 @@ test("SetupTenant rejects a duplicate tenantKey", { skip: !dbAvailable && dbSkip
 
   t.after(async () => {
     await UserModel.deleteMany({ email: { $in: [firstEmail, secondEmail] } });
-    await BranchModel.deleteMany({ tenantKey });
     await TenantModel.deleteMany({ tenantKey });
   });
 

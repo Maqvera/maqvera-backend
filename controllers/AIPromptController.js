@@ -7,7 +7,6 @@ const AI_PERMISSION = "ai.assistant.use";
 
 const buildContext = (req) => ({
   tenantId: req.auth?.tenantId || null,
-  branchId: req.auth?.branchId || "main",
   userId: req.auth?.userId || req.auth?.id,
   permissions: req.auth?.permissions || [],
   role: req.auth?.role || req.auth?.roles?.[0] || ""
@@ -27,7 +26,7 @@ export const CreatePrompt = async (req, res) => {
     if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasPromptManageAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const { promptType, key, language, name, description, content } = req.body;
-    const result = await AIPromptService.createPrompt({ tenantId: ctx.tenantId, branchId: ctx.branchId, userId: ctx.userId, promptType, key, language, name, description, content });
+    const result = await AIPromptService.createPrompt({ tenantId: ctx.tenantId, userId: ctx.userId, promptType, key, language, name, description, content });
     return sendSuccess(res, 201, "Prompt created successfully.", result, requestId);
   } catch (err) {
     console.error("CreatePrompt Error:", err);
@@ -95,7 +94,7 @@ export const ListPrompts = async (req, res) => {
     const ctx = buildContext(req);
     if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasAIAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
-    const result = await AIPromptService.listPrompts({ tenantId: ctx.tenantId, branchId: ctx.branchId, promptType: req.query.promptType, page: req.query.page, pageSize: req.query.pageSize });
+    const result = await AIPromptService.listPrompts({ tenantId: ctx.tenantId, promptType: req.query.promptType, page: req.query.page, pageSize: req.query.pageSize });
     return sendSuccess(res, 200, "Prompts retrieved successfully.", result, requestId);
   } catch (err) {
     console.error("ListPrompts Error:", err);

@@ -15,7 +15,6 @@ import mongoose from "mongoose";
 const AIABTestSchema = new mongoose.Schema(
   {
     tenantId: { type: String, required: true, index: true },
-    branchId: { type: String, default: "main", index: true },
     category: {
       type: String,
       enum: ["reasoning", "general_chat", "fast", "low_cost", "vision", "embedding", "speech", "code", "planning"],

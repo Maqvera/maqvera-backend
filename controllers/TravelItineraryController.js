@@ -305,7 +305,6 @@ export const AddTravelPlanItinerary = async (req, res) => {
         const activity = await TravelItineraryModel.create({
           travelPlanId,
           tenantId,
-          branchId: travelPlan.branchId,
           day: targetDay,
           title: resolvedTitle,
           activityType,

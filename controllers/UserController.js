@@ -6,7 +6,6 @@ import EmployeeProfileModel from "../models/EmployeeProfilemodel.js";
 import InvitationModel from "../models/Invitationmodel.js";
 import EmploymentHistoryModel from "../models/EmploymentHistorymodel.js";
 import RoleModel from "../models/Rolemodel.js";
-import BranchModel from "../models/Branchmodel.js";
 import DepartmentModel from "../models/Departmentmodel.js";
 import PermissionModel from "../models/Permissionmodel.js";
 import AuditLogModel from "../models/AuditLogmodel.js";
@@ -18,7 +17,7 @@ import { validatePassword, recordPasswordHistory } from "../utils/passwordPolicy
 import { getRequestMeta, createSessionAndTokens } from "./Auth.js";
 import CacheManager from "../utils/cacheManager.js";
 import logger from "../utils/logger.js";
-import { getAccessScope, applyOptionalBranchFilter } from "../utils/accessScope.js";
+import { getAccessScope } from "../utils/accessScope.js";
 
 const authConfig = getAuthConfig();
 
@@ -98,11 +97,10 @@ const findUserAndProfile = async (userId, scope) => {
   return { profile, user };
 };
 
-const buildEmployeeItem = (profile, user = null, branchObj = null, deptObj = null, roleObj = null) => {
+const buildEmployeeItem = (profile, user = null, deptObj = null, roleObj = null) => {
   const id = profile?._id || user?._id;
   const fullName = profile ? `${profile.firstName} ${profile.lastName}`.trim() : (user?.username || "N/A");
   const email = profile?.email || user?.email;
-  const branchName = branchObj?.name || profile?.branchId || user?.branchId || "N/A";
   const departmentName = deptObj?.name || "N/A";
   const roleName = roleObj?.name || user?.role || "User";
 
@@ -120,8 +118,6 @@ const buildEmployeeItem = (profile, user = null, branchObj = null, deptObj = nul
     lastName: profile?.lastName || "",
     email,
     phone: profile?.phone || null,
-    branch: branchName,
-    branchId: profile?.branchId || user?.branchId,
     department: departmentName,
     departmentId: profile?.departmentId || user?.departmentId || null,
     role: roleName,
@@ -151,14 +147,13 @@ export const ListUsers = async (req, res) => {
     const page = Math.max(parseInt(req.query.page || "1", 10), 1);
     const pageSize = Math.min(Math.max(parseInt(req.query.pageSize || authConfig.defaultPageSize, 10), 1), authConfig.maxPageSize);
     const search = req.query.search?.trim() || null;
-    const branchId = req.query.branchId || null;
     const departmentId = req.query.departmentId || null;
     const roleId = req.query.roleId || req.query.role || null;
     const status = req.query.status || null;
     const sortField = req.query.sort || "createdAt";
     const order = req.query.order === "asc" ? 1 : -1;
 
-    const filter = { ...applyOptionalBranchFilter(scope, branchId), status: { $ne: "archived" } };
+    const filter = { ...scope, status: { $ne: "archived" } };
     if (departmentId) filter.departmentId = departmentId;
     if (status) {
       // Archived (soft-deleted) users are never listable, even via an
@@ -202,15 +197,11 @@ export const ListUsers = async (req, res) => {
       .limit(pageSize)
       .lean();
 
-    const branches = await BranchModel.find({ tenantKey: tenantId }).lean();
-    const branchMap = new Map(branches.map((b) => [b.branchKey, b]));
-
     const data = profiles.map((p) => {
       const u = p.identityId && typeof p.identityId === "object" ? p.identityId : null;
       const dept = p.departmentId && typeof p.departmentId === "object" ? p.departmentId : null;
       const roleObj = Array.isArray(p.roleIds) && p.roleIds.length > 0 && typeof p.roleIds[0] === "object" ? p.roleIds[0] : null;
-      const branchObj = branchMap.get(p.branchId) || null;
-      return buildEmployeeItem(p, u, branchObj, dept, roleObj);
+      return buildEmployeeItem(p, u, dept, roleObj);
     });
 
     return res.status(200).json({
@@ -251,7 +242,6 @@ export const CreateUser = async (req, res) => {
       lastName,
       email,
       phone,
-      branchId,
       departmentId,
       roleIds = [],
       role,
@@ -263,18 +253,8 @@ export const CreateUser = async (req, res) => {
     // Department (Part 1, Organization Hierarchy) — EmployeeProfileModel's
     // schema already enforces this, but validating it here turns a would-be
     // 500 (Mongoose ValidationError) into a clean 422.
-    if (!firstName || !lastName || !email || !branchId || !departmentId) {
-      return sendError(res, 422, "firstName, lastName, email, branchId, and departmentId are required.", requestId);
-    }
-
-    // A branch-scoped caller can only ever create employees in their own branch.
-    if (scope.branchId && branchId !== scope.branchId) {
-      return sendError(res, 403, "You do not have permission to create users in another branch.", requestId);
-    }
-
-    const branch = await BranchModel.findOne({ branchKey: branchId, tenantKey: tenantId, status: "active" });
-    if (!branch) {
-      return sendError(res, 422, "Branch not found or inactive.", requestId);
+    if (!firstName || !lastName || !email || !departmentId) {
+      return sendError(res, 422, "firstName, lastName, email, and departmentId are required.", requestId);
     }
 
     const department = await DepartmentModel.findOne({ _id: departmentId, tenantId, status: "active" });
@@ -318,7 +298,6 @@ export const CreateUser = async (req, res) => {
     const profile = await EmployeeProfileModel.create({
       identityId: null,
       tenantId,
-      branchId,
       departmentId: department._id,
       roleIds: resolvedRoleIds,
       employeeCode,
@@ -334,7 +313,6 @@ export const CreateUser = async (req, res) => {
     await EmploymentHistoryModel.create({
       employeeId: profile._id,
       tenantId,
-      branchId,
       departmentId: department._id,
       roleIds: resolvedRoleIds,
       changeType: "joined",
@@ -355,7 +333,7 @@ export const CreateUser = async (req, res) => {
     });
 
     await sendInvitationEmail(email, invitationToken, firstName);
-    publishEvent("UserCreated", { employeeId: profile._id.toString(), tenantId, branchId });
+    publishEvent("UserCreated", { employeeId: profile._id.toString(), tenantId });
     publishEvent("IdentityCreated", { employeeId: profile._id.toString(), email, tenantId, identityPending: true });
     publishEvent("InvitationQueued", { employeeId: profile._id.toString(), email, token: invitationToken });
     publishEvent("NotificationRequested", { type: "invitation_email", email });
@@ -366,7 +344,6 @@ export const CreateUser = async (req, res) => {
       reason: null,
       userId: req.auth?.id || null,
       tenantId,
-      branchId,
       requestId,
       metadata: { profileId: profile._id, employeeCode }
     });
@@ -404,10 +381,9 @@ export const GetUser = async (req, res) => {
       return sendError(res, 404, "User not found.", requestId);
     }
 
-    const [department, roleRecords, branchObj] = await Promise.all([
+    const [department, roleRecords] = await Promise.all([
       profile?.departmentId ? DepartmentModel.findById(profile.departmentId).lean() : null,
       profile?.roleIds?.length > 0 ? RoleModel.find({ _id: { $in: profile.roleIds }, status: "active" }).lean() : [],
-      profile?.branchId ? BranchModel.findOne({ branchKey: profile.branchId, tenantKey: tenantId }).lean() : null,
     ]);
 
     const rolePermissions = [...new Set(roleRecords.flatMap((r) => r.permissions || []))];
@@ -436,8 +412,6 @@ export const GetUser = async (req, res) => {
       joiningDate: profile?.joiningDate || null,
       status: profile?.status === "pending_invitation" ? "Pending Invitation" : (profile?.status || user?.status),
       tenantId: profile?.tenantId || user?.tenantId,
-      branchId: profile?.branchId || user?.branchId,
-      branch: branchObj?.name || profile?.branchId || user?.branchId,
       departmentId: profile?.departmentId || null,
       department: department?.name || null,
       role: roleRecords[0]?.name || user?.role || "User",
@@ -541,7 +515,6 @@ export const UpdateUser = async (req, res) => {
       reason: null,
       userId: req.auth?.id || null,
       tenantId,
-      branchId: profile?.branchId || user?.branchId || null,
       requestId,
       metadata: { userId: user?._id, profileId: profile?._id }
     });
@@ -590,7 +563,6 @@ export const DeleteUser = async (req, res) => {
       await EmploymentHistoryModel.create({
         employeeId: profile._id,
         tenantId,
-        branchId: profile.branchId,
         departmentId: profile.departmentId,
         roleIds: profile.roleIds,
         changeType: "archived",
@@ -605,7 +577,6 @@ export const DeleteUser = async (req, res) => {
       reason: null,
       userId: req.auth?.id || null,
       tenantId,
-      branchId: profile?.branchId || user?.branchId || null,
       requestId,
       metadata: { userId: user?._id, profileId: profile?._id }
     });
@@ -682,7 +653,6 @@ export const UpdateUserRole = async (req, res) => {
       await EmploymentHistoryModel.create({
         employeeId: profile._id,
         tenantId,
-        branchId: profile.branchId,
         departmentId: profile.departmentId,
         roleIds: targetRoleIds,
         changeType: "role_changed",
@@ -697,7 +667,6 @@ export const UpdateUserRole = async (req, res) => {
       reason: null,
       userId: req.auth?.id || null,
       tenantId,
-      branchId: profile?.branchId || user?.branchId || null,
       requestId,
       metadata: { userId: user?._id, profileId: profile?._id, role: primaryRoleName, roleIds: targetRoleIds }
     });
@@ -709,82 +678,6 @@ export const UpdateUserRole = async (req, res) => {
   } catch (error) {
     console.error("UpdateUserRole error:", error);
     return sendError(res, 500, "Unable to update user role.", requestId);
-  }
-};
-
-export const UpdateUserBranch = async (req, res) => {
-  const requestId = req.requestId || createRequestId();
-  try {
-    const scope = getAccessScope(req);
-    const permissions = req.auth?.permissions || [];
-
-    if (!scope) {
-      return sendError(res, 403, "Tenant context is required.", requestId);
-    }
-    const tenantId = scope.tenantId;
-
-    if (!permissions.includes("users.update") && !permissions.includes("employee.update")) {
-      return sendError(res, 403, "Permission denied.", requestId);
-    }
-
-    const { userId } = req.params;
-    const { branchId } = req.body;
-
-    if (!branchId) {
-      return sendError(res, 422, "Branch ID is required.", requestId);
-    }
-
-    const branch = await BranchModel.findOne({ branchKey: branchId, tenantKey: tenantId, status: "active" });
-    if (!branch) {
-      return sendError(res, 422, "Branch not found or inactive.", requestId);
-    }
-
-    const { profile, user } = await findUserAndProfile(userId, scope);
-    if (!profile && !user) {
-      return sendError(res, 404, "User not found.", requestId);
-    }
-
-    const previousBranchId = profile?.branchId || user?.branchId || null;
-
-    if (user) {
-      user.branchId = branchId;
-      await user.save();
-    }
-
-    if (profile) {
-      profile.branchId = branchId;
-      await profile.save();
-
-      await EmploymentHistoryModel.create({
-        employeeId: profile._id,
-        tenantId,
-        branchId,
-        departmentId: profile.departmentId,
-        roleIds: profile.roleIds,
-        changeType: "transferred",
-        fromDate: new Date(),
-        notes: `Transferred from branch ${previousBranchId || "N/A"} to ${branchId}`
-      });
-    }
-
-    await AuditLogModel.create({
-      action: "user.branch.update",
-      outcome: "success",
-      reason: null,
-      userId: req.auth?.id || null,
-      tenantId,
-      branchId,
-      requestId,
-      metadata: { userId: user?._id, profileId: profile?._id, branchId }
-    });
-
-    publishEvent("UserBranchTransferred", { userId: (user?._id || profile?._id).toString(), tenantId, branchId });
-    publishEvent("BranchTransferred", { userId: (user?._id || profile?._id).toString(), tenantId, branchId });
-
-    return sendSuccess(res, 200, "User branch transferred.", { userId, branchId }, requestId);
-  } catch (error) {
-    console.error("UpdateUserBranch error:", error);
-    return sendError(res, 500, "Unable to update user branch.", requestId);
   }
 };
 
@@ -831,7 +724,6 @@ export const UpdateUserDepartment = async (req, res) => {
       await EmploymentHistoryModel.create({
         employeeId: profile._id,
         tenantId,
-        branchId: profile.branchId,
         departmentId,
         roleIds: profile.roleIds,
         changeType: "department_changed",
@@ -846,7 +738,6 @@ export const UpdateUserDepartment = async (req, res) => {
       reason: null,
       userId: req.auth?.id || null,
       tenantId,
-      branchId: profile?.branchId || user?.branchId || null,
       requestId,
       metadata: { userId: user?._id, profileId: profile?._id, departmentId }
     });
@@ -927,7 +818,6 @@ export const UpdateUserStatus = async (req, res) => {
       await EmploymentHistoryModel.create({
         employeeId: profile._id,
         tenantId,
-        branchId: profile.branchId,
         departmentId: profile.departmentId,
         roleIds: profile.roleIds,
         changeType,
@@ -942,7 +832,6 @@ export const UpdateUserStatus = async (req, res) => {
       reason: reason || null,
       userId: req.auth?.id || null,
       tenantId,
-      branchId: profile?.branchId || user?.branchId || null,
       requestId,
       metadata: { userId: user?._id, profileId: profile?._id, oldStatus, newStatus: dbStatus, reason }
     });
@@ -1061,7 +950,6 @@ export const UpdateUserPermissions = async (req, res) => {
       reason: null,
       userId: req.auth?.id || null,
       tenantId,
-      branchId: profile?.branchId || user?.branchId || null,
       requestId,
       metadata: { userId: user?._id, profileId: profile?._id, grant, revoke }
     });
@@ -1217,7 +1105,6 @@ export const UpdateUserPreferences = async (req, res) => {
       reason: null,
       userId: req.auth?.id || null,
       tenantId,
-      branchId: profile.branchId || null,
       requestId,
       metadata: { userId: profile.identityId?.toString(), profileId: profile._id.toString(), updatedKeys: Object.keys(req.body).filter(k => allowedKeys.includes(k)) }
     });
@@ -1252,23 +1139,12 @@ export const InviteUser = async (req, res) => {
       lastName,
       phone,
       role = "User",
-      branchId,
       departmentId,
       designation
     } = req.body;
 
-    if (!email || !firstName || !lastName || !branchId || !departmentId) {
-      return sendError(res, 422, "Email, firstName, lastName, branchId, and departmentId are required.", requestId);
-    }
-
-    // A branch-scoped caller can only ever invite employees into their own branch.
-    if (scope.branchId && branchId !== scope.branchId) {
-      return sendError(res, 403, "You do not have permission to invite users into another branch.", requestId);
-    }
-
-    const branch = await BranchModel.findOne({ branchKey: branchId, tenantKey: tenantId, status: "active" });
-    if (!branch) {
-      return sendError(res, 422, "Branch not found or inactive.", requestId);
+    if (!email || !firstName || !lastName || !departmentId) {
+      return sendError(res, 422, "Email, firstName, lastName, and departmentId are required.", requestId);
     }
 
     const department = await DepartmentModel.findOne({ _id: departmentId, tenantId, status: "active" });
@@ -1293,7 +1169,6 @@ export const InviteUser = async (req, res) => {
       const employeeCode = `${authConfig.employeeCodePrefix}-${Math.floor(10000 + Math.random() * 90000)}`;
       profile = await EmployeeProfileModel.create({
         tenantId,
-        branchId,
         departmentId: department._id,
         roleIds: [roleRecord._id],
         employeeCode,
@@ -1328,7 +1203,6 @@ export const InviteUser = async (req, res) => {
       reason: null,
       userId: req.auth?.id || null,
       tenantId,
-      branchId,
       requestId,
       metadata: { profileId: profile._id, invitationId: invitation._id, email }
     });
@@ -1404,7 +1278,6 @@ export const ResendUserInvitation = async (req, res) => {
       reason: null,
       userId: req.auth?.id || null,
       tenantId,
-      branchId: profile.branchId,
       requestId,
       metadata: { profileId: profile._id, invitationId: invitation._id }
     });
@@ -1470,7 +1343,6 @@ export const AcceptUserInvitation = async (req, res) => {
       password: hashedPassword,
       role: roleName,
       tenantId: profile.tenantId,
-      branchId: profile.branchId,
       status: "active",
       emailVerified: true
     });
@@ -1488,7 +1360,6 @@ export const AcceptUserInvitation = async (req, res) => {
     await EmploymentHistoryModel.create({
       employeeId: profile._id,
       tenantId: profile.tenantId,
-      branchId: profile.branchId,
       departmentId: profile.departmentId,
       roleIds: profile.roleIds,
       changeType: "joined",
@@ -1502,7 +1373,6 @@ export const AcceptUserInvitation = async (req, res) => {
       reason: null,
       userId: user._id,
       tenantId: profile.tenantId,
-      branchId: profile.branchId,
       requestId,
       metadata: { profileId: profile._id, userId: user._id }
     });

@@ -178,12 +178,12 @@ Provides enterprise multi-field search across bookings for CRM, Operations, Fina
 ### Endpoint Contract: GET /api/v1/bookings/search
 
 #### Search Fields Supported
-Booking Number, Customer Name, Passport Number, Phone Number, Email, Invoice Number, Visa Number, Ticket Number, Hotel Voucher, Package Name, Assigned Consultant, Branch, Supplier, Reference Number, Remarks.
+Booking Number, Customer Name, Passport Number, Phone Number, Email, Invoice Number, Visa Number, Ticket Number, Hotel Voucher, Package Name, Assigned Consultant, Supplier, Reference Number, Remarks.
 
 ---
 
 #### Search Filters
-`bookingStatus`, `paymentStatus`, `visaStatus`, `workflowState`, `travelDateFrom`, `travelDateTo`, `branchId`, `consultantId`, `supplierId`, `packageId`, `bookingType`.
+`bookingStatus`, `paymentStatus`, `visaStatus`, `workflowState`, `travelDateFrom`, `travelDateTo`, `consultantId`, `supplierId`, `packageId`, `bookingType`.
 
 ---
 
@@ -279,12 +279,12 @@ Booking Created
 
 ### Performance Strategy
 - Cursor & Offset Pagination
-- Composite DB Indexes on (`tenantId`, `branchId`, `status`, `createdAt`)
+- Composite DB Indexes on (`tenantId`, `status`, `createdAt`)
 - Redis Caching for Read Models & Dashboards
 - Async Domain Event Processing
 
 ### Security Rules
-- Strict Multi-Tenant & Multi-Branch Isolation
+- Strict Multi-Tenant Isolation
 - Role-Based Access Control (`bookings.read`, `bookings.create`, `bookings.update`, `bookings.delete`)
 - Comprehensive Audit Logging (`AuditLogModel`)
 - Soft Delete only (No permanent row deletion)

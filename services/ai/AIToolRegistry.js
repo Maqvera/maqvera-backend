@@ -79,7 +79,6 @@ async function createIdempotentApprovalRequest({ context, toolName, arguments: a
   try {
     approvalRequest = await AIApprovalRequestModel.create({
       tenantId: context.tenantId,
-      branchId: context.branchId,
       executionId: context.executionId || null,
       toolName,
       arguments: args,
@@ -694,7 +693,7 @@ const TOOLS = [
     version: "1.0.0",
     ownerModule: "Analytics",
     handler: async (args, context) => {
-      const result = await VisaAnalyticsEngine.operationsDashboard({ tenantId: context.tenantId, branchId: context.branchId || "main" });
+      const result = await VisaAnalyticsEngine.operationsDashboard({ tenantId: context.tenantId });
       return result.data;
     }
   },
@@ -715,7 +714,7 @@ const TOOLS = [
       if (!permissions.includes("visa.dashboard.management") && !permissions.includes("admin")) {
         return { denied: true, message: "This user's permissions do not include visa.dashboard.management." };
       }
-      const result = await VisaAnalyticsEngine.financeDashboard({ tenantId: context.tenantId, branchId: context.branchId || "main" });
+      const result = await VisaAnalyticsEngine.financeDashboard({ tenantId: context.tenantId });
       return result.data;
     }
   },
@@ -759,7 +758,7 @@ const TOOLS = [
       // SearchEngineService already filters results by the caller's real
       // permissions internally — no additional gate needed here.
       const result = await SearchEngineService.globalSearch({
-        tenantId: context.tenantId, query: args.query, branchId: context.branchId, permissions: context.permissions, pageSize: 10
+        tenantId: context.tenantId, query: args.query, permissions: context.permissions, pageSize: 10
       });
       return { totalItems: result.meta.totalItems, results: result.results };
     }
@@ -785,7 +784,7 @@ const TOOLS = [
     ownerModule: "Knowledge",
     handler: async (args, context) => {
       const result = await AIKnowledgeService.retrieveKnowledge({
-        tenantId: context.tenantId, branchId: context.branchId, role: context.role, permissions: context.permissions,
+        tenantId: context.tenantId, role: context.role, permissions: context.permissions,
         query: args.query, topK: args.topK
       });
       return { contextText: result.contextText, citations: result.citations };
@@ -994,7 +993,7 @@ class AIToolRegistry {
     // evaluated against.
     if (tool.riskLevel !== "read") {
       const guardrailResult = await AIGuardrailService.evaluate({
-        tenantId: context.tenantId, branchId: context.branchId, userId: context.userId,
+        tenantId: context.tenantId, userId: context.userId,
         role: context.role, permissions: context.permissions || [],
         toolName: name, toolRiskLevel: tool.riskLevel, args: args || {},
         promptInjectionFlagged: Boolean(context.promptInjectionFlagged),

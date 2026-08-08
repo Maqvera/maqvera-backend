@@ -7,7 +7,6 @@ import { createRequestId } from "../utils/authTokens.js";
 
 const buildContext = (req) => ({
   tenantId: req.auth?.tenantId || null,
-  branchId: req.auth?.branchId || "main",
   userId: req.auth?.userId || req.auth?.id,
   permissions: req.auth?.permissions || []
 });
@@ -260,7 +259,7 @@ export const EvaluateAlerts = async (req, res) => {
     if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasObservabilityManageAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const providerStatus = await gatherProviderStatus();
-    const result = await AIObservabilityService.evaluateAlerts({ tenantId: ctx.tenantId, branchId: ctx.branchId, providerStatus });
+    const result = await AIObservabilityService.evaluateAlerts({ tenantId: ctx.tenantId, providerStatus });
     return sendSuccess(res, 200, "AI alert evaluation completed.", result, requestId);
   } catch (err) {
     console.error("EvaluateAlerts Error:", err);

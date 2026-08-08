@@ -12,10 +12,6 @@ const TravelAttendanceSessionSchema = new mongoose.Schema({
     required: true,
     index: true
   },
-  branchId: {
-    type: String,
-    default: "default"
-  },
   activityId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "travel_itinerary",

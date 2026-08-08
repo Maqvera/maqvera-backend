@@ -27,17 +27,17 @@ class AnalyticsEngine {
    * Data comes from the pre-computed summary table, never from raw aggregation.
    * If no summary exists for today, triggers a KPI refresh first.
    */
-  static async buildPrimaryDashboard({ tenantId, branchId = "all" }) {
-    const cacheKey = `dashboard:primary:${tenantId}:${branchId}`;
+  static async buildPrimaryDashboard({ tenantId }) {
+    const cacheKey = `dashboard:primary:${tenantId}`;
 
     return CacheManager.getOrCompute(cacheKey, async () => {
       const date = todayStr();
-      let summary = await TravelOperationsSummaryModel.findOne({ tenantId, branchId, summaryDate: date });
+      let summary = await TravelOperationsSummaryModel.findOne({ tenantId, summaryDate: date });
 
       if (!summary) {
         // First access today — compute from database
-        await KPIEngine.refreshTravelSummary({ tenantId, branchId });
-        summary = await TravelOperationsSummaryModel.findOne({ tenantId, branchId, summaryDate: date });
+        await KPIEngine.refreshTravelSummary({ tenantId });
+        summary = await TravelOperationsSummaryModel.findOne({ tenantId, summaryDate: date });
       }
 
       if (!summary) {
@@ -103,16 +103,16 @@ class AnalyticsEngine {
    * Returns computed KPIs from the summary table.
    * Zero hardcoded percentages — all from pre-computed aggregations.
    */
-  static async calculateKPIs({ tenantId, branchId = "all" }) {
-    const cacheKey = `dashboard:kpis:${tenantId}:${branchId}`;
+  static async calculateKPIs({ tenantId }) {
+    const cacheKey = `dashboard:kpis:${tenantId}`;
 
     return CacheManager.getOrCompute(cacheKey, async () => {
       const date = todayStr();
-      let summary = await TravelOperationsSummaryModel.findOne({ tenantId, branchId, summaryDate: date });
+      let summary = await TravelOperationsSummaryModel.findOne({ tenantId, summaryDate: date });
 
       if (!summary) {
-        await KPIEngine.refreshTravelSummary({ tenantId, branchId });
-        summary = await TravelOperationsSummaryModel.findOne({ tenantId, branchId, summaryDate: date });
+        await KPIEngine.refreshTravelSummary({ tenantId });
+        summary = await TravelOperationsSummaryModel.findOne({ tenantId, summaryDate: date });
       }
 
       const kpis = summary?.kpis || {};
@@ -153,8 +153,8 @@ class AnalyticsEngine {
    * Returns actual historical trends from the summary table.
    * No Math.random() — real data or zeroed entries.
    */
-  static async generateTrends({ tenantId, branchId = "all", period = "7 Days" }) {
-    const cacheKey = `dashboard:trends:${tenantId}:${branchId}:${period}`;
+  static async generateTrends({ tenantId, period = "7 Days" }) {
+    const cacheKey = `dashboard:trends:${tenantId}:${period}`;
 
     return CacheManager.getOrCompute(cacheKey, async () => {
       const periodMap = {
@@ -178,7 +178,6 @@ class AnalyticsEngine {
 
       const summaries = await TravelOperationsSummaryModel.find({
         tenantId,
-        branchId,
         summaryDate: { $in: dateStrings },
       }).lean();
 
@@ -220,7 +219,6 @@ class AnalyticsEngine {
 
       return {
         period,
-        branchId,
         dataPointsCount: trendPoints.length,
         dataPointsWithData: trendPoints.filter((t) => t.dataAvailable).length,
         trends: trendPoints,
@@ -236,12 +234,11 @@ class AnalyticsEngine {
    * Returns live operational map data dynamically from database.
    * All airports, hotels, routes, and incidents from actual records.
    */
-  static async getLiveMapData({ tenantId, branchId = "all" }) {
-    const cacheKey = `dashboard:map:${tenantId}:${branchId}`;
+  static async getLiveMapData({ tenantId }) {
+    const cacheKey = `dashboard:map:${tenantId}`;
 
     return CacheManager.getOrCompute(cacheKey, async () => {
-      const branchFilter = branchId === "all" ? {} : { branchId };
-      const baseFilter = { tenantId, ...branchFilter };
+      const baseFilter = { tenantId };
       const activeFlightStatuses = ["scheduled", "confirmed", "check_in_open", "checked_in", "boarding", "departed", "in_flight"];
       const activeHotelStatuses = ["confirmed", "ready", "checked_in", "occupied"];
       const activeTransportStatuses = ["ready", "boarding", "departed", "in_transit"];
@@ -347,12 +344,11 @@ class AnalyticsEngine {
    * Returns workload data dynamically from database.
    * No hardcoded names — all coordinators/guides from actual user + plan assignments.
    */
-  static async getWorkloadData({ tenantId, branchId = "all" }) {
-    const cacheKey = `dashboard:workload:${tenantId}:${branchId}`;
+  static async getWorkloadData({ tenantId }) {
+    const cacheKey = `dashboard:workload:${tenantId}`;
 
     return CacheManager.getOrCompute(cacheKey, async () => {
-      const branchFilter = branchId === "all" ? {} : { branchId };
-      const baseFilter = { tenantId, ...branchFilter };
+      const baseFilter = { tenantId };
 
       const [coordinatorWorkload, guideWorkload, pendingTasks, openIncidents] = await Promise.all([
         // Coordinator workload from travel plans
@@ -434,14 +430,12 @@ class AnalyticsEngine {
    * Returns real operational alerts from the database.
    * No synthetic/fake alerts — only actual incident records.
    */
-  static async getOperationalAlerts({ tenantId, branchId = "all" }) {
-    const cacheKey = `dashboard:alerts:${tenantId}:${branchId}`;
+  static async getOperationalAlerts({ tenantId }) {
+    const cacheKey = `dashboard:alerts:${tenantId}`;
 
     return CacheManager.getOrCompute(cacheKey, async () => {
-      const branchFilter = branchId === "all" ? {} : { branchId };
       const openIncidents = await TravelIncidentManagementModel.find({
         tenantId,
-        ...branchFilter,
         isSoftDeleted: false,
         status: { $nin: ["resolved", "verified", "closed", "rejected", "duplicate"] },
       })

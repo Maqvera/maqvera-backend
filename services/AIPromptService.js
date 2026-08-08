@@ -21,7 +21,7 @@ const ALLOWED_TRANSITIONS = {
   archived: []
 };
 
-const cacheKey = (tenantId, branchId, promptType, key, language) => `aiprompt:${tenantId}:${branchId}:${promptType}:${key}:${language}`;
+const cacheKey = (tenantId, promptType, key, language) => `aiprompt:${tenantId}:${promptType}:${key}:${language}`;
 
 class AIPromptService {
   static adapters = { OpenAI: new OpenAIAdapter(), Anthropic: new AnthropicAdapter() };
@@ -50,7 +50,7 @@ class AIPromptService {
     if (!promptTypes.includes(promptType)) throw new Error(`Invalid promptType '${promptType}'. Must be one of: ${promptTypes.join(", ")}.`);
   }
 
-  static async createPrompt({ tenantId, branchId, userId, promptType, key, language, name, description, content }) {
+  static async createPrompt({ tenantId, userId, promptType, key, language, name, description, content }) {
     if (!key || !key.trim()) throw new Error("key is required.");
     if (!name || !name.trim()) throw new Error("name is required.");
     if (!content || !content.trim()) throw new Error("content is required.");
@@ -59,10 +59,10 @@ class AIPromptService {
     const resolvedLanguage = language || defaultLanguage;
     if (!supportedLanguages.includes(resolvedLanguage)) throw new Error(`Unsupported language '${resolvedLanguage}'. Must be one of: ${supportedLanguages.join(", ")}.`);
 
-    const existing = await AIPromptModel.findOne({ tenantId, branchId: branchId || "main", promptType, key, language: resolvedLanguage });
+    const existing = await AIPromptModel.findOne({ tenantId, promptType, key, language: resolvedLanguage });
     if (existing) throw new Error(`A prompt already exists for (promptType='${promptType}', key='${key}', language='${resolvedLanguage}'). Use createVersion to add a new version to it.`);
 
-    const prompt = await AIPromptModel.create({ tenantId, branchId: branchId || "main", promptType, key, language: resolvedLanguage, name, description: description || null, createdBy: userId });
+    const prompt = await AIPromptModel.create({ tenantId, promptType, key, language: resolvedLanguage, name, description: description || null, createdBy: userId });
     const version = await AIPromptVersionModel.create({ promptId: prompt._id, tenantId, version: 1, content, language: resolvedLanguage, description: description || null, status: "draft", author: userId });
 
     publishEvent("AIPromptCreated", { promptId: prompt._id, tenantId, promptType, key, language: resolvedLanguage });
@@ -131,7 +131,7 @@ class AIPromptService {
     prompt.currentPublishedVersion = versionDoc._id;
     await prompt.save();
 
-    await CacheManager.invalidate(cacheKey(prompt.tenantId, prompt.branchId, prompt.promptType, prompt.key, prompt.language));
+    await CacheManager.invalidate(cacheKey(prompt.tenantId, prompt.promptType, prompt.key, prompt.language));
 
     if (mongoose.connection?.readyState === 1) {
       AuditLogModel.create({
@@ -159,11 +159,10 @@ class AIPromptService {
     return this._publishVersion({ prompt, versionDoc, userId, isRollback: true });
   }
 
-  static async listPrompts({ tenantId, branchId, promptType, page = 1, pageSize = 20 }) {
+  static async listPrompts({ tenantId, promptType, page = 1, pageSize = 20 }) {
     const safePage = Math.max(parseInt(page, 10) || 1, 1);
     const safePageSize = Math.min(Math.max(parseInt(pageSize, 10) || 20, 1), 100);
     const filter = { tenantId };
-    if (branchId) filter.branchId = { $in: [branchId, "main"] };
     if (promptType) filter.promptType = promptType;
 
     const [items, totalItems] = await Promise.all([
@@ -189,13 +188,13 @@ class AIPromptService {
    * composeChatPrompt/composeWorkflowPrompt) falls back to the real
    * relocated defaults in utils/aiPromptDefaults.js.
    */
-  static async resolvePrompt({ tenantId, branchId, promptType, key, language }) {
+  static async resolvePrompt({ tenantId, promptType, key, language }) {
     const { defaultLanguage, cacheTtlSeconds } = getAIPromptConfig();
     const resolvedLanguage = language || defaultLanguage;
     const { data } = await CacheManager.getOrCompute(
-      cacheKey(tenantId, branchId || "main", promptType, key, resolvedLanguage),
+      cacheKey(tenantId, promptType, key, resolvedLanguage),
       async () => {
-        const prompt = await AIPromptModel.findOne({ tenantId, branchId: { $in: [branchId || "main", "main"] }, promptType, key, language: resolvedLanguage })
+        const prompt = await AIPromptModel.findOne({ tenantId, promptType, key, language: resolvedLanguage })
           .populate("currentPublishedVersion", "version content status")
           .lean();
         const published = prompt?.currentPublishedVersion;
@@ -226,22 +225,22 @@ class AIPromptService {
    * the tool-result message, not the system prompt. Conversation Memory
    * (EXT-027) IS appended here, same as before this document's changes.
    */
-  static async composeChatPrompt({ tenantId, branchId, mode, role, language, variables = {}, memorySummary }) {
-    const systemResolved = await this.resolvePrompt({ tenantId, branchId, promptType: "system", key: "default", language });
+  static async composeChatPrompt({ tenantId, mode, role, language, variables = {}, memorySummary }) {
+    const systemResolved = await this.resolvePrompt({ tenantId, promptType: "system", key: "default", language });
     const systemTemplate = systemResolved || { content: DEFAULT_SYSTEM_PROMPT.content, versionId: null };
     let text = this.interpolate(systemTemplate.content, variables);
     const versionRefs = [];
     if (systemResolved) versionRefs.push({ promptType: "system", key: "default", versionId: systemResolved.versionId });
 
     if (mode) {
-      const roleResolved = await this.resolvePrompt({ tenantId, branchId, promptType: "role", key: mode, language });
+      const roleResolved = await this.resolvePrompt({ tenantId, promptType: "role", key: mode, language });
       if (roleResolved) {
         text += `\n\nROLE-SPECIFIC INSTRUCTIONS (${mode}):\n${this.interpolate(roleResolved.content, variables)}`;
         versionRefs.push({ promptType: "role", key: mode, versionId: roleResolved.versionId });
       }
     }
 
-    const guardrailResolved = await this.resolvePrompt({ tenantId, branchId, promptType: "guardrail", key: "default", language });
+    const guardrailResolved = await this.resolvePrompt({ tenantId, promptType: "guardrail", key: "default", language });
     if (guardrailResolved) {
       text += `\n\nADDITIONAL GUARDRAILS:\n${this.interpolate(guardrailResolved.content, variables)}`;
       versionRefs.push({ promptType: "guardrail", key: "default", versionId: guardrailResolved.versionId });
@@ -255,8 +254,8 @@ class AIPromptService {
   }
 
   /** Same resolve-with-fallback pattern as composeChatPrompt, scoped to a single "workflow" prompt (planning/synthesis/...). */
-  static async composeWorkflowPrompt({ tenantId, branchId, key, language, variables = {} }) {
-    const resolved = await this.resolvePrompt({ tenantId, branchId, promptType: "workflow", key, language });
+  static async composeWorkflowPrompt({ tenantId, key, language, variables = {} }) {
+    const resolved = await this.resolvePrompt({ tenantId, promptType: "workflow", key, language });
     const fallback = DEFAULT_WORKFLOW_PROMPTS[key];
     const template = resolved || fallback;
     if (!template) throw new Error(`No published workflow prompt and no default exists for key '${key}'.`);

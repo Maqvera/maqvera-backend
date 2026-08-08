@@ -7,7 +7,6 @@ import mongoose from "mongoose";
 // computed synchronously inside a customer-facing request.
 const CustomerStatisticsSummarySchema = new mongoose.Schema({
   tenantId: { type: String, required: true, index: true },
-  branchId: { type: String, default: null, index: true },
   customerId: { type: mongoose.Schema.Types.ObjectId, ref: "customer", required: true, index: true },
   metrics: { type: mongoose.Schema.Types.Mixed, default: {} },
   generatedAt: { type: Date, default: Date.now },

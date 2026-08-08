@@ -1,7 +1,6 @@
 import dotenv from "dotenv";
 import mongoose from "mongoose";
 import TenantModel from "../models/Tenantmodel.js";
-import BranchModel from "../models/Branchmodel.js";
 import UserModel from "../models/Usermodel.js";
 import { ensureAdministratorRole } from "../utils/authDomainDefaults.js";
 
@@ -24,12 +23,6 @@ const seed = async () => {
     { upsert: true, new: true }
   );
 
-  const branch = await BranchModel.findOneAndUpdate(
-    { branchKey: "KARACHI", tenantKey: tenant.tenantKey },
-    { branchKey: "KARACHI", tenantKey: tenant.tenantKey, name: "Karachi Branch", status: "active" },
-    { upsert: true, new: true }
-  );
-
   const role = await ensureAdministratorRole(tenant.tenantKey);
 
   await UserModel.updateMany(
@@ -37,8 +30,6 @@ const seed = async () => {
       $or: [
         { tenantId: { $exists: false } },
         { tenantId: null },
-        { branchId: { $exists: false } },
-        { branchId: null },
         { role: { $exists: false } },
         { role: null }
       ]
@@ -46,13 +37,12 @@ const seed = async () => {
     {
       $set: {
         tenantId: tenant.tenantKey,
-        branchId: branch.branchKey,
         role: role.name
       }
     }
   );
 
-  console.log(`Seeded tenant ${tenant.tenantKey}, branch ${branch.branchKey}, role ${role.name}`);
+  console.log(`Seeded tenant ${tenant.tenantKey}, role ${role.name}`);
   await mongoose.disconnect();
 };
 

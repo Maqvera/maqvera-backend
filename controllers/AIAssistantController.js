@@ -9,7 +9,6 @@ const AI_PERMISSION = "ai.assistant.use";
 
 const buildContext = (req) => ({
   tenantId: req.auth?.tenantId || null,
-  branchId: req.auth?.branchId || "main",
   userId: req.auth?.userId || req.auth?.id,
   userName: req.auth?.name || "User",
   permissions: req.auth?.permissions || [],

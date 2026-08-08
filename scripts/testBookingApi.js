@@ -28,7 +28,6 @@ const token = jwt.sign(
     username: "TestBookingAdmin",
     name: "Booking Administrator",
     tenantId: "ALNOOR",
-    branchId: "KARACHI",
     permissions: [
       "customers.read", "customers.create", "customer.read", "customer.create",
       "booking.read", "booking.create", "booking.update", "booking.delete"

@@ -12,11 +12,6 @@ const EmployeeProfileSchema = new mongoose.Schema({
     required: true,
     index: true
   },
-  branchId: {
-    type: String,
-    required: true,
-    index: true
-  },
   departmentId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "department",
@@ -108,7 +103,7 @@ const EmployeeProfileSchema = new mongoose.Schema({
   }
 }, { timestamps: true });
 
-EmployeeProfileSchema.index({ tenantId: 1, branchId: 1, status: 1 });
+EmployeeProfileSchema.index({ tenantId: 1, status: 1 });
 
 const EmployeeProfileModel = mongoose.model("employee", EmployeeProfileSchema);
 

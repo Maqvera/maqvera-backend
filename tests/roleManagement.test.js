@@ -100,7 +100,6 @@ test("The seeded system Administrator role cannot be deleted", { skip: !dbAvaila
   const { DeleteRole } = await import("../controllers/RoleController.js");
   const RoleModel = (await import("../models/Rolemodel.js")).default;
   const TenantModel = (await import("../models/Tenantmodel.js")).default;
-  const BranchModel = (await import("../models/Branchmodel.js")).default;
   const UserModel = (await import("../models/Usermodel.js")).default;
 
   const suffix = Date.now();
@@ -110,7 +109,6 @@ test("The seeded system Administrator role cannot be deleted", { skip: !dbAvaila
   t.after(async () => {
     await UserModel.deleteMany({ email });
     await RoleModel.deleteMany({ tenantId: tenantKey });
-    await BranchModel.deleteMany({ tenantKey });
     await TenantModel.deleteMany({ tenantKey });
   });
 

@@ -35,7 +35,7 @@ const deriveSeatType = (seat, cabin) => {
  * Seat Map (EXT-008) → Employee Selects Seats → Assign Seats").
  */
 class AmadeusSeatSelectionService {
-  static async assignSeats({ tenantId, branchId, userId, userName, flightOrderId, seatSelections, paymentApproved, requestId }) {
+  static async assignSeats({ tenantId, userId, userName, flightOrderId, seatSelections, paymentApproved, requestId }) {
     // §7 "Valid Flight Order ID" / request shape.
     if (!flightOrderId || !String(flightOrderId).trim()) {
       throwStructured("flightOrderId is required.", "INVALID_REQUEST", 400);
@@ -56,11 +56,6 @@ class AmadeusSeatSelectionService {
     });
     if (!booking) {
       throwStructured("Flight order not found for this tenant.", "FLIGHT_ORDER_NOT_FOUND", 404);
-    }
-
-    // "Same Branch" — same convention EXT-005 already established.
-    if (branchId && booking.branchId && booking.branchId !== branchId) {
-      throwStructured("Flight order belongs to a different branch.", "BRANCH_MISMATCH", 403);
     }
 
     // "Booking Cancelled" / "Booking Expired" business exceptions.
@@ -164,7 +159,7 @@ class AmadeusSeatSelectionService {
         if (mongoose.connection?.readyState === 1) {
           AuditLogModel.create({
             tenantId, userId, action: "AMADEUS_SEAT_ASSIGNMENT_FAILED", module: "ExternalIntegrations",
-            requestId, branchId, targetId: booking._id.toString(), details: { flightOrderId, reason: err.message }
+            requestId, targetId: booking._id.toString(), details: { flightOrderId, reason: err.message }
           }).catch((auditErr) => console.error("Seat assignment failure audit log error:", auditErr));
         }
         const code = err.status === 429 ? "RATE_LIMIT_EXCEEDED" : err.status === 504 ? "PROVIDER_TIMEOUT" : "PROVIDER_UNAVAILABLE";
@@ -282,13 +277,13 @@ class AmadeusSeatSelectionService {
       // appointmentReminderScheduler.js.
       const notifiedTravelerIds = new Set(toConfirm.map((p) => String(p.selection.travelerId)));
       for (const travelerId of notifiedTravelerIds) {
-        publishEvent("NotificationRequested", { tenantId, branchId, event: "SeatAssigned", priority: "normal", channel: "Email", recipientId: travelerId, flightOrderId });
+        publishEvent("NotificationRequested", { tenantId, event: "SeatAssigned", priority: "normal", channel: "Email", recipientId: travelerId, flightOrderId });
       }
 
       if (mongoose.connection?.readyState === 1) {
         AuditLogModel.create({
           tenantId, userId, action: "AMADEUS_SEATS_ASSIGNED", module: "ExternalIntegrations",
-          requestId, branchId, targetId: booking._id.toString(),
+          requestId, targetId: booking._id.toString(),
           details: {
             travelPlanId: booking.travelPlanId?.toString() || null,
             flightAssignmentId: booking.flightAssignmentId?.toString() || null,

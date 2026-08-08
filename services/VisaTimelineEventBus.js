@@ -41,7 +41,6 @@ class VisaTimelineEventBus {
 
         await EnterpriseTimelineEngineService.recordEvent({
           tenantId: payload.tenantId,
-          branchId: payload.branchId || visaCase.branchId,
           visaCaseId: visaCase._id,
           visaCase,
           sourceModule,

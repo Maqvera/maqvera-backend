@@ -9,7 +9,6 @@ import BookingTimelineModel from "../models/BookingTimelineModel.js";
 import BookingNoteModel from "../models/BookingNoteModel.js";
 import BookingWorkflowModel from "../models/BookingWorkflowModel.js";
 import CustomerModel from "../models/CustomerModel.js";
-import BranchModel from "../models/Branchmodel.js";
 import EmployeeProfileModel from "../models/EmployeeProfilemodel.js";
 import FlightCatalogModel from "../models/FlightCatalogModel.js";
 import HotelCatalogModel from "../models/HotelCatalogModel.js";
@@ -30,12 +29,7 @@ import {
   executeWorkflowTransition,
   getWorkflowDefinitionForEntity
 } from "../utils/WorkflowEngine.js";
-import { getAccessScope, applyOptionalBranchFilter } from "../utils/accessScope.js";
-
-// A branch-scoped caller's own branch always wins for a write (their own
-// scope.branchId is authoritative, never client-suppliable) — a tenant-scoped
-// caller may specify a branch in the body, defaulting as before.
-const resolveWriteBranchId = (scope, req, fallback) => scope.branchId || req.body?.branchId || fallback;
+import { getAccessScope } from "../utils/accessScope.js";
 
 const bookingConfig = getBookingConfig();
 const storageConfig = getStorageConfig();
@@ -149,7 +143,6 @@ export const ListBookings = async (req, res) => {
     const bookingStatus = req.query.bookingStatus || req.query.status || null;
     const paymentStatus = req.query.paymentStatus || null;
     const visaStatus = req.query.visaStatus || null;
-    const branchId = req.query.branchId || null;
     const consultantId = req.query.consultantId || req.query.assignedTo || null;
     
     const travelDateFrom = req.query.travelDateFrom ? new Date(req.query.travelDateFrom) : null;
@@ -160,7 +153,7 @@ export const ListBookings = async (req, res) => {
     const sortField = req.query.sort || "createdAt";
     const order = req.query.order === "asc" ? 1 : -1;
 
-    const filter = { ...applyOptionalBranchFilter(scope, branchId), status: { $ne: "archived" } };
+    const filter = { ...scope, status: { $ne: "archived" } };
 
     if (customerId) filter.customerId = customerId;
     if (bookingType) filter.bookingType = bookingType.toLowerCase();
@@ -257,7 +250,6 @@ export const SearchBookings = async (req, res) => {
     const bookingStatus = req.query.bookingStatus || req.query.status || req.query.workflowState || null;
     const paymentStatus = req.query.paymentStatus || null;
     const visaStatus = req.query.visaStatus || null;
-    const branchId = req.query.branchId || null;
     const consultantId = req.query.consultantId || req.query.assignedTo || null;
     const bookingType = req.query.bookingType || req.query.type || null;
     const packageId = req.query.packageId || null;
@@ -268,7 +260,7 @@ export const SearchBookings = async (req, res) => {
     const travelerCountMin = req.query.travelerCountMin ? parseInt(req.query.travelerCountMin, 10) : null;
     const travelerCountMax = req.query.travelerCountMax ? parseInt(req.query.travelerCountMax, 10) : null;
 
-    const filter = { ...applyOptionalBranchFilter(scope, branchId), status: { $ne: "archived" } };
+    const filter = { ...scope, status: { $ne: "archived" } };
     if (bookingStatus) filter.status = bookingStatus.toLowerCase();
     if (paymentStatus) filter.paymentStatus = paymentStatus.toLowerCase();
     if (visaStatus) filter.visaStatus = visaStatus.toLowerCase();
@@ -295,7 +287,7 @@ export const SearchBookings = async (req, res) => {
     }
 
     // Search Fields: Booking Number, Customer Name, Passport Number, Phone
-    // Number, Email, Assigned Consultant, Branch, Reference Number, Remarks.
+    // Number, Email, Assigned Consultant, Reference Number, Remarks.
     // Not implemented — no backing model/field exists anywhere in this
     // codebase (Finance/Package/Ticketing/Supplier-catalog modules aren't
     // built), flagged rather than faked: Invoice Number, Visa Number,
@@ -313,7 +305,6 @@ export const SearchBookings = async (req, res) => {
         { customerName: regex },
         { customerCode: regex },
         { assignedConsultant: regex },
-        { branchId: regex },
         { remarks: regex },
         ...(matchedBookingIds.length > 0 ? [{ _id: { $in: matchedBookingIds } }] : [])
       ];
@@ -392,19 +383,9 @@ export const CreateBooking = async (req, res) => {
 
     if (!customerId) return sendError(res, 422, "customerId is required.", requestId);
 
-    // A branch-scoped caller can only ever create bookings in their own
-    // branch — the request body's branchId is honored only for tenant-scoped
-    // (all-branch) callers.
-    const branchId = resolveWriteBranchId(scope, req, bookingConfig.defaultBranchId);
-
     // Validation Rule: "Customer Exists"
     const customer = await CustomerModel.findOne({ _id: customerId, tenantId, status: { $ne: "archived" } });
     if (!customer) return sendError(res, 404, "Customer not found.", requestId);
-
-    // Validation Rule: "Branch Exists" — same branchKey/tenantKey lookup
-    // pattern already used by Customer/User Management.
-    const branch = await BranchModel.findOne({ branchKey: branchId, tenantKey: tenantId, status: "active" });
-    if (!branch) return sendError(res, 422, `Branch "${branchId}" does not exist or is inactive.`, requestId);
 
     // Validation Rule: "Currency Exists" — validated dynamically against the
     // config-driven supported currency list (utils/bookingConfig.js), not a
@@ -459,7 +440,6 @@ export const CreateBooking = async (req, res) => {
 
     const booking = await BookingHeaderModel.create({
       tenantId,
-      branchId,
       bookingReference: bookingNumber,
       bookingNumber,
       customerId: customer._id,
@@ -523,7 +503,6 @@ export const CreateBooking = async (req, res) => {
       reason: null,
       userId: req.auth?.id || null,
       tenantId,
-      branchId,
       requestId,
       metadata: { bookingId: booking._id, bookingNumber: booking.bookingNumber }
     });
@@ -596,7 +575,6 @@ export const GetBooking = async (req, res) => {
         internalNotes: booking.internalNotes,
         preferredContactTime: booking.preferredContactTime,
         tenantId: booking.tenantId,
-        branchId: booking.branchId,
         createdAt: booking.createdAt,
         updatedAt: booking.updatedAt
       },
@@ -682,7 +660,7 @@ export const UpdateBooking = async (req, res) => {
     // endpoint exists for field-level edits (unlike workflow transitions),
     // so this is enforced as an elevated-permission gate, matching the same
     // convention already used for archived-record access.
-    const criticalFields = ["travelDate", "returnDate", "branchId", "assignedConsultant", "assignedTo"];
+    const criticalFields = ["travelDate", "returnDate", "assignedConsultant", "assignedTo"];
     const freelyEditableStatuses = ["draft", "reserved"];
     const touchesCriticalField = criticalFields.some((key) => req.body[key] !== undefined);
     if (touchesCriticalField && !freelyEditableStatuses.includes(booking.status)) {
@@ -693,10 +671,6 @@ export const UpdateBooking = async (req, res) => {
 
     // Editable-field validation — same rules as POST /bookings, since these
     // are equally real field changes.
-    if (req.body.branchId !== undefined) {
-      const branch = await BranchModel.findOne({ branchKey: req.body.branchId, tenantKey: tenantId, status: "active" });
-      if (!branch) return sendError(res, 422, `Branch "${req.body.branchId}" does not exist or is inactive.`, requestId);
-    }
     if (req.body.assignedConsultant !== undefined) {
       if (!mongoose.Types.ObjectId.isValid(req.body.assignedConsultant)) {
         return sendError(res, 422, `Consultant "${req.body.assignedConsultant}" does not exist.`, requestId);
@@ -722,7 +696,7 @@ export const UpdateBooking = async (req, res) => {
     // architecture, totals are derived from real BookingServiceModel line
     // items via recalculateBookingFinancials, never set by hand through a
     // generic PATCH.
-    const allowedFields = ["travelDate", "returnDate", "assignedConsultant", "assignedTo", "remarks", "priority", "internalNotes", "preferredContactTime", "branchId"];
+    const allowedFields = ["travelDate", "returnDate", "assignedConsultant", "assignedTo", "remarks", "priority", "internalNotes", "preferredContactTime"];
 
     allowedFields.forEach((key) => {
       if (req.body[key] !== undefined) {
@@ -763,7 +737,6 @@ export const UpdateBooking = async (req, res) => {
       reason: null,
       userId: req.auth?.id || null,
       tenantId,
-      branchId: booking.branchId,
       requestId,
       metadata: { bookingId: booking._id }
     });
@@ -814,7 +787,6 @@ export const ArchiveBooking = async (req, res) => {
       reason: null,
       userId: req.auth?.id || null,
       tenantId,
-      branchId: booking.branchId,
       requestId,
       metadata: { bookingId: booking._id }
     });
@@ -876,7 +848,6 @@ export const ConfirmBooking = async (req, res) => {
       reason: null,
       userId: req.auth?.id || null,
       tenantId,
-      branchId: booking.branchId,
       requestId,
       metadata: { bookingId: booking._id }
     });
@@ -979,7 +950,6 @@ export const CancelBooking = async (req, res) => {
       reason: reason.trim(),
       userId: req.auth?.id || null,
       tenantId,
-      branchId: booking.branchId,
       requestId,
       metadata: { bookingId: booking._id, category }
     });
@@ -1251,7 +1221,6 @@ export const AddBookingTravelers = async (req, res) => {
       reason: null,
       userId: req.auth?.id || null,
       tenantId,
-      branchId: booking.branchId,
       requestId,
       metadata: { bookingId: booking._id, addedCount: createdTravelers.length }
     });
@@ -1768,7 +1737,6 @@ export const AddBookingServices = async (req, res) => {
       reason: null,
       userId: req.auth?.id || null,
       tenantId,
-      branchId: booking.branchId,
       requestId,
       metadata: { bookingId: booking._id, count: createdServices.length }
     });
@@ -2145,7 +2113,6 @@ export const TransitionBookingWorkflow = async (req, res) => {
       reason: null,
       userId: req.auth?.id || null,
       tenantId,
-      branchId: booking.branchId,
       requestId,
       metadata: {
         bookingId: booking._id,
@@ -2310,7 +2277,6 @@ export const AddBookingDocument = async (req, res) => {
       reason: null,
       userId: req.auth?.id || null,
       tenantId,
-      branchId: booking.branchId,
       requestId,
       metadata: { bookingId: booking._id, documentId: doc._id }
     });
@@ -2489,7 +2455,6 @@ export const AddBookingNote = async (req, res) => {
       reason: null,
       userId: req.auth?.id || null,
       tenantId,
-      branchId: booking.branchId,
       requestId,
       metadata: { bookingId: booking._id, noteId: note._id, category }
     });
@@ -2670,7 +2635,6 @@ export const AddBookingTask = async (req, res) => {
       reason: null,
       userId: req.auth?.id || null,
       tenantId,
-      branchId: booking.branchId,
       requestId,
       metadata: { bookingId: booking._id, taskId: task._id }
     });

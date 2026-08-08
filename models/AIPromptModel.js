@@ -12,7 +12,6 @@ import mongoose from "mongoose";
 const AIPromptSchema = new mongoose.Schema(
   {
     tenantId: { type: String, required: true, index: true },
-    branchId: { type: String, default: "main", index: true },
     promptType: { type: String, required: true, index: true },
     // Meaning depends on promptType: "default" for system/guardrail;
     // an AIConversationModel.mode value (or a custom name) for "role";
@@ -35,6 +34,6 @@ const AIPromptSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-AIPromptSchema.index({ tenantId: 1, branchId: 1, promptType: 1, key: 1, language: 1 }, { unique: true });
+AIPromptSchema.index({ tenantId: 1, promptType: 1, key: 1, language: 1 }, { unique: true });
 
 export default mongoose.models.AIPrompt || mongoose.model("AIPrompt", AIPromptSchema);

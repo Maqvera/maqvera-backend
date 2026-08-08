@@ -12,11 +12,6 @@ const EmploymentHistorySchema = new mongoose.Schema({
     required: true,
     index: true
   },
-  branchId: {
-    type: String,
-    required: true,
-    index: true
-  },
   departmentId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "department",

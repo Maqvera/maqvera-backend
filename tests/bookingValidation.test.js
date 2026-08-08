@@ -7,7 +7,6 @@ test('bookingSchemas.createBooking accepts a valid booking payload', async () =>
   const result = bookingSchemas.createBooking.validate({
     customerId: '507f1f77bcf86cd799439011',
     bookingType: 'umrah',
-    branchId: 'KARACHI',
     travelDate: '2026-12-01',
     currencyId: 'USD',
     totalAmount: 1500

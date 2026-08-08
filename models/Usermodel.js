@@ -13,10 +13,6 @@ const UserSchema = new mongoose.Schema({
         type: String,
         default: null
     },
-    branchId: {
-        type: String,
-        default: null
-    },
     status: {
         type: String,
         enum: ["active", "inactive", "suspended", "deleted"],

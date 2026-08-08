@@ -12,7 +12,6 @@ import mongoose from "mongoose";
 const AIKnowledgeDocumentSchema = new mongoose.Schema(
   {
     tenantId: { type: String, required: true, index: true },
-    branchId: { type: String, default: "main", index: true },
     title: { type: String, required: true },
     category: { type: String, required: true, index: true },
     // §6 "Knowledge Levels" — see utils/aiKnowledgeConfig.js for the real
@@ -41,6 +40,6 @@ const AIKnowledgeDocumentSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-AIKnowledgeDocumentSchema.index({ tenantId: 1, branchId: 1, status: 1, category: 1 });
+AIKnowledgeDocumentSchema.index({ tenantId: 1, status: 1, category: 1 });
 
 export default mongoose.models.AIKnowledgeDocument || mongoose.model("AIKnowledgeDocument", AIKnowledgeDocumentSchema);

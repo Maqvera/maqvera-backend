@@ -17,7 +17,6 @@ const AIKnowledgeChunkSchema = new mongoose.Schema(
   {
     documentId: { type: mongoose.Schema.Types.ObjectId, ref: "AIKnowledgeDocument", required: true, index: true },
     tenantId: { type: String, required: true, index: true },
-    branchId: { type: String, default: "main", index: true },
     chunkIndex: { type: Number, required: true },
     sectionTitle: { type: String, default: null },
     content: { type: String, required: true },
@@ -46,7 +45,7 @@ const AIKnowledgeChunkSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-AIKnowledgeChunkSchema.index({ tenantId: 1, branchId: 1, isActive: 1, visibilityLevel: 1 });
+AIKnowledgeChunkSchema.index({ tenantId: 1, isActive: 1, visibilityLevel: 1 });
 AIKnowledgeChunkSchema.index({ documentId: 1, isActive: 1 });
 
 export default mongoose.models.AIKnowledgeChunk || mongoose.model("AIKnowledgeChunk", AIKnowledgeChunkSchema);

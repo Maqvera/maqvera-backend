@@ -9,7 +9,6 @@ import AuditLogModel from "../models/AuditLogmodel.js";
 import EmailVerificationTokenModel from "../models/EmailVerificationTokenmodel.js";
 import PasswordResetTokenModel from "../models/PasswordResetTokenmodel.js";
 import TenantModel from "../models/Tenantmodel.js";
-import BranchModel from "../models/Branchmodel.js";
 import RoleModel from "../models/Rolemodel.js";
 import LoginHistoryModel from "../models/LoginHistoryModel.js";
 import TrustedDeviceModel from "../models/TrustedDeviceModel.js";
@@ -187,7 +186,6 @@ const createAudit = async ({ action, outcome, reason, user, email, sessionId, re
       userId: user?._id || null,
       email: user?.email || email || null,
       tenantId: user?.tenantId || null,
-      branchId: user?.branchId || null,
       sessionId: sessionId || null,
       requestId, ipAddress, device, browser,
       metadata: metadata || {},
@@ -211,15 +209,14 @@ const recordLoginFailure = async ({ reason, user = null, email = null, meta, met
 };
 
 const resolveDomainContext = async (user) => {
-  const [tenant, branch, role] = await Promise.all([
+  const [tenant, role] = await Promise.all([
     user.tenantId ? TenantModel.findOne({ tenantKey: user.tenantId, status: "active" }).lean() : null,
-    user.branchId ? BranchModel.findOne({ branchKey: user.branchId, tenantKey: user.tenantId, status: "active" }).lean() : null,
     // Role.name is unique per tenant, not globally — must filter by the
     // user's own tenant, or this could resolve a different tenant's
     // same-named role (wrong permission set entirely).
     user.role && user.tenantId ? RoleModel.findOne({ tenantId: user.tenantId, name: user.role, status: "active" }).lean() : null,
   ]);
-  return { tenant, branch, role, permissions: role?.permissions || [] };
+  return { tenant, role, permissions: role?.permissions || [] };
 };
 
 // Signup must always land a new user in an explicit, caller-specified
@@ -303,7 +300,6 @@ const recordLoginHistory = async ({ user, email, sessionId, action, status, fail
       userId: user?._id || null,
       email: email || user?.email || null,
       tenantId: user?.tenantId || null,
-      branchId: user?.branchId || null,
       sessionId: sessionId || null,
       action,
       status,
@@ -332,7 +328,6 @@ export const createSessionAndTokens = async (user, meta, rememberMe = false) => 
     userId: user._id,
     email: user.email,
     tenantId: user.tenantId || null,
-    branchId: user.branchId || null,
     refreshTokenHash: hashToken(uuidv4()),
     deviceId: meta.deviceId,
     userAgent: meta.userAgent,
@@ -352,14 +347,12 @@ export const createSessionAndTokens = async (user, meta, rememberMe = false) => 
     sessionId: session._id,
     role: user.role,
     tenantId: user.tenantId,
-    branchId: user.branchId,
   });
   const refreshToken = createRefreshToken({
     email: user.email,
     id: user._id,
     sessionId: session._id,
     tenantId: user.tenantId,
-    branchId: user.branchId,
   }, isRemembered);
   session.refreshTokenHash = hashToken(refreshToken);
   await session.save();
@@ -368,7 +361,6 @@ export const createSessionAndTokens = async (user, meta, rememberMe = false) => 
     userId: user._id.toString(),
     sessionId: session._id.toString(),
     tenantId: user.tenantId || null,
-    branchId: user.branchId || null,
     rememberMe: isRemembered,
     requestId: meta.requestId,
   });
@@ -391,7 +383,6 @@ export const Signup = async (Req, Res) => {
     if (!tenant) {
       return sendError(Res, 422, "A valid company identifier (tenantKey) is required to sign up. Registering a brand-new company? Use POST /auth/setup instead.", meta.requestId);
     }
-    const branch = await BranchModel.findOne({ tenantKey: tenant.tenantKey, status: "active" }).sort({ createdAt: 1 }).lean();
     const { valid, errors } = await validatePassword(password, tenant.tenantKey);
     if (!valid) {
       return sendError(Res, 422, "Password does not meet policy requirements.", meta.requestId, { errors });
@@ -400,7 +391,6 @@ export const Signup = async (Req, Res) => {
     const user = await UserModel.create({
       username, email, password: hash,
       tenantId: tenant.tenantKey,
-      branchId: branch?.branchKey || null,
       role: "User",
     });
     await recordPasswordHistory(user._id, hash, "change", meta.requestId);
@@ -414,15 +404,15 @@ export const Signup = async (Req, Res) => {
   }
 };
 
-// New-company self-registration: creates a real tenant + its first branch +
-// a shared "Administrator" role (see utils/authDomainDefaults.js) + the
-// tenant's first admin user, in one call. This is the ONLY code path that
-// creates a TenantModel document at runtime — every other write path in the
-// app (Signup, AcceptUserInvitation) joins a tenant that already exists.
+// New-company self-registration: creates a real tenant + a shared
+// "Administrator" role (see utils/authDomainDefaults.js) + the tenant's
+// first admin user, in one call. This is the ONLY code path that creates a
+// TenantModel document at runtime — every other write path in the app
+// (Signup, AcceptUserInvitation) joins a tenant that already exists.
 export const SetupTenant = async (Req, Res) => {
   const meta = getRequestMeta(Req);
   try {
-    const { companyName, tenantKey, branchName, username, email, password } = Req.body;
+    const { companyName, tenantKey, username, email, password } = Req.body;
 
     const existingTenant = await TenantModel.findOne({ tenantKey });
     if (existingTenant) {
@@ -442,30 +432,26 @@ export const SetupTenant = async (Req, Res) => {
     // create sequentially, and if a later step fails, compensate by deleting
     // whatever was already created rather than leaving an orphaned tenant.
     let tenant = null;
-    let branch = null;
     try {
       tenant = await TenantModel.create({ tenantKey, name: companyName, status: "active" });
-      branch = await BranchModel.create({ branchKey: "MAIN", tenantKey: tenant.tenantKey, name: branchName || "Head Office", status: "active" });
       const role = await ensureAdministratorRole(tenant.tenantKey);
 
       const hash = await bcrypt.hash(password, 10);
       const user = await UserModel.create({
         username, email, password: hash,
         tenantId: tenant.tenantKey,
-        branchId: branch.branchKey,
         role: role.name,
       });
       await recordPasswordHistory(user._id, hash, "change", meta.requestId);
       await issueEmailVerificationToken({ user, requestId: meta.requestId, ipAddress: meta.ipAddress, deviceId: meta.deviceId, userAgent: meta.userAgent });
 
-      await createAudit({ action: "tenant.setup", outcome: "success", user, requestId: meta.requestId, ipAddress: meta.ipAddress, device: meta.deviceId, browser: meta.userAgent, metadata: { tenantKey: tenant.tenantKey, branchKey: branch.branchKey } });
-      publishEvent("TenantProvisioned", { tenantId: tenant.tenantKey, branchId: branch.branchKey, adminUserId: user._id.toString(), companyName: tenant.name, requestId: meta.requestId });
+      await createAudit({ action: "tenant.setup", outcome: "success", user, requestId: meta.requestId, ipAddress: meta.ipAddress, device: meta.deviceId, browser: meta.userAgent, metadata: { tenantKey: tenant.tenantKey } });
+      publishEvent("TenantProvisioned", { tenantId: tenant.tenantKey, adminUserId: user._id.toString(), companyName: tenant.name, requestId: meta.requestId });
 
       return sendSuccess(Res, 201, "Company registered successfully. Please check your email for the verification link.", {
-        id: user._id, username: user.username, email: user.email, tenantId: tenant.tenantKey, branchId: branch.branchKey,
+        id: user._id, username: user.username, email: user.email, tenantId: tenant.tenantKey,
       }, meta.requestId);
     } catch (innerError) {
-      if (branch) await BranchModel.deleteOne({ _id: branch._id }).catch(() => {});
       if (tenant) await TenantModel.deleteOne({ _id: tenant._id }).catch(() => {});
       throw innerError;
     }
@@ -551,12 +537,7 @@ export const Login = async (Req, Res) => {
       return sendError(Res, 403, "Account exists but cannot access the platform.", meta.requestId);
     }
 
-    if (user.branchId && !domain.branch) {
-      await recordLoginFailure({ reason: "branch_disabled", user, meta });
-      return sendError(Res, 403, "Account exists but cannot access the platform.", meta.requestId);
-    }
-
-    if (config.strictDomainAuth && (!user.tenantId || !user.branchId || !user.role || !domain.tenant || !domain.branch || !domain.role)) {
+    if (config.strictDomainAuth && (!user.tenantId || !user.role || !domain.tenant || !domain.role)) {
       await recordLoginFailure({ reason: "domain_context_required", user, meta });
       return sendError(Res, 403, "Account exists but cannot access the platform.", meta.requestId);
     }
@@ -588,13 +569,13 @@ export const Login = async (Req, Res) => {
 
     await createAudit({ action: "login", outcome: "success", user, sessionId: session._id, requestId: meta.requestId, ipAddress: meta.ipAddress, device: meta.deviceId, browser: meta.userAgent, metadata: { status: "authenticated" } });
     await recordLoginHistory({ user, sessionId: session._id, action: "login", status: "success", meta });
-    publishEvent("UserLoggedIn", { userId: user._id.toString(), sessionId: session._id.toString(), requestId: meta.requestId, tenantId: user.tenantId, branchId: user.branchId });
+    publishEvent("UserLoggedIn", { userId: user._id.toString(), sessionId: session._id.toString(), requestId: meta.requestId, tenantId: user.tenantId });
 
     return sendSuccess(Res, 200, "Login successful.", {
       accessToken,
       refreshToken,
       expiresIn: getAccessTokenExpiresInSeconds(),
-      user: { id: user._id, fullName: user.username, email: user.email, role: user.role, tenantId: user.tenantId, branchId: user.branchId },
+      user: { id: user._id, fullName: user.username, email: user.email, role: user.role, tenantId: user.tenantId },
     }, meta.requestId);
   } catch (error) {
     logger.error("Login error", { error: error.message });
@@ -643,11 +624,10 @@ export const Logout = async (Req, Res) => {
     const domain = user ? await resolveDomainContext(user) : null;
     const isAccountDisabled = !user || ["deleted", "suspended", "inactive"].includes(user.status) || user.isDeleted || user.isSuspended;
     const isTenantDisabled = Boolean(user?.tenantId) && !domain?.tenant;
-    const isBranchDisabled = Boolean(user?.branchId) && !domain?.branch;
-    const auditUser = user || { _id: userId, email: Req.auth?.email || session.email, tenantId: Req.auth?.tenantId || session.tenantId, branchId: Req.auth?.branchId || session.branchId };
+    const auditUser = user || { _id: userId, email: Req.auth?.email || session.email, tenantId: Req.auth?.tenantId || session.tenantId };
 
-    if (isAccountDisabled || isTenantDisabled || isBranchDisabled) {
-      const reason = isTenantDisabled ? "tenant_disabled" : isBranchDisabled ? "branch_disabled" : "account_disabled";
+    if (isAccountDisabled || isTenantDisabled) {
+      const reason = isTenantDisabled ? "tenant_disabled" : "account_disabled";
       await createAudit({ action: "logout", outcome: "failed", reason, user: auditUser, sessionId: session._id, requestId: meta.requestId, ipAddress: meta.ipAddress, device: meta.deviceId, browser: meta.userAgent, metadata: { logoutFromAllDevices, logoutSource, sessionsRevoked } });
       return sendError(Res, 403, isTenantDisabled ? "Disabled tenant" : "Disabled account", meta.requestId);
     }
@@ -694,7 +674,7 @@ export const Refresh = async (Req, Res) => {
     if (session.expiresAt && new Date(session.expiresAt) < new Date()) {
       session.status = "expired";
       await session.save();
-      await createAudit({ action: "refresh", outcome: "failed", reason: "session_expired", user: { _id: userId, email: session.email, tenantId: session.tenantId, branchId: session.branchId }, sessionId: session._id, requestId: meta.requestId, ipAddress: meta.ipAddress, device: meta.deviceId, browser: meta.userAgent });
+      await createAudit({ action: "refresh", outcome: "failed", reason: "session_expired", user: { _id: userId, email: session.email, tenantId: session.tenantId }, sessionId: session._id, requestId: meta.requestId, ipAddress: meta.ipAddress, device: meta.deviceId, browser: meta.userAgent });
       return sendError(Res, 401, "Expired refresh token", meta.requestId);
     }
 
@@ -704,14 +684,14 @@ export const Refresh = async (Req, Res) => {
       session.status = "revoked";
       session.revokedAt = new Date();
       await session.save();
-      await createAudit({ action: "refresh", outcome: "failed", reason: "refresh_token_reuse_detected", user: { _id: userId, email: session.email, tenantId: session.tenantId, branchId: session.branchId }, sessionId: session._id, requestId: meta.requestId, ipAddress: meta.ipAddress, device: meta.deviceId, browser: meta.userAgent });
+      await createAudit({ action: "refresh", outcome: "failed", reason: "refresh_token_reuse_detected", user: { _id: userId, email: session.email, tenantId: session.tenantId }, sessionId: session._id, requestId: meta.requestId, ipAddress: meta.ipAddress, device: meta.deviceId, browser: meta.userAgent });
       publishEvent("SessionRevoked", { userId: String(userId), sessionId: String(session._id), reason: "refresh_token_reuse_detected", requestId: meta.requestId });
       return sendError(Res, 401, "Revoked refresh token", meta.requestId);
     }
 
     const user = await UserModel.findById(userId);
     if (!user || ["deleted", "suspended", "inactive"].includes(user.status)) {
-      await createAudit({ action: "refresh", outcome: "failed", reason: "account_disabled", user: user || { _id: userId, email: session.email, tenantId: session.tenantId, branchId: session.branchId }, sessionId: session._id, requestId: meta.requestId, ipAddress: meta.ipAddress, device: meta.deviceId, browser: meta.userAgent });
+      await createAudit({ action: "refresh", outcome: "failed", reason: "account_disabled", user: user || { _id: userId, email: session.email, tenantId: session.tenantId }, sessionId: session._id, requestId: meta.requestId, ipAddress: meta.ipAddress, device: meta.deviceId, browser: meta.userAgent });
       return sendError(Res, 403, "Disabled account", meta.requestId);
     }
 
@@ -723,15 +703,15 @@ export const Refresh = async (Req, Res) => {
       }
     }
 
-    const accessToken = createAccessToken({ email: user.email, id: user._id, sessionId: session._id, role: user.role, tenantId: session.tenantId, branchId: session.branchId });
-    const nextRefreshToken = createRefreshToken({ email: user.email, id: user._id, sessionId: session._id, tenantId: session.tenantId, branchId: session.branchId }, session.rememberMe);
+    const accessToken = createAccessToken({ email: user.email, id: user._id, sessionId: session._id, role: user.role, tenantId: session.tenantId });
+    const nextRefreshToken = createRefreshToken({ email: user.email, id: user._id, sessionId: session._id, tenantId: session.tenantId }, session.rememberMe);
     session.refreshTokenHash = hashToken(nextRefreshToken);
     session.lastActivityAt = new Date();
     session.expiresAt = getRefreshTokenExpiryDate(session.rememberMe);
     await session.save();
     await createAudit({ action: "refresh", outcome: "success", user, sessionId: session._id, requestId: meta.requestId, ipAddress: meta.ipAddress, device: meta.deviceId, browser: meta.userAgent, metadata: { source: "refresh" } });
     publishEvent("TokenRefreshed", { userId: user._id.toString(), sessionId: session._id.toString(), requestId: meta.requestId });
-    publishEvent("SessionUpdated", { userId: user._id.toString(), sessionId: session._id.toString(), tenantId: session.tenantId || null, branchId: session.branchId || null, expiresAt: session.expiresAt, requestId: meta.requestId });
+    publishEvent("SessionUpdated", { userId: user._id.toString(), sessionId: session._id.toString(), tenantId: session.tenantId || null, expiresAt: session.expiresAt, requestId: meta.requestId });
     return sendSuccess(Res, 200, "Token refreshed.", { accessToken, refreshToken: nextRefreshToken, expiresIn: getAccessTokenExpiresInSeconds() }, meta.requestId);
   } catch (error) {
     logger.error("Refresh error", { error: error.message });
@@ -758,12 +738,10 @@ export const Me = async (Req, Res) => {
     ]);
 
     let deniedReason = null;
-    if (config.strictDomainAuth && (!user.tenantId || !user.branchId || !user.role || !domain.tenant || !domain.branch || !domain.role)) {
+    if (config.strictDomainAuth && (!user.tenantId || !user.role || !domain.tenant || !domain.role)) {
       deniedReason = { message: "Disabled Account", reason: "domain_context_required" };
     } else if (user.tenantId && !domain.tenant) {
       deniedReason = { message: "Disabled Tenant", reason: "tenant_disabled" };
-    } else if (user.branchId && !domain.branch) {
-      deniedReason = { message: "Disabled Branch", reason: "branch_disabled" };
     } else if (user.role && !domain.role) {
       deniedReason = { message: "Disabled Role", reason: "role_disabled" };
     }
@@ -783,7 +761,6 @@ export const Me = async (Req, Res) => {
       id: user._id, fullName: user.username, email: user.email,
       role: { id: domain.role?._id || null, name: domain.role?.name || user.role },
       tenant: { id: domain.tenant?._id || user.tenantId, name: domain.tenant?.name || null, key: domain.tenant?.tenantKey || user.tenantId },
-      branch: { id: domain.branch?._id || user.branchId, name: domain.branch?.name || null, key: domain.branch?.branchKey || user.branchId },
       permissions: domain.permissions,
       preferences,
     }, meta.requestId);
@@ -1038,7 +1015,7 @@ export const ListSessions = async (Req, Res) => {
     if (["desktop", "mobile", "tablet", "other"].includes(deviceType)) filter.deviceType = deviceType;
 
     if (config.sessionsListAuditEnabled) {
-      await createAudit({ action: "sessions-list", outcome: "success", user: { _id: userId, email: Req.auth?.email, tenantId: Req.auth?.tenantId, branchId: Req.auth?.branchId }, sessionId: currentSessionId, requestId: meta.requestId, ipAddress: meta.ipAddress, device: meta.deviceId, browser: meta.userAgent });
+      await createAudit({ action: "sessions-list", outcome: "success", user: { _id: userId, email: Req.auth?.email, tenantId: Req.auth?.tenantId }, sessionId: currentSessionId, requestId: meta.requestId, ipAddress: meta.ipAddress, device: meta.deviceId, browser: meta.userAgent });
     }
 
     const [sessions, total] = await Promise.all([
@@ -1078,15 +1055,10 @@ export const RevokeSession = async (Req, Res) => {
       await createAudit({ action: "session-revoke", outcome: "failed", reason: "tenant_disabled", user, sessionId: session._id, requestId: meta.requestId, ipAddress: meta.ipAddress, device: meta.deviceId, browser: meta.userAgent });
       return sendError(Res, 403, "Disabled tenant", meta.requestId);
     }
-    if (user?.branchId && !domain?.branch) {
-      await createAudit({ action: "session-revoke", outcome: "failed", reason: "branch_disabled", user, sessionId: session._id, requestId: meta.requestId, ipAddress: meta.ipAddress, device: meta.deviceId, browser: meta.userAgent });
-      return sendError(Res, 403, "Disabled branch", meta.requestId);
-    }
-
     if (session.status !== "revoked") {
       session.status = "revoked"; session.revokedAt = new Date(); session.lastActivityAt = new Date(); await session.save();
     }
-    await createAudit({ action: "session-revoke", outcome: "success", reason: "user_requested", user: user || { _id: userId, email: Req.auth?.email, tenantId: Req.auth?.tenantId || session.tenantId, branchId: Req.auth?.branchId || session.branchId }, sessionId: session._id, requestId: meta.requestId, ipAddress: meta.ipAddress, device: meta.deviceId, browser: meta.userAgent, metadata: { currentSession: String(session._id) === String(currentSessionId) } });
+    await createAudit({ action: "session-revoke", outcome: "success", reason: "user_requested", user: user || { _id: userId, email: Req.auth?.email, tenantId: Req.auth?.tenantId || session.tenantId }, sessionId: session._id, requestId: meta.requestId, ipAddress: meta.ipAddress, device: meta.deviceId, browser: meta.userAgent, metadata: { currentSession: String(session._id) === String(currentSessionId) } });
     publishEvent("SessionRevoked", { userId: String(userId), sessionId: String(session._id), requestId: meta.requestId });
     publishEvent("UserSessionTerminated", { userId: String(userId), sessionId: String(session._id), requestId: meta.requestId });
     return sendSuccess(Res, 200, "Session revoked.", null, meta.requestId);
@@ -1103,7 +1075,7 @@ export const LogoutAll = async (Req, Res) => {
     const currentSessionId = Req.auth?.sessionId;
     if (!userId || !currentSessionId) return sendError(Res, 401, "Invalid JWT", meta.requestId);
     const result = await SessionModel.updateMany({ userId, status: "active" }, { $set: { status: "revoked", revokedAt: new Date() } });
-    await createAudit({ action: "logout-all", outcome: "success", reason: "user_requested", user: { _id: userId, email: Req.auth?.email, tenantId: Req.auth?.tenantId, branchId: Req.auth?.branchId }, sessionId: currentSessionId, requestId: meta.requestId, ipAddress: meta.ipAddress, device: meta.deviceId, browser: meta.userAgent, metadata: { revokedCount: result.modifiedCount || 0 } });
+    await createAudit({ action: "logout-all", outcome: "success", reason: "user_requested", user: { _id: userId, email: Req.auth?.email, tenantId: Req.auth?.tenantId }, sessionId: currentSessionId, requestId: meta.requestId, ipAddress: meta.ipAddress, device: meta.deviceId, browser: meta.userAgent, metadata: { revokedCount: result.modifiedCount || 0 } });
     publishEvent("AllSessionsRevoked", { userId: String(userId), requestId: meta.requestId });
     publishEvent("UserSecurityUpdated", { userId: String(userId), reason: "logout_all", requestId: meta.requestId });
     // Reusing the same event name established for Change Password / Reset
@@ -1245,7 +1217,7 @@ export const CompleteMfaLogin = async (Req, Res) => {
     publishEvent("MFAVerified", { userId: user._id.toString(), sessionId: session._id.toString(), method: user.mfaMethod, verificationType: verifyResult.type, requestId: meta.requestId });
     return sendSuccess(Res, 200, "Login successful.", {
       accessToken, refreshToken, expiresIn: getAccessTokenExpiresInSeconds(),
-      user: { id: user._id, fullName: user.username, email: user.email, role: user.role, tenantId: user.tenantId, branchId: user.branchId },
+      user: { id: user._id, fullName: user.username, email: user.email, role: user.role, tenantId: user.tenantId },
     }, meta.requestId);
   } catch (error) {
     logger.error("Complete MFA login error", { error: error.message });

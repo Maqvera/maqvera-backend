@@ -6,7 +6,6 @@ const AI_PERMISSION = "ai.assistant.use";
 
 const buildContext = (req) => ({
   tenantId: req.auth?.tenantId || null,
-  branchId: req.auth?.branchId || "main",
   userId: req.auth?.userId || req.auth?.id,
   userName: req.auth?.name || "User",
   permissions: req.auth?.permissions || [],
@@ -74,7 +73,7 @@ export const CreatePlan = async (req, res) => {
     const { prompt, conversationId } = req.body;
     if (!prompt) return sendError(res, 400, "prompt is required.", requestId);
 
-    const plan = await AIOrchestrationService.createPlan({ tenantId: ctx.tenantId, branchId: ctx.branchId, userId: ctx.userId, userName: ctx.userName, role: ctx.role, permissions: ctx.permissions, prompt, conversationId: conversationId || null });
+    const plan = await AIOrchestrationService.createPlan({ tenantId: ctx.tenantId, userId: ctx.userId, userName: ctx.userName, role: ctx.role, permissions: ctx.permissions, prompt, conversationId: conversationId || null });
     return sendSuccess(res, 201, "Execution plan created. No tools have been executed yet.", plan, requestId);
   } catch (err) {
     console.error("CreatePlan Error:", err);

@@ -13,7 +13,6 @@ import mongoose from "mongoose";
 const AIShadowTestResultSchema = new mongoose.Schema(
   {
     tenantId: { type: String, required: true, index: true },
-    branchId: { type: String, default: "main", index: true },
     category: { type: String, required: true, index: true },
     correlationId: { type: String, default: null, index: true },
 

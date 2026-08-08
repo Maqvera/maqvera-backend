@@ -270,7 +270,6 @@ export const AddTravelPlanTransport = async (req, res) => {
     const transportAssignment = await TravelTransportAssignmentModel.create({
       travelPlanId,
       tenantId,
-      branchId: travelPlan.branchId,
       transportType,
       journeySegment,
       fleetResourceId: fleetResource._id,

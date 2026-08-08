@@ -16,7 +16,7 @@ import { createRequestId } from "../utils/authTokens.js";
 import { getTravelConfig } from "../utils/travelConfig.js";
 import { getAllowedNextActions, executeWorkflowTransition } from "../utils/WorkflowEngine.js";
 import SearchEngineService from "../services/SearchEngineService.js";
-import { getAccessScope, applyOptionalBranchFilter } from "../utils/accessScope.js";
+import { getAccessScope } from "../utils/accessScope.js";
 
 const travelConfig = getTravelConfig();
 
@@ -81,7 +81,7 @@ export const ListTravelPlans = async (req, res) => {
     const page = Math.max(parseInt(req.query.page || "1", 10), 1);
     const pageSize = Math.min(Math.max(parseInt(req.query.pageSize || "20", 10), 1), 100);
 
-    const filter = applyOptionalBranchFilter(scope, req.query.branchId);
+    const filter = { ...scope };
 
     // Default to excluding archived plans unless explicitly requested
     if (req.query.isArchived !== "true") {
@@ -294,7 +294,6 @@ export const CreateTravelPlan = async (req, res) => {
     // 6. Create Travel Plan
     const newTravelPlan = await TravelPlanModel.create({
       tenantId,
-      branchId: booking.branchId || req.auth?.branchId || "default",
       travelPlanNumber,
       bookingId: booking._id,
       bookingNumber: booking.bookingNumber || booking.bookingReference,
@@ -467,7 +466,6 @@ export const GetTravelPlan = async (req, res) => {
         travelPlanId: travelPlan._id,
         travelPlanNumber: travelPlan.travelPlanNumber,
         tenantId: travelPlan.tenantId,
-        branchId: travelPlan.branchId,
         travelType: travelPlan.travelType,
         status: travelPlan.status,
         priority: travelPlan.priority,
@@ -1039,13 +1037,10 @@ export const SearchTravelPlans = async (req, res) => {
     const page = Math.max(parseInt(req.query.page || "1", 10), 1);
     const pageSize = Math.min(Math.max(parseInt(req.query.pageSize || String(travelConfig.defaultPageSize), 10), 1), travelConfig.maxPageSize);
 
-    // branchId is an optional, descriptive narrowing filter only — every
-    // tenant user can already search every branch's travel plans.
     const { results, meta } = await SearchEngineService.globalSearch({
       tenantId: scope.tenantId,
       query,
       entityType: "TravelPlan",
-      branchId: scope.branchId || req.query.branchId || null,
       permissions,
       page,
       pageSize

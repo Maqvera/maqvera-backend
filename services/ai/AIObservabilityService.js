@@ -421,19 +421,19 @@ class AIObservabilityService {
 
   // ---- Alerting (§19) ----
 
-  static async _upsertAlert({ tenantId, branchId, alertType, severity, message, metricValue, thresholdValue }) {
+  static async _upsertAlert({ tenantId, alertType, severity, message, metricValue, thresholdValue }) {
     const existing = await AIAlertModel.findOne({ tenantId, alertType, status: "active" });
     if (existing) return null; // already active — don't re-fire every sweep
 
-    const alert = await AIAlertModel.create({ tenantId, branchId, alertType, severity, message, metricValue, thresholdValue, status: "active", triggeredAt: new Date() });
+    const alert = await AIAlertModel.create({ tenantId, alertType, severity, message, metricValue, thresholdValue, status: "active", triggeredAt: new Date() });
     publishEvent("AIAlertTriggered", { tenantId, alertId: alert._id, alertType, severity, message, metricValue, thresholdValue });
-    publishEvent("NotificationRequested", { tenantId, branchId, event: "AIAlertTriggered", priority: severity === "critical" ? "high" : "normal", alertId: alert._id, alertType, message });
+    publishEvent("NotificationRequested", { tenantId, event: "AIAlertTriggered", priority: severity === "critical" ? "high" : "normal", alertId: alert._id, alertType, message });
 
     if (severity === "critical") {
       EnterpriseIncidentEngineService.createIncident({
         sourceModule: "AIObservability", category: "Technical Issue", type: `AI Alert: ${alertType}`, severity: "High",
         title: message, description: `Real-time metric breached its configured threshold (value: ${metricValue}, threshold: ${thresholdValue}).`
-      }, tenantId, branchId, "system").catch((err) => logger.error("AI alert incident creation failed.", { error: err.message }));
+      }, tenantId, "system").catch((err) => logger.error("AI alert incident creation failed.", { error: err.message }));
     }
     return alert;
   }
@@ -455,7 +455,7 @@ class AIObservabilityService {
    * (supplied by the scheduler, which has direct access to both AI
    * services' real getProviderStatus() — see this file's own docblock).
    */
-  static async evaluateAlerts({ tenantId, branchId = "main", providerStatus = null }) {
+  static async evaluateAlerts({ tenantId, providerStatus = null }) {
     if (mongoose.connection?.readyState !== 1) return { evaluated: false, triggered: [], resolved: [] };
     const config = getAIObservabilityConfig();
     const from = new Date(Date.now() - config.alertEvaluationWindowMs);
@@ -473,7 +473,7 @@ class AIObservabilityService {
     const resolved = [];
     const check = async (condition, alertType, severity, message, metricValue, thresholdValue) => {
       if (condition) {
-        const a = await this._upsertAlert({ tenantId, branchId, alertType, severity, message, metricValue, thresholdValue });
+        const a = await this._upsertAlert({ tenantId, alertType, severity, message, metricValue, thresholdValue });
         if (a) triggered.push(a);
       } else {
         const r = await this._resolveAlertIfActive({ tenantId, alertType });

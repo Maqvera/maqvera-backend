@@ -207,7 +207,6 @@ export const CreateAttendanceSession = async (req, res) => {
       const session = await TravelAttendanceSessionModel.create({
         travelPlanId,
         tenantId,
-        branchId: travelPlan.branchId,
         activityId: targetActivity._id,
         activityName: targetActivity.title,
         attendanceWindowStart: windowStart,
@@ -230,7 +229,6 @@ export const CreateAttendanceSession = async (req, res) => {
           attendanceSessionId: session._id,
           travelPlanId,
           tenantId,
-          branchId: travelPlan.branchId,
           activityId: targetActivity._id,
           travelerId: t.travelerId,
           travelerName: t.travelerName,

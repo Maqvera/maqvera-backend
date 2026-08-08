@@ -14,7 +14,6 @@ import mongoose from "mongoose";
 const AIRoutingPolicySchema = new mongoose.Schema(
   {
     tenantId: { type: String, required: true, index: true },
-    branchId: { type: String, default: "main", index: true },
     category: {
       type: String,
       enum: ["reasoning", "general_chat", "fast", "low_cost", "vision", "embedding", "speech", "code", "planning"],
@@ -51,9 +50,9 @@ const AIRoutingPolicySchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// One active policy per tenant+branch+category — the router looks up
+// One active policy per tenant+category — the router looks up
 // exactly one row; a second active row for the same key would be
 // ambiguous, not a real "combine both" scenario.
-AIRoutingPolicySchema.index({ tenantId: 1, branchId: 1, category: 1 }, { unique: true });
+AIRoutingPolicySchema.index({ tenantId: 1, category: 1 }, { unique: true });
 
 export default mongoose.models.AIRoutingPolicy || mongoose.model("AIRoutingPolicy", AIRoutingPolicySchema);

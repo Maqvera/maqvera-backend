@@ -143,10 +143,10 @@ class AnalyticsScheduler {
   /**
    * Trigger an immediate refresh for a specific tenant (useful for event-driven updates).
    */
-  static async triggerRefresh({ tenantId, branchId }) {
+  static async triggerRefresh({ tenantId }) {
     if (!tenantId) return;
     try {
-      await KPIEngine.refreshAllForTenant({ tenantId, branchId });
+      await KPIEngine.refreshAllForTenant({ tenantId });
     } catch (err) {
       logger.error("On-demand analytics refresh failed.", { tenantId, error: err.message });
     }

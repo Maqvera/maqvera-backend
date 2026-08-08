@@ -125,7 +125,7 @@ class AIGuardrailService {
    * tools have nothing meaningful to be blocked from and calling this for
    * every search would add an unnecessary DB round trip to the hot path.
    */
-  static async evaluate({ tenantId, branchId = "main", userId, role = "", permissions = [], toolName, toolRiskLevel, args = {}, promptInjectionFlagged = false, correlationId = null }) {
+  static async evaluate({ tenantId, userId, role = "", permissions = [], toolName, toolRiskLevel, args = {}, promptInjectionFlagged = false, correlationId = null }) {
     const config = getAIGuardrailConfig();
     const sensitiveFieldsFound = this.scanSensitiveFields(args);
     const risk = this.assessRisk({ toolRiskLevel, promptInjectionFlagged, sensitiveFieldsFound });
@@ -176,7 +176,7 @@ class AIGuardrailService {
 
     if (mongoose.connection?.readyState === 1) {
       AIGuardrailAuditModel.create({
-        tenantId, branchId, userId, correlationId, toolName, decision,
+        tenantId, userId, correlationId, toolName, decision,
         riskLevel: risk.riskLevel, riskScore: risk.riskScore, riskReasons: risk.reasons,
         policyId: matchedPolicyId, reason, promptInjectionFlagged, sensitiveFieldsDetected: sensitiveFieldsFound
       }).catch((err) => console.error("AI guardrail audit log error:", err));
@@ -198,7 +198,7 @@ class AIGuardrailService {
         severity: "High",
         title: `Blocked possible prompt injection attempt on tool '${toolName}'`,
         description: reason
-      }, tenantId, branchId, userId).catch((err) => console.error("AI guardrail incident creation error:", err));
+      }, tenantId, userId).catch((err) => console.error("AI guardrail incident creation error:", err));
     }
 
     return { allowed: decision === "allowed", decision, riskLevel: risk.riskLevel, riskScore: risk.riskScore, reasons: risk.reasons, reason, policyId: matchedPolicyId };
@@ -240,7 +240,7 @@ class AIGuardrailService {
 
   // ---- Policy CRUD (§5/§19) ----
 
-  static async createPolicy({ tenantId, branchId = "main", userId, category, name, description, ruleType, toolName = null, allowedRoles = [], riskLevelThreshold = null }) {
+  static async createPolicy({ tenantId, userId, category, name, description, ruleType, toolName = null, allowedRoles = [], riskLevelThreshold = null }) {
     const config = getAIGuardrailConfig();
     if (!category || !config.policyCategories.includes(category)) throw new Error(`category is required and must be one of: ${config.policyCategories.join(", ")}.`);
     if (!name || !name.trim()) throw new Error("name is required.");
@@ -249,7 +249,7 @@ class AIGuardrailService {
     if (ruleType === "restrict_role" && (!Array.isArray(allowedRoles) || allowedRoles.length === 0)) throw new Error("allowedRoles (a non-empty array) is required for ruleType 'restrict_role'.");
 
     const policy = await AIPolicyModel.create({
-      tenantId, branchId, category, name: name.trim(), description: description || null,
+      tenantId, category, name: name.trim(), description: description || null,
       ruleType, toolName: toolName || null, allowedRoles: allowedRoles || [], riskLevelThreshold: riskLevelThreshold || null, createdBy: userId
     });
     publishEvent("AIPolicyCreated", { tenantId, policyId: policy._id, category, ruleType });

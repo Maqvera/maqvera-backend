@@ -7,11 +7,6 @@ const VisaCaseSchema = new mongoose.Schema({
     required: true,
     index: true
   },
-  branchId: {
-    type: String,
-    required: true,
-    index: true
-  },
   caseNumber: {
     type: String,
     required: true,
@@ -257,7 +252,7 @@ const VisaCaseSchema = new mongoose.Schema({
   ]
 }, { timestamps: true });
 
-VisaCaseSchema.index({ tenantId: 1, branchId: 1, status: 1 });
+VisaCaseSchema.index({ tenantId: 1, status: 1 });
 VisaCaseSchema.index({ tenantId: 1, travelerId: 1 });
 VisaCaseSchema.index({ tenantId: 1, destinationCountry: 1, visaType: 1 });
 VisaCaseSchema.index({ tenantId: 1, travelerId: 1, countryId: 1, visaTypeId: 1, isSoftDeleted: 1 });

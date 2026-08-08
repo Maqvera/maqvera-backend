@@ -10,7 +10,6 @@ const KNOWLEDGE_MANAGE_PERMISSION = "ai.knowledge.manage";
 
 const buildContext = (req) => ({
   tenantId: req.auth?.tenantId || null,
-  branchId: req.auth?.branchId || "main",
   userId: req.auth?.userId || req.auth?.id,
   userName: req.auth?.name || "User",
   permissions: req.auth?.permissions || [],
@@ -65,7 +64,7 @@ export const CreateKnowledgeDocument = async (req, res) => {
     const parsedTags = typeof tags === "string" ? tags.split(",").map((t) => t.trim()).filter(Boolean) : (Array.isArray(tags) ? tags : []);
 
     const result = await AIKnowledgeService.createDocument({
-      tenantId: ctx.tenantId, branchId: ctx.branchId, userId: ctx.userId,
+      tenantId: ctx.tenantId, userId: ctx.userId,
       title, category, visibilityLevel, content, tags: parsedTags, language, author,
       sourceType, sourceFileName
     });
@@ -123,7 +122,7 @@ export const ListKnowledgeDocuments = async (req, res) => {
     if (!ctx.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasAIAccess(ctx.permissions)) return sendError(res, 403, "Permission denied.", requestId);
     const result = await AIKnowledgeService.listDocuments({
-      tenantId: ctx.tenantId, branchId: ctx.branchId, category: req.query.category,
+      tenantId: ctx.tenantId, category: req.query.category,
       status: req.query.status || "active", page: req.query.page, pageSize: req.query.pageSize
     });
     return sendSuccess(res, 200, "Knowledge documents retrieved successfully.", result, requestId);
@@ -159,7 +158,7 @@ export const SearchKnowledgeBase = async (req, res) => {
     if (!query) return sendError(res, 400, "query is required.", requestId);
 
     const result = await AIKnowledgeService.retrieveKnowledge({
-      tenantId: ctx.tenantId, branchId: ctx.branchId, role: ctx.role, permissions: ctx.permissions,
+      tenantId: ctx.tenantId, role: ctx.role, permissions: ctx.permissions,
       query, topK, includeArchived: Boolean(includeArchived)
     });
     return sendSuccess(res, 200, "Knowledge search completed successfully.", result, requestId);

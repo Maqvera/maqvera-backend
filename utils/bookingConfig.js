@@ -31,7 +31,6 @@ const parseStringList = (value, fallback) => {
 };
 
 export const getBookingConfig = () => ({
-  defaultBranchId: process.env.DEFAULT_BRANCH_ID || 'KARACHI',
   defaultCurrency: process.env.DEFAULT_CURRENCY || 'USD',
   defaultBookingType: (process.env.DEFAULT_BOOKING_TYPE || 'umrah').toLowerCase(),
   defaultBookingStatus: (process.env.DEFAULT_BOOKING_STATUS || 'draft').toLowerCase(),

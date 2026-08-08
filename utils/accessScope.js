@@ -17,10 +17,3 @@ export const getAccessScope = (req) => {
   if (!tenantId) return null;
   return { tenantId };
 };
-
-// Deprecated: branches are no longer a data-isolation boundary, so there is
-// nothing left to "optionally narrow" — kept as a no-op passthrough purely
-// so existing call sites (`{ ...applyOptionalBranchFilter(scope, req.query.branchId), ... }`)
-// don't need touching one by one. A caller-supplied branchId query param is
-// intentionally ignored, not applied as a filter.
-export const applyOptionalBranchFilter = (scope) => scope;

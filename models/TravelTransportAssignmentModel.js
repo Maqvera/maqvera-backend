@@ -12,10 +12,6 @@ const TravelTransportAssignmentSchema = new mongoose.Schema({
     required: true,
     index: true
   },
-  branchId: {
-    type: String,
-    default: "default"
-  },
   transportType: {
     type: String,
     enum: ["Airport Transfer", "Hotel Transfer", "Intercity Transfer", "Ziyarat Tour", "Custom Trip", "Return Transfer"],

@@ -40,7 +40,6 @@ async function sendDueReminders() {
 
         publishEvent("NotificationRequested", {
           tenantId: appt.tenantId,
-          branchId: appt.branchId,
           event: "AppointmentReminder",
           priority: "normal",
           channel: reminder.channel,
@@ -56,7 +55,6 @@ async function sendDueReminders() {
           appointmentId: appt._id,
           visaCaseId: appt.visaCaseId,
           tenantId: appt.tenantId,
-          branchId: appt.branchId,
           channel: reminder.channel
         });
       }
@@ -109,7 +107,7 @@ async function markMissedAppointments() {
       await visaCase.save();
     }
 
-    publishEvent("AppointmentMissed", { appointmentId: appt._id, visaCaseId: appt.visaCaseId, tenantId: appt.tenantId, branchId: appt.branchId });
+    publishEvent("AppointmentMissed", { appointmentId: appt._id, visaCaseId: appt.visaCaseId, tenantId: appt.tenantId });
   }
 
   return missedCount;

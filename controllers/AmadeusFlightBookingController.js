@@ -18,7 +18,6 @@ export const CreateAmadeusFlightBooking = async (req, res) => {
     const tenantId = req.auth?.tenantId;
     const userId = req.auth?.userId || req.auth?.id;
     const userName = req.auth?.name || "User";
-    const branchId = req.auth?.branchId || "main";
     const permissions = req.auth?.permissions || [];
 
     if (!tenantId || !userId) {
@@ -34,7 +33,7 @@ export const CreateAmadeusFlightBooking = async (req, res) => {
     }
 
     const result = await AmadeusFlightBookingService.createBooking({
-      tenantId, branchId, userId, userName, travelPlanId, flightAssignmentId, flightOffer, travelers, contact, requestId
+      tenantId, userId, userName, travelPlanId, flightAssignmentId, flightOffer, travelers, contact, requestId
     });
 
     if (result.priceChanged) {

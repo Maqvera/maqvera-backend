@@ -12,7 +12,6 @@ import mongoose from "mongoose";
 const AIAlertSchema = new mongoose.Schema(
   {
     tenantId: { type: String, required: true, index: true },
-    branchId: { type: String, default: "main", index: true },
     alertType: {
       type: String,
       enum: ["high_failure_rate", "high_latency", "high_hallucination_rate", "high_tool_failure_rate", "cost_spike", "high_guardrail_block_rate", "provider_unavailable"],

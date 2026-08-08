@@ -50,7 +50,7 @@ class AIAssistantService {
       return await this._chatCore(params);
     } catch (err) {
       AIObservabilityService.recordRequestMetric({
-        tenantId: params.tenantId, branchId: params.branchId, userId: params.userId,
+        tenantId: params.tenantId, userId: params.userId,
         requestId: params.requestId || null, correlationId: params.conversationId || null, type: "chat",
         durationMs: Date.now() - startedAt, succeeded: false, status: "failed",
         errorCategory: AIObservabilityService.classifyError(err.message), errorMessage: err.message,
@@ -61,7 +61,7 @@ class AIAssistantService {
     }
   }
 
-  static async _chatCore({ tenantId, branchId, userId, userName = "User", permissions = [], role, message, conversationId = null, mode = "Assistant", forcedToolName = null, agentId = null, requestId = null }) {
+  static async _chatCore({ tenantId, userId, userName = "User", permissions = [], role, message, conversationId = null, mode = "Assistant", forcedToolName = null, agentId = null, requestId = null }) {
     const turnStartedAt = Date.now();
     const config = getAIConfig();
     if (!message || !message.trim()) {
@@ -78,7 +78,7 @@ class AIAssistantService {
       : null;
     const isNewConversation = !conversation;
     if (!conversation) {
-      conversation = new AIConversationModel({ tenantId, branchId, userId, mode, messages: [], toolExecutions: [] });
+      conversation = new AIConversationModel({ tenantId, userId, mode, messages: [], toolExecutions: [] });
       publishEvent("AIConversationStarted", { conversationId: conversation._id, tenantId, userId, mode });
     }
 
@@ -100,7 +100,7 @@ class AIAssistantService {
     // through to AIToolRegistry.execute, which refuses any non-read tool
     // for the rest of this turn when set (defense-in-depth, independent of
     // tenant policy configuration).
-    const context = { tenantId, branchId, userId, userName, permissions, role, conversationId: conversation._id?.toString(), executionId: null, promptInjectionFlagged: flaggedInjection };
+    const context = { tenantId, userId, userName, permissions, role, conversationId: conversation._id?.toString(), executionId: null, promptInjectionFlagged: flaggedInjection };
     publishEvent("AIContextLoaded", { conversationId: conversation._id, tenantId, sources: memorySummaryBefore ? ["conversation-history", "session-memory"] : ["conversation-history"], hasMemory: Boolean(memorySummaryBefore) });
 
     // EXT-035 §9/§12 "Agent Discovery" / "Least privilege enforced" — an
@@ -132,9 +132,9 @@ class AIAssistantService {
     // utils/aiPromptDefaults.js when nothing is published. Composed once
     // per turn (its inputs don't change across tool-calling iterations),
     // reused for every LLM call in the loop below.
-    const promptVariables = { tenantName: tenantId, branchName: branchId, userRole: role || "unknown", language: "en", currentDate: new Date().toISOString().slice(0, 10) };
+    const promptVariables = { tenantName: tenantId, userRole: role || "unknown", language: "en", currentDate: new Date().toISOString().slice(0, 10) };
     const { text: systemPrompt, versionRefs: promptVersionRefs } = await AIPromptService.composeChatPrompt({
-      tenantId, branchId, mode, role, language: "en", variables: promptVariables, memorySummary: memorySummaryBefore
+      tenantId, mode, role, language: "en", variables: promptVariables, memorySummary: memorySummaryBefore
     });
 
     const toolExecutionsThisTurn = [];
@@ -168,7 +168,7 @@ class AIAssistantService {
       iterations += 1;
       const llmCallStartedAt = Date.now();
       const llmResult = await AIModelRouterService.route({
-        tenantId, branchId, category: "general_chat", correlationId: conversation._id?.toString() || null,
+        tenantId, category: "general_chat", correlationId: conversation._id?.toString() || null,
         messages: history, tools: availableTools, systemPrompt
       });
       const llmCallLatencyMs = Date.now() - llmCallStartedAt;
@@ -341,7 +341,7 @@ class AIAssistantService {
     const costRates = getAIModelConfig().providers[usedProvider]?.costPerThousandTokens || { input: 0, output: 0 };
     const estimatedCostUsd = Number((((totalInputTokens / 1000) * costRates.input) + ((totalOutputTokens / 1000) * costRates.output)).toFixed(6));
     AIObservabilityService.recordRequestMetric({
-      tenantId, branchId, userId, requestId, correlationId: conversation._id.toString(), type: "chat",
+      tenantId, userId, requestId, correlationId: conversation._id.toString(), type: "chat",
       provider: usedProvider, model: usedModel, modelFallbackCount: totalFallbackCount, abTestId: usedAbTestId, abVariant: usedAbVariant,
       durationMs: Date.now() - turnStartedAt,
       inputTokens: totalInputTokens, outputTokens: totalOutputTokens, totalTokens: totalInputTokens + totalOutputTokens,

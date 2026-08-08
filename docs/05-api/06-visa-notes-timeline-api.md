@@ -1,6 +1,6 @@
 # Visa API — Part 11: Notes & Timeline
 
-The Visa Timeline is the immutable, tenant- and branch-isolated operational history for a case. Business modules publish domain events to the central Timeline Event Bus; the bus stores a canonical event, indexes it for search, and makes it available to the AI context provider.
+The Visa Timeline is the immutable, tenant-isolated operational history for a case. Business modules publish domain events to the central Timeline Event Bus; the bus stores a canonical event, indexes it for search, and makes it available to the AI context provider.
 
 ## Endpoints
 

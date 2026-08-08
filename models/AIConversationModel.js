@@ -3,7 +3,6 @@ import mongoose from "mongoose";
 const AIConversationSchema = new mongoose.Schema(
   {
     tenantId: { type: String, required: true, index: true },
-    branchId: { type: String, default: "main", index: true },
     userId: { type: String, required: true, index: true },
     mode: {
       type: String,

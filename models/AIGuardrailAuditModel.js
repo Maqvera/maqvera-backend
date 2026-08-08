@@ -12,7 +12,6 @@ import mongoose from "mongoose";
 const AIGuardrailAuditSchema = new mongoose.Schema(
   {
     tenantId: { type: String, required: true, index: true },
-    branchId: { type: String, default: "main", index: true },
     userId: { type: String, default: null, index: true },
     correlationId: { type: String, default: null, index: true },
     toolName: { type: String, default: null, index: true },

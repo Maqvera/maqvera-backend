@@ -59,7 +59,6 @@ export const authSchemas = {
   setupTenant: Joi.object({
     companyName: Joi.string().trim().min(2).max(200).required(),
     tenantKey: tenantKeySlug.required(),
-    branchName: Joi.string().trim().max(200).optional().allow(""),
     username: Joi.string().trim().min(2).max(100).required(),
     email,
     password,
@@ -153,7 +152,6 @@ export const userSchemas = {
     lastName: Joi.string().trim().min(1).max(100).required(),
     email: Joi.string().email({ tlds: false }).lowercase().trim().max(255).required(),
     phone: Joi.string().trim().pattern(/^\+?[1-9]\d{7,14}$/).optional().allow("").messages({ "string.pattern.base": "Phone must be a valid number (E.164 format, e.g. +923001234567)." }),
-    branchId: Joi.string().trim().min(1).max(100).required(),
     departmentId: Joi.string().trim().min(1).max(100).required(),
     roleIds: Joi.array().items(Joi.string()).optional(),
     role: Joi.string().trim().max(100).optional(),
@@ -184,10 +182,6 @@ export const userSchemas = {
     roleIds: Joi.array().items(Joi.string()).optional(),
   }).or("role", "roleIds"),
 
-  branchAssignment: Joi.object({
-    branchId: Joi.string().trim().min(1).max(100).required(),
-  }),
-
   departmentAssignment: Joi.object({
     departmentId: Joi.string().trim().min(1).max(100).required(),
   }),
@@ -213,7 +207,6 @@ export const userSchemas = {
     lastName: Joi.string().trim().min(1).max(100).required(),
     phone: Joi.string().trim().pattern(/^\+?[1-9]\d{7,14}$/).optional().allow("").messages({ "string.pattern.base": "Phone must be a valid number (E.164 format, e.g. +923001234567)." }),
     role: Joi.string().trim().max(100).optional(),
-    branchId: Joi.string().trim().min(1).max(100).required(),
     departmentId: Joi.string().trim().min(1).max(100).required(),
     designation: Joi.string().trim().max(100).optional().allow(""),
   }),
@@ -310,7 +303,6 @@ const buildBookingSchemas = () => {
       customerId: Joi.string().trim().min(1).max(100).required(),
       bookingType: Joi.string().trim().valid(...bookingTypeValues).default(defaultBookingType),
       packageId: Joi.string().trim().max(100).optional().allow(""),
-      branchId: Joi.string().trim().min(1).max(100).optional(),
       travelDate: Joi.date().optional(),
       returnDate: Joi.date().optional(),
       assignedConsultant: Joi.string().trim().max(100).optional().allow(""),
@@ -336,7 +328,6 @@ const buildBookingSchemas = () => {
       priority: Joi.string().trim().valid("normal", "medium", "high", "vip").optional(),
       internalNotes: Joi.string().trim().max(4000).optional().allow(""),
       preferredContactTime: Joi.string().trim().max(100).optional().allow(""),
-      branchId: Joi.string().trim().min(1).max(100).optional(),
     }),
 
     // Accepts either { travelers: [...] } (bulk) or a bare single-traveler
@@ -492,7 +483,6 @@ export const customerSchemas = {
     primaryPhone: Joi.string().trim().pattern(/^\+?[1-9]\d{7,14}$/).optional().messages({ "string.pattern.base": "primaryPhone must be a valid number (E.164 format, e.g. +923001234567)." }),
     phone: Joi.string().trim().pattern(/^\+?[1-9]\d{7,14}$/).optional().messages({ "string.pattern.base": "phone must be a valid number (E.164 format, e.g. +923001234567)." }),
     alternatePhone: Joi.string().trim().pattern(/^\+?[1-9]\d{7,14}$/).optional().allow('').messages({ "string.pattern.base": "alternatePhone must be a valid number (E.164 format, e.g. +923001234567)." }),
-    branchId: Joi.string().trim().max(100).optional(),
     type: Joi.string().trim().max(100).optional(),
     customerType: Joi.string().trim().max(100).optional(),
     category: Joi.string().trim().max(100).optional(),

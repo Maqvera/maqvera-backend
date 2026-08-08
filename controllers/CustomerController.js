@@ -4,7 +4,6 @@ import CustomerFamilyModel from "../models/CustomerFamilyModel.js";
 import CustomerNoteModel from "../models/CustomerNoteModel.js";
 import CustomerTimelineModel from "../models/CustomerTimelineModel.js";
 import CustomerPreferenceModel from "../models/CustomerPreferenceModel.js";
-import BranchModel from "../models/Branchmodel.js";
 import CountryMasterModel from "../models/CountryMasterModel.js";
 import BookingHeaderModel from "../models/BookingHeaderModel.js";
 import AuditLogModel from "../models/AuditLogmodel.js";
@@ -16,7 +15,7 @@ import { publishEvent } from "../utils/eventBus.js";
 import { createRequestId } from "../utils/authTokens.js";
 import { getCustomerConfig } from "../utils/customerConfig.js";
 import { getStorageConfig } from "../utils/storageConfig.js";
-import { getAccessScope, applyOptionalBranchFilter } from "../utils/accessScope.js";
+import { getAccessScope } from "../utils/accessScope.js";
 
 const customerConfig = getCustomerConfig();
 const storageConfig = getStorageConfig();
@@ -306,7 +305,6 @@ const buildFullCustomerProfile = (customer, preferences = null, documents = [], 
   notes: customer.notes,
   versionsCount: (customer.versions || []).length,
   tenantId: customer.tenantId,
-  branchId: customer.branchId,
   preferences: preferences || null,
   documents: documents || [],
   familyMembers: family || [],
@@ -334,7 +332,6 @@ export const ListCustomers = async (req, res) => {
     const page = Math.max(parseInt(req.query.page || "1", 10), 1);
     const pageSize = Math.min(Math.max(parseInt(req.query.pageSize || customerConfig.defaultPageSize, 10), 1), customerConfig.maxPageSize);
     const search = req.query.search?.trim() || null;
-    const branchId = req.query.branchId || null;
     const customerType = req.query.customerType || req.query.type || null;
     const category = req.query.category || null;
     const status = req.query.status || null;
@@ -375,10 +372,7 @@ export const ListCustomers = async (req, res) => {
     if (!scope) {
       return sendError(res, 403, "Tenant context is required.", requestId);
     }
-    // A branch-scoped caller's own branch always wins — the ?branchId= query
-    // param can only narrow a tenant-scoped (all-branch) caller, never widen
-    // a branch-restricted one onto a branch they don't belong to.
-    const filter = { ...applyOptionalBranchFilter(scope, branchId), status: { $ne: "archived" } };
+    const filter = { ...scope, status: { $ne: "archived" } };
     if (customerType) filter.type = customerType.toLowerCase();
     if (category) filter.category = category.toLowerCase();
     if (status) filter.status = status.toLowerCase();
@@ -574,7 +568,6 @@ export const CreateCustomer = async (req, res) => {
       preferredCurrency = customerConfig.defaultCurrency,
       marketingConsent = false,
       profilePhoto,
-      branchId = customerConfig.defaultBranchKey,
       category = customerConfig.defaultCategory,
       status = customerConfig.defaultStatus,
       title,
@@ -672,25 +665,6 @@ export const CreateCustomer = async (req, res) => {
       }
     }
 
-    // A branch-scoped caller can only ever create customers in their own
-    // branch — the request body's branchId is honored only for tenant-scoped
-    // (all-branch) callers, exactly the write-side mirror of ListCustomers'
-    // read-side branch enforcement. Must check the RAW req.body.branchId,
-    // not the destructured `branchId` above — that one already defaulted to
-    // customerConfig.defaultBranchKey when the client sent nothing, so it is
-    // never actually undefined and would otherwise always look "explicit".
-    if (scope.branchId && req.body.branchId && req.body.branchId !== scope.branchId) {
-      return sendError(res, 403, "You do not have permission to create customers in another branch.", requestId);
-    }
-    const requestedBranchKey = scope.branchId || branchId;
-
-    let resolvedBranchKey = requestedBranchKey;
-    const branch = await BranchModel.findOne({ branchKey: requestedBranchKey, tenantKey: tenantId, status: "active" });
-    if (!branch) {
-      const defaultBranch = await BranchModel.findOne({ tenantKey: tenantId, status: "active" });
-      if (defaultBranch) resolvedBranchKey = defaultBranch.branchKey;
-    }
-
     const customerCode = `${customerConfig.customerCodePrefix}-${Math.floor(100000 + Math.random() * 900000)}`;
 
     const initialMetrics = calculateCustomerMetrics({
@@ -699,7 +673,6 @@ export const CreateCustomer = async (req, res) => {
 
     const customer = await CustomerModel.create({
       tenantId,
-      branchId: resolvedBranchKey,
       customerCode,
       type: resolvedType.toLowerCase(),
       category: normalizedCategory,
@@ -751,7 +724,6 @@ export const CreateCustomer = async (req, res) => {
       reason: null,
       userId: req.auth?.id || null,
       tenantId,
-      branchId: resolvedBranchKey,
       requestId,
       metadata: { customerId: customer._id, customerCode: customer.customerCode }
     });
@@ -1041,12 +1013,11 @@ export const UpdateCustomer = async (req, res) => {
       reason: null,
       userId: req.auth?.id || null,
       tenantId,
-      branchId: customer.branchId,
       requestId,
       metadata: { customerId: customer._id, changedFields }
     });
 
-    publishEvent("CustomerUpdated", { customerId: customer._id.toString(), tenantId, branchId: customer.branchId, changedFields });
+    publishEvent("CustomerUpdated", { customerId: customer._id.toString(), tenantId, changedFields });
     publishEvent("CustomerTimelineUpdated", { customerId: customer._id.toString(), tenantId });
     publishEvent("CRMAnalyticsUpdated", { customerId: customer._id.toString(), tenantId });
 
@@ -1090,12 +1061,11 @@ export const ArchiveCustomer = async (req, res) => {
       reason: null,
       userId: req.auth?.id || null,
       tenantId,
-      branchId: customer.branchId,
       requestId,
       metadata: { customerId }
     });
 
-    publishEvent("CustomerArchived", { customerId: customer._id.toString(), tenantId, branchId: customer.branchId });
+    publishEvent("CustomerArchived", { customerId: customer._id.toString(), tenantId });
 
     return sendSuccess(res, 200, "Customer archived.", null, requestId);
   } catch (error) {
@@ -1206,7 +1176,6 @@ export const MergeCustomers = async (req, res) => {
       reason: null,
       userId: req.auth?.id || null,
       tenantId,
-      branchId: target.branchId,
       requestId,
       metadata: { primaryCustomerId, duplicateCustomerId }
     });
@@ -1415,7 +1384,6 @@ export const AddCustomerNote = async (req, res) => {
     const note = await CustomerNoteModel.create({
       customerId,
       tenantId,
-      branchId: customer.branchId,
       authorId: req.auth?.id || null,
       authorName: req.auth?.username || req.auth?.name || "Staff",
       category: resolvedCategory,
@@ -1445,7 +1413,6 @@ export const AddCustomerNote = async (req, res) => {
       reason: null,
       userId: req.auth?.id || null,
       tenantId,
-      branchId: customer.branchId,
       requestId,
       metadata: { customerId, noteId: note._id, category: resolvedCategory, visibility: resolvedVisibility }
     });
@@ -1613,7 +1580,6 @@ export const AddCustomerDocument = async (req, res) => {
       reason: null,
       userId: req.auth?.id || null,
       tenantId,
-      branchId: customer.branchId,
       requestId,
       metadata: { customerId, documentId: doc._id, documentType: doc.documentType }
     });
@@ -1812,7 +1778,6 @@ export const AddCustomerEmergencyContact = async (req, res) => {
       reason: null,
       userId: req.auth?.id || null,
       tenantId,
-      branchId: customer.branchId,
       requestId,
       metadata: { customerId, name, relationship }
     });
@@ -1861,7 +1826,6 @@ export const UpdateCustomerEmergencyContact = async (req, res) => {
       reason: null,
       userId: req.auth?.id || null,
       tenantId,
-      branchId: customer.branchId,
       requestId,
       metadata: { customerId, contactId }
     });
@@ -1907,7 +1871,6 @@ export const DeleteCustomerEmergencyContact = async (req, res) => {
       reason: null,
       userId: req.auth?.id || null,
       tenantId,
-      branchId: customer.branchId,
       requestId,
       metadata: { customerId, contactId }
     });
@@ -2020,7 +1983,6 @@ export const AddCustomerFamilyMember = async (req, res) => {
       reason: null,
       userId: req.auth?.id || null,
       tenantId,
-      branchId: customer.branchId,
       requestId,
       metadata: { customerId, memberId: member._id, relationship: resolvedRelationship }
     });
@@ -2143,7 +2105,6 @@ export const PromoteCustomerFamilyMember = async (req, res) => {
     const customerCode = `${customerConfig.customerCodePrefix}-${Math.floor(100000 + Math.random() * 900000)}`;
     const newCustomer = await CustomerModel.create({
       tenantId,
-      branchId: sourceCustomer.branchId,
       customerCode,
       type: "individual",
       category: customerConfig.defaultCategory,
@@ -2175,7 +2136,6 @@ export const PromoteCustomerFamilyMember = async (req, res) => {
       reason: null,
       userId: req.auth?.id || null,
       tenantId,
-      branchId: sourceCustomer.branchId,
       requestId,
       metadata: { sourceCustomerId: customerId, memberId, newCustomerId: newCustomer._id }
     });
@@ -2301,7 +2261,6 @@ export const AddCustomerPassport = async (req, res) => {
       reason: null,
       userId: req.auth?.id || null,
       tenantId,
-      branchId: customer.branchId,
       requestId,
       metadata: { customerId, passportId: created._id, passportNumber }
     });
@@ -2367,7 +2326,6 @@ export const UpdateCustomerPassport = async (req, res) => {
       reason: null,
       userId: req.auth?.id || null,
       tenantId,
-      branchId: customer.branchId,
       requestId,
       metadata: { customerId, passportId, previousStatus, newStatus: passport.status }
     });
@@ -2435,7 +2393,7 @@ export const AddCustomerPhone = async (req, res) => {
     await customer.save();
 
     await recordTimeline(customer._id, tenantId, "phone_added", `Phone number added: ${number}`, req.auth?.id || null);
-    await AuditLogModel.create({ action: "customer.phone.create", outcome: "success", reason: null, userId: req.auth?.id || null, tenantId, branchId: customer.branchId, requestId, metadata: { customerId } });
+    await AuditLogModel.create({ action: "customer.phone.create", outcome: "success", reason: null, userId: req.auth?.id || null, tenantId, requestId, metadata: { customerId } });
     publishEvent("CustomerContactUpdated", { customerId: customer._id.toString(), tenantId, contactType: "phone" });
 
     const added = customer.phones[customer.phones.length - 1];
@@ -2476,7 +2434,7 @@ export const UpdateCustomerPhone = async (req, res) => {
 
     await customer.save();
     await recordTimeline(customer._id, tenantId, "phone_updated", `Phone number updated: ${phone.number}`, req.auth?.id || null);
-    await AuditLogModel.create({ action: "customer.phone.update", outcome: "success", reason: null, userId: req.auth?.id || null, tenantId, branchId: customer.branchId, requestId, metadata: { customerId, phoneId } });
+    await AuditLogModel.create({ action: "customer.phone.update", outcome: "success", reason: null, userId: req.auth?.id || null, tenantId, requestId, metadata: { customerId, phoneId } });
     publishEvent("CustomerContactUpdated", { customerId: customer._id.toString(), tenantId, contactType: "phone" });
 
     return sendSuccess(res, 200, "Phone number updated successfully.", { phoneId: phone._id, number: phone.number, label: phone.label, isPrimary: phone.isPrimary }, requestId);
@@ -2511,7 +2469,7 @@ export const DeleteCustomerPhone = async (req, res) => {
 
     await customer.save();
     await recordTimeline(customer._id, tenantId, "phone_removed", `Phone number removed: ${phone.number}`, req.auth?.id || null);
-    await AuditLogModel.create({ action: "customer.phone.delete", outcome: "success", reason: null, userId: req.auth?.id || null, tenantId, branchId: customer.branchId, requestId, metadata: { customerId, phoneId } });
+    await AuditLogModel.create({ action: "customer.phone.delete", outcome: "success", reason: null, userId: req.auth?.id || null, tenantId, requestId, metadata: { customerId, phoneId } });
     publishEvent("CustomerContactUpdated", { customerId: customer._id.toString(), tenantId, contactType: "phone" });
 
     return sendSuccess(res, 200, "Phone number removed.", null, requestId);
@@ -2576,7 +2534,7 @@ export const AddCustomerEmail = async (req, res) => {
     await customer.save();
 
     await recordTimeline(customer._id, tenantId, "email_added", `Email address added: ${address}`, req.auth?.id || null);
-    await AuditLogModel.create({ action: "customer.email.create", outcome: "success", reason: null, userId: req.auth?.id || null, tenantId, branchId: customer.branchId, requestId, metadata: { customerId } });
+    await AuditLogModel.create({ action: "customer.email.create", outcome: "success", reason: null, userId: req.auth?.id || null, tenantId, requestId, metadata: { customerId } });
     publishEvent("CustomerContactUpdated", { customerId: customer._id.toString(), tenantId, contactType: "email" });
 
     const added = customer.emails[customer.emails.length - 1];
@@ -2617,7 +2575,7 @@ export const UpdateCustomerEmail = async (req, res) => {
 
     await customer.save();
     await recordTimeline(customer._id, tenantId, "email_updated", `Email address updated: ${email.address}`, req.auth?.id || null);
-    await AuditLogModel.create({ action: "customer.email.update", outcome: "success", reason: null, userId: req.auth?.id || null, tenantId, branchId: customer.branchId, requestId, metadata: { customerId, emailId } });
+    await AuditLogModel.create({ action: "customer.email.update", outcome: "success", reason: null, userId: req.auth?.id || null, tenantId, requestId, metadata: { customerId, emailId } });
     publishEvent("CustomerContactUpdated", { customerId: customer._id.toString(), tenantId, contactType: "email" });
 
     return sendSuccess(res, 200, "Email address updated successfully.", { emailId: email._id, address: email.address, label: email.label, isPrimary: email.isPrimary }, requestId);
@@ -2652,7 +2610,7 @@ export const DeleteCustomerEmail = async (req, res) => {
 
     await customer.save();
     await recordTimeline(customer._id, tenantId, "email_removed", `Email address removed: ${email.address}`, req.auth?.id || null);
-    await AuditLogModel.create({ action: "customer.email.delete", outcome: "success", reason: null, userId: req.auth?.id || null, tenantId, branchId: customer.branchId, requestId, metadata: { customerId, emailId } });
+    await AuditLogModel.create({ action: "customer.email.delete", outcome: "success", reason: null, userId: req.auth?.id || null, tenantId, requestId, metadata: { customerId, emailId } });
     publishEvent("CustomerContactUpdated", { customerId: customer._id.toString(), tenantId, contactType: "email" });
 
     return sendSuccess(res, 200, "Email address removed.", null, requestId);
@@ -2726,7 +2684,7 @@ export const AddCustomerAddress = async (req, res) => {
     await customer.save();
 
     await recordTimeline(customer._id, tenantId, "address_added", `Address added (${type})`, req.auth?.id || null);
-    await AuditLogModel.create({ action: "customer.address.create", outcome: "success", reason: null, userId: req.auth?.id || null, tenantId, branchId: customer.branchId, requestId, metadata: { customerId } });
+    await AuditLogModel.create({ action: "customer.address.create", outcome: "success", reason: null, userId: req.auth?.id || null, tenantId, requestId, metadata: { customerId } });
     publishEvent("CustomerContactUpdated", { customerId: customer._id.toString(), tenantId, contactType: "address" });
 
     const added = customer.addresses[customer.addresses.length - 1];
@@ -2777,7 +2735,7 @@ export const UpdateCustomerAddress = async (req, res) => {
 
     await customer.save();
     await recordTimeline(customer._id, tenantId, "address_updated", `Address updated (${address.type})`, req.auth?.id || null);
-    await AuditLogModel.create({ action: "customer.address.update", outcome: "success", reason: null, userId: req.auth?.id || null, tenantId, branchId: customer.branchId, requestId, metadata: { customerId, addressId } });
+    await AuditLogModel.create({ action: "customer.address.update", outcome: "success", reason: null, userId: req.auth?.id || null, tenantId, requestId, metadata: { customerId, addressId } });
     publishEvent("CustomerContactUpdated", { customerId: customer._id.toString(), tenantId, contactType: "address" });
 
     return sendSuccess(res, 200, "Address updated successfully.", {
@@ -2815,7 +2773,7 @@ export const DeleteCustomerAddress = async (req, res) => {
 
     await customer.save();
     await recordTimeline(customer._id, tenantId, "address_removed", `Address removed (${address.type})`, req.auth?.id || null);
-    await AuditLogModel.create({ action: "customer.address.delete", outcome: "success", reason: null, userId: req.auth?.id || null, tenantId, branchId: customer.branchId, requestId, metadata: { customerId, addressId } });
+    await AuditLogModel.create({ action: "customer.address.delete", outcome: "success", reason: null, userId: req.auth?.id || null, tenantId, requestId, metadata: { customerId, addressId } });
     publishEvent("CustomerContactUpdated", { customerId: customer._id.toString(), tenantId, contactType: "address" });
 
     return sendSuccess(res, 200, "Address removed.", null, requestId);
@@ -2954,7 +2912,6 @@ export const UpdateCustomerPreferences = async (req, res) => {
       reason: null,
       userId: req.auth?.id || null,
       tenantId,
-      branchId: customer.branchId,
       requestId,
       metadata: { customerId, updatedKeys: Object.keys(req.body).filter((k) => allowed.includes(k)) }
     });

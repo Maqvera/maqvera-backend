@@ -14,7 +14,6 @@ import mongoose from "mongoose";
 const AIPolicySchema = new mongoose.Schema(
   {
     tenantId: { type: String, required: true, index: true },
-    branchId: { type: String, default: "main", index: true },
     category: { type: String, enum: ["Security", "Business", "Travel", "Finance", "Privacy", "Compliance", "AI", "Custom"], required: true, index: true },
     name: { type: String, required: true },
     description: { type: String, default: null },

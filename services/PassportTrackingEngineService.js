@@ -12,11 +12,8 @@ import mongoose from "mongoose";
 const referenceNumber = (envKey, fallbackPrefix) => `${process.env[`${envKey}_PREFIX`] || fallbackPrefix}-${new Date().getFullYear()}-${uuidv4().slice(0, 8).toUpperCase()}`;
 
 class PassportTrackingEngineService {
-  static async getPassportByVisaCaseId(visaCaseId, tenantId, branchId) {
-    // Security Rule "Branch Isolation" — was never filtered by branch.
-    const filter = { visaCaseId, tenantId };
-    if (branchId) filter.branchId = branchId;
-    const trackingRecord = await PassportTrackingModel.findOne(filter);
+  static async getPassportByVisaCaseId(visaCaseId, tenantId) {
+    const trackingRecord = await PassportTrackingModel.findOne({ visaCaseId, tenantId });
     if (!trackingRecord) {
       throw new Error("Passport has not been received for this Visa Case.");
     }
@@ -41,7 +38,6 @@ class PassportTrackingEngineService {
     const traveler = visaCase.travelerSnapshot || {};
     const passportRecord = await PassportTrackingModel.create({
       tenantId,
-      branchId: visaCase.branchId || "main",
       visaCaseId: visaCase._id,
       travelerId: visaCase.travelerId,
       passportNumber: traveler.passportNumber,
@@ -66,16 +62,13 @@ class PassportTrackingEngineService {
     return passportRecord;
   }
 
-  static async receivePassport({ visaCaseId, receivedBy, receivedDate, remarks, location = "Branch Office" }, tenantId, branchId, userId) {
-    // No branch-level data isolation — branchId (if provided) is descriptive
-    // only, never part of the existence lookup, or a real case on a
-    // different branchId would wrongly 404 here.
+  static async receivePassport({ visaCaseId, receivedBy, receivedDate, remarks, location = "Branch Office" }, tenantId, userId) {
     const visaCase = await VisaCaseModel.findOne({ _id: visaCaseId, tenantId, isSoftDeleted: { $ne: true } });
     if (!visaCase) {
       throw new Error(`Visa Case with ID ${visaCaseId} not found.`);
     }
 
-    let passport = await PassportTrackingModel.findOne({ visaCaseId, tenantId, branchId: visaCase.branchId });
+    let passport = await PassportTrackingModel.findOne({ visaCaseId, tenantId });
     const traveler = visaCase.travelerSnapshot || {};
     if (!traveler.passportNumber || !traveler.nationality) throw new Error("Traveler passport number and nationality are required before receipt.");
     if (passport && passport.trackingEvents.some((event) => event.eventType === PASSPORT_DOMAIN_EVENTS.PASSPORT_RECEIVED)) throw new Error("Passport has already been received for this Visa Case.");
@@ -83,7 +76,6 @@ class PassportTrackingEngineService {
     if (!passport) {
       passport = new PassportTrackingModel({
         tenantId,
-        branchId: branchId || visaCase.branchId || "main",
         visaCaseId: visaCase._id,
         travelerId: visaCase.travelerId,
         passportNumber: traveler.passportNumber,
@@ -129,14 +121,14 @@ class PassportTrackingEngineService {
     });
     await visaCase.save();
 
-    if (mongoose.connection.readyState === 1) await AuditLogModel.create({ tenantId, branchId: passport.branchId, userId: userId || "system", action: "RECEIVE_PASSPORT", resource: "PassportTracking", resourceId: passport._id.toString(), details: { visaCaseId, receivedBy, receivedDate } }).catch(() => null);
+    if (mongoose.connection.readyState === 1) await AuditLogModel.create({ tenantId, userId: userId || "system", action: "RECEIVE_PASSPORT", resource: "PassportTracking", resourceId: passport._id.toString(), details: { visaCaseId, receivedBy, receivedDate } }).catch(() => null);
 
     publishEvent(PASSPORT_DOMAIN_EVENTS.PASSPORT_RECEIVED, {
       passportId: passport._id,
       visaCaseId,
       passportNumber: passport.passportNumber,
       receivedBy: passport.currentHolder,
-      timestamp: event.timestamp, tenantId, branchId: passport.branchId
+      timestamp: event.timestamp, tenantId
     });
 
     return passport;
@@ -184,7 +176,7 @@ class PassportTrackingEngineService {
       }
     }
 
-    if (mongoose.connection.readyState === 1) await AuditLogModel.create({ tenantId, branchId: passport.branchId, userId: userId || "system", action: "TRANSFER_PASSPORT_CUSTODY", resource: "PassportTracking", resourceId: passport._id.toString(), details: { fromHolder: previousHolder, toHolder, newLocation: passport.currentLocation, targetStatus: passport.currentStatus } }).catch(() => null);
+    if (mongoose.connection.readyState === 1) await AuditLogModel.create({ tenantId, userId: userId || "system", action: "TRANSFER_PASSPORT_CUSTODY", resource: "PassportTracking", resourceId: passport._id.toString(), details: { fromHolder: previousHolder, toHolder, newLocation: passport.currentLocation, targetStatus: passport.currentStatus } }).catch(() => null);
 
     // PassportCustodyChanged is the generic signal; PassportTransferred
     // (the event named for THIS specific endpoint's own "Publish
@@ -194,13 +186,13 @@ class PassportTrackingEngineService {
       passportId: passport._id,
       previousHolder,
       newHolder: passport.currentHolder,
-      performedBy: userId, visaCaseId: passport.visaCaseId, tenantId, branchId: passport.branchId
+      performedBy: userId, visaCaseId: passport.visaCaseId, tenantId
     });
     publishEvent(PASSPORT_DOMAIN_EVENTS.PASSPORT_CUSTODY_CHANGED, {
       passportId: passport._id,
       previousHolder,
       newHolder: passport.currentHolder,
-      performedBy: userId, visaCaseId: passport.visaCaseId, tenantId, branchId: passport.branchId
+      performedBy: userId, visaCaseId: passport.visaCaseId, tenantId
     });
 
     return passport;
@@ -256,13 +248,13 @@ class PassportTrackingEngineService {
       }
     }
 
-    if (mongoose.connection.readyState === 1) await AuditLogModel.create({ tenantId, branchId: passport.branchId, userId: userId || "system", action: "DISPATCH_PASSPORT", resource: "PassportTracking", resourceId: passport._id.toString(), details: { dispatchNumber, courierCompany, trackingNumber: passport.trackingNumber, embassyName } }).catch(() => null);
+    if (mongoose.connection.readyState === 1) await AuditLogModel.create({ tenantId, userId: userId || "system", action: "DISPATCH_PASSPORT", resource: "PassportTracking", resourceId: passport._id.toString(), details: { dispatchNumber, courierCompany, trackingNumber: passport.trackingNumber, embassyName } }).catch(() => null);
 
     publishEvent(PASSPORT_DOMAIN_EVENTS.PASSPORT_DISPATCHED, {
       passportId: passport._id,
       dispatchNumber,
       courierCompany: passport.courierCompany,
-      trackingNumber: passport.trackingNumber, visaCaseId: passport.visaCaseId, tenantId, branchId: passport.branchId
+      trackingNumber: passport.trackingNumber, visaCaseId: passport.visaCaseId, tenantId
     });
 
     return passport;
@@ -322,13 +314,12 @@ class PassportTrackingEngineService {
       }
     }
 
-    if (mongoose.connection.readyState === 1) await AuditLogModel.create({ tenantId, branchId: passport.branchId, userId: userId || "system", action: "RECEIVE_PASSPORT_FROM_EMBASSY", resource: "PassportTracking", resourceId: passport._id.toString(), details: { visaCaseId: passport.visaCaseId, remarks } }).catch(() => null);
+    if (mongoose.connection.readyState === 1) await AuditLogModel.create({ tenantId, userId: userId || "system", action: "RECEIVE_PASSPORT_FROM_EMBASSY", resource: "PassportTracking", resourceId: passport._id.toString(), details: { visaCaseId: passport.visaCaseId, remarks } }).catch(() => null);
 
     publishEvent(PASSPORT_DOMAIN_EVENTS.PASSPORT_RETURNED, {
       passportId: passport._id,
       visaCaseId: passport.visaCaseId,
       tenantId,
-      branchId: passport.branchId,
       returnedAt: new Date(),
       performedBy: userId
     });
@@ -393,13 +384,12 @@ class PassportTrackingEngineService {
       }
     }
 
-    if (mongoose.connection.readyState === 1) await AuditLogModel.create({ tenantId, branchId: passport.branchId, userId: userId || "system", action: "COLLECT_PASSPORT", resource: "PassportTracking", resourceId: passport._id.toString(), details: { collectedBy: passport.collectionInfo.collectedBy, verifiedBy: passport.collectionInfo.verifiedBy, receiptNumber } }).catch(() => null);
+    if (mongoose.connection.readyState === 1) await AuditLogModel.create({ tenantId, userId: userId || "system", action: "COLLECT_PASSPORT", resource: "PassportTracking", resourceId: passport._id.toString(), details: { collectedBy: passport.collectionInfo.collectedBy, verifiedBy: passport.collectionInfo.verifiedBy, receiptNumber } }).catch(() => null);
 
     publishEvent(PASSPORT_DOMAIN_EVENTS.PASSPORT_COLLECTED, {
       passportId: passport._id,
       visaCaseId: passport.visaCaseId,
       tenantId,
-      branchId: passport.branchId,
       collectedBy: passport.collectionInfo.collectedBy,
       receiptNumber,
       timestamp: passport.collectionInfo.collectionTime
@@ -418,7 +408,7 @@ class PassportTrackingEngineService {
    * already-proven mechanism that auto-locks a Visa Case on a Critical
    * incident — rather than reimplementing case-locking here.
    */
-  static async reportLostOrDamagedPassport({ passportId, condition, remarks }, tenantId, branchId, userId) {
+  static async reportLostOrDamagedPassport({ passportId, condition, remarks }, tenantId, userId) {
     const normalizedCondition = String(condition || "").toLowerCase();
     if (!["lost", "damaged"].includes(normalizedCondition)) {
       throw new Error("condition must be 'lost' or 'damaged'.");
@@ -462,7 +452,6 @@ class PassportTrackingEngineService {
         severity: "Critical"
       },
       tenantId,
-      branchId || passport.branchId,
       userId
     );
 
@@ -477,13 +466,12 @@ class PassportTrackingEngineService {
       await visaCase.save();
     }
 
-    if (mongoose.connection.readyState === 1) await AuditLogModel.create({ tenantId, branchId: passport.branchId, userId: userId || "system", action: isLost ? "REPORT_PASSPORT_LOST" : "REPORT_PASSPORT_DAMAGED", resource: "PassportTracking", resourceId: passport._id.toString(), details: { remarks } }).catch(() => null);
+    if (mongoose.connection.readyState === 1) await AuditLogModel.create({ tenantId, userId: userId || "system", action: isLost ? "REPORT_PASSPORT_LOST" : "REPORT_PASSPORT_DAMAGED", resource: "PassportTracking", resourceId: passport._id.toString(), details: { remarks } }).catch(() => null);
 
     publishEvent(isLost ? PASSPORT_DOMAIN_EVENTS.PASSPORT_LOST : PASSPORT_DOMAIN_EVENTS.PASSPORT_DAMAGED, {
       passportId: passport._id,
       visaCaseId: passport.visaCaseId,
       tenantId,
-      branchId: passport.branchId,
       performedBy: userId
     });
 
@@ -492,7 +480,6 @@ class PassportTrackingEngineService {
     // pattern already established elsewhere rather than claiming delivery.
     publishEvent("NotificationRequested", {
       tenantId,
-      branchId: passport.branchId,
       event: isLost ? "PassportLost" : "PassportDamaged",
       priority: "immediate",
       visaCaseId: passport.visaCaseId,

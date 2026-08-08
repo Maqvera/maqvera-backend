@@ -80,7 +80,7 @@ class AIModelRouterService {
    * metadata (`model`, `fallbackCount`, `abTestId`, `abVariant`) callers can
    * fold straight into their existing AIRequestMetricModel row.
    */
-  static async route({ tenantId, branchId = "main", category = "general_chat", correlationId = null, messages, tools = [], systemPrompt }) {
+  static async route({ tenantId, category = "general_chat", correlationId = null, messages, tools = [], systemPrompt }) {
     const config = getAIModelConfig();
     const resolvedCategory = config.categories.includes(category) ? category : "general_chat";
     const requiresToolCalling = tools.length > 0;
@@ -94,7 +94,7 @@ class AIModelRouterService {
     // candidates; it can never make an ineligible provider eligible.
     let policy = null;
     if (mongoose.connection?.readyState === 1) {
-      policy = await AIRoutingPolicyModel.findOne({ tenantId, branchId, category: resolvedCategory, isActive: true }).lean();
+      policy = await AIRoutingPolicyModel.findOne({ tenantId, category: resolvedCategory, isActive: true }).lean();
     }
 
     let providerOrder = (policy?.preferredProviders?.length > 0) ? policy.preferredProviders : config.defaultRoutingOrder;
@@ -122,7 +122,7 @@ class AIModelRouterService {
     let abTestId = null;
     let abVariant = null;
     if (mongoose.connection?.readyState === 1) {
-      const activeTest = await AIABTestModel.findOne({ tenantId, branchId, category: resolvedCategory, status: "running" }).lean();
+      const activeTest = await AIABTestModel.findOne({ tenantId, category: resolvedCategory, status: "running" }).lean();
       if (activeTest) {
         const assignedVariant = Math.random() * 100 < activeTest.trafficSplitPct ? "A" : "B";
         const chosen = assignedVariant === "A" ? activeTest.variantA : activeTest.variantB;
@@ -153,7 +153,7 @@ class AIModelRouterService {
         // §17 "Shadow Testing" — fire-and-forget, never on the response's critical path.
         if (policy?.shadowProvider && policy.shadowProvider !== providerName) {
           this._fireShadowTest({
-            tenantId, branchId, category: resolvedCategory, correlationId,
+            tenantId, category: resolvedCategory, correlationId,
             primaryProvider: providerName, primaryModel: resolvedModel, primaryResult: result,
             params: { messages, tools, systemPrompt }, shadowProvider: policy.shadowProvider, shadowModel: policy.shadowModel
           }).catch(() => {});
@@ -174,7 +174,7 @@ class AIModelRouterService {
     throw error;
   }
 
-  static async _fireShadowTest({ tenantId, branchId, category, correlationId, primaryProvider, primaryModel, primaryResult, params, shadowProvider, shadowModel }) {
+  static async _fireShadowTest({ tenantId, category, correlationId, primaryProvider, primaryModel, primaryResult, params, shadowProvider, shadowModel }) {
     if (mongoose.connection?.readyState !== 1) return;
     const adapter = this._getAdapter(shadowProvider);
     if (!adapter?.isConfigured()) return;
@@ -192,7 +192,7 @@ class AIModelRouterService {
 
     const resolvedShadowModel = shadowModel || getAIModelConfig().providers[shadowProvider]?.model || null;
     AIShadowTestResultModel.create({
-      tenantId, branchId, category, correlationId,
+      tenantId, category, correlationId,
       primaryProvider, primaryModel, primaryContentExcerpt: (primaryResult.content || "").slice(0, 500), primaryToolCallCount: (primaryResult.toolCalls || []).length,
       shadowProvider, shadowModel: resolvedShadowModel,
       shadowContentExcerpt: shadowResult ? (shadowResult.content || "").slice(0, 500) : null,
@@ -228,7 +228,7 @@ class AIModelRouterService {
 
   // ---- Routing policy CRUD (§9/§14) ----
 
-  static async upsertRoutingPolicy({ tenantId, branchId = "main", userId, category, preferredProviders, costOptimized, shadowProvider, shadowModel, isActive }) {
+  static async upsertRoutingPolicy({ tenantId, userId, category, preferredProviders, costOptimized, shadowProvider, shadowModel, isActive }) {
     const config = getAIModelConfig();
     if (!category || !config.categories.includes(category)) throw new Error(`category is required and must be one of: ${config.categories.join(", ")}.`);
     if (preferredProviders) {
@@ -245,7 +245,7 @@ class AIModelRouterService {
     if (isActive !== undefined) update.isActive = isActive;
 
     const policy = await AIRoutingPolicyModel.findOneAndUpdate(
-      { tenantId, branchId, category },
+      { tenantId, category },
       { $set: update, $setOnInsert: { createdBy: userId } },
       { upsert: true, new: true }
     );
@@ -253,14 +253,12 @@ class AIModelRouterService {
     return policy;
   }
 
-  static async listRoutingPolicies({ tenantId, branchId }) {
-    const filter = { tenantId };
-    if (branchId) filter.branchId = branchId;
-    return AIRoutingPolicyModel.find(filter).sort({ category: 1 }).lean();
+  static async listRoutingPolicies({ tenantId }) {
+    return AIRoutingPolicyModel.find({ tenantId }).sort({ category: 1 }).lean();
   }
 
-  static async deleteRoutingPolicy({ tenantId, branchId = "main", category }) {
-    const policy = await AIRoutingPolicyModel.findOneAndDelete({ tenantId, branchId, category });
+  static async deleteRoutingPolicy({ tenantId, category }) {
+    const policy = await AIRoutingPolicyModel.findOneAndDelete({ tenantId, category });
     if (!policy) throw new Error("Routing policy not found.");
     publishEvent("AIRoutingPolicyDeleted", { tenantId, category });
     return policy;
@@ -268,7 +266,7 @@ class AIModelRouterService {
 
   // ---- A/B testing (§16) ----
 
-  static async createABTest({ tenantId, branchId = "main", userId, category, name, description, variantA, variantB, trafficSplitPct = 50 }) {
+  static async createABTest({ tenantId, userId, category, name, description, variantA, variantB, trafficSplitPct = 50 }) {
     const config = getAIModelConfig();
     if (!category || !config.categories.includes(category)) throw new Error(`category is required and must be one of: ${config.categories.join(", ")}.`);
     if (!name || !name.trim()) throw new Error("name is required.");
@@ -277,7 +275,7 @@ class AIModelRouterService {
     if (trafficSplitPct < 1 || trafficSplitPct > 99) throw new Error("trafficSplitPct must be between 1 and 99.");
 
     const test = await AIABTestModel.create({
-      tenantId, branchId, category, name: name.trim(), description: description || null,
+      tenantId, category, name: name.trim(), description: description || null,
       variantA, variantB, trafficSplitPct, status: "draft", createdBy: userId
     });
     publishEvent("AIABTestCreated", { tenantId, testId: test._id, category });
@@ -288,7 +286,7 @@ class AIModelRouterService {
     const test = await AIABTestModel.findOne({ _id: testId, tenantId });
     if (!test) throw new Error("A/B test not found.");
     if (test.status !== "draft") throw new Error(`Cannot start a test that is '${test.status}' (must be 'draft').`);
-    const alreadyRunning = await AIABTestModel.exists({ tenantId, branchId: test.branchId, category: test.category, status: "running" });
+    const alreadyRunning = await AIABTestModel.exists({ tenantId, category: test.category, status: "running" });
     if (alreadyRunning) throw new Error(`Another A/B test is already running for category '${test.category}'. Only one may run at a time per category.`);
 
     test.status = "running";
@@ -374,7 +372,7 @@ class AIModelRouterService {
     const config = getAIModelConfig();
     const promotedOrder = [variant.provider, ...config.defaultRoutingOrder.filter((p) => p !== variant.provider)];
     await AIRoutingPolicyModel.findOneAndUpdate(
-      { tenantId, branchId: test.branchId, category: test.category },
+      { tenantId, category: test.category },
       { $set: { preferredProviders: promotedOrder, preferredModelOverride: { provider: variant.provider, model: variant.model || null }, isActive: true, updatedBy: userId }, $setOnInsert: { createdBy: userId } },
       { upsert: true, new: true }
     );

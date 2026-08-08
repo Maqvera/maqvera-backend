@@ -12,7 +12,6 @@ import mongoose from "mongoose";
 const AIApprovalRequestSchema = new mongoose.Schema(
   {
     tenantId: { type: String, required: true, index: true },
-    branchId: { type: String, default: "main", index: true },
     // Optional: set when the proposal came from a formal AIToolExecution
     // plan (API-006G's /ai/tools/plan → /ai/tools/execute flow); null when
     // it came from a direct conversational turn (API-006F's /ai/chat).

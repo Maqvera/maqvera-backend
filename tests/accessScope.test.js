@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import dotenv from "dotenv";
 import mongoose from "mongoose";
 import bcrypt from "bcryptjs";
-import { getAccessScope, applyOptionalBranchFilter } from "../utils/accessScope.js";
+import { getAccessScope } from "../utils/accessScope.js";
 
 dotenv.config();
 
@@ -24,15 +24,8 @@ test("getAccessScope returns null (never a wide-open filter) when there is no te
 
 test("getAccessScope returns tenant-only scope regardless of any other auth fields", () => {
   assert.deepEqual(getAccessScope({ auth: { tenantId: "acme" } }), { tenantId: "acme" });
-  assert.deepEqual(getAccessScope({ auth: { tenantId: "acme", branchId: "LAHORE" } }), { tenantId: "acme" });
+  assert.deepEqual(getAccessScope({ auth: { tenantId: "acme", department: "Sales" } }), { tenantId: "acme" });
   assert.deepEqual(getAccessScope({ auth: { tenantId: "acme", role: "SalesManager", permissions: ["booking.read"] } }), { tenantId: "acme" });
-});
-
-test("applyOptionalBranchFilter is a no-op passthrough — branchId is no longer a filter dimension", () => {
-  const scope = { tenantId: "acme" };
-  assert.deepEqual(applyOptionalBranchFilter(scope, "LAHORE"), scope);
-  assert.deepEqual(applyOptionalBranchFilter(scope, undefined), scope);
-  assert.equal(applyOptionalBranchFilter(null, "LAHORE"), null);
 });
 
 // ---------------------------------------------------------------------------
@@ -65,11 +58,10 @@ const makeRes = () => ({
 
 const CUSTOMER_PERMISSIONS = ["customer.read", "customer.create", "customers.read", "customers.create"];
 
-test("Company-wide shared data: every user of a tenant sees all of that tenant's customers regardless of their own branchId, and tenant B never sees tenant A's data", { skip: !dbAvailable && dbSkipReason }, async (t) => {
+test("Company-wide shared data: every user of a tenant sees all of that tenant's customers, and tenant B never sees tenant A's data", { skip: !dbAvailable && dbSkipReason }, async (t) => {
   const { SetupTenant } = await import("../controllers/Auth.js");
   const { ListCustomers, CreateCustomer } = await import("../controllers/CustomerController.js");
   const TenantModel = (await import("../models/Tenantmodel.js")).default;
-  const BranchModel = (await import("../models/Branchmodel.js")).default;
   const RoleModel = (await import("../models/Rolemodel.js")).default;
   const UserModel = (await import("../models/Usermodel.js")).default;
   const CustomerModel = (await import("../models/CustomerModel.js")).default;
@@ -82,7 +74,6 @@ test("Company-wide shared data: every user of a tenant sees all of that tenant's
     await CustomerModel.deleteMany({ tenantId: { $in: [tenantAKey, tenantBKey] } });
     await UserModel.deleteMany({ tenantId: { $in: [tenantAKey, tenantBKey] } });
     await RoleModel.deleteMany({ tenantId: { $in: [tenantAKey, tenantBKey] } });
-    await BranchModel.deleteMany({ tenantKey: { $in: [tenantAKey, tenantBKey] } });
     await TenantModel.deleteMany({ tenantKey: { $in: [tenantAKey, tenantBKey] } });
   });
 
@@ -104,15 +95,15 @@ test("Company-wide shared data: every user of a tenant sees all of that tenant's
   assert.ok(roleA && roleB);
   assert.notEqual(roleA._id.toString(), roleB._id.toString(), "each tenant must own an independent Administrator role document");
 
-  // A second, non-admin employee of tenant A, on a DIFFERENT "branch" value
-  // than the admin (branchId is now purely descriptive, never enforced).
+  // A second, non-admin employee of tenant A — proving company-wide data is
+  // shared across every user of the tenant, not just the one who created it.
   const hash = await bcrypt.hash("StrongPass1!", 10);
-  const staffA = await UserModel.create({ username: "staffA", email: `staff-a-${suffix}@example.com`, password: hash, tenantId: tenantAKey, branchId: "SOME-OTHER-OFFICE", role: "Administrator", status: "active", emailVerified: true });
+  const staffA = await UserModel.create({ username: "staffA", email: `staff-a-${suffix}@example.com`, password: hash, tenantId: tenantAKey, role: "Administrator", status: "active", emailVerified: true });
 
   const adminA = await UserModel.findOne({ email: adminAEmail });
   const adminB = await UserModel.findOne({ email: adminBEmail });
 
-  const authFor = (user) => ({ tenantId: user.tenantId, branchId: user.branchId, id: user._id.toString(), permissions: CUSTOMER_PERMISSIONS.concat("admin") });
+  const authFor = (user) => ({ tenantId: user.tenantId, id: user._id.toString(), permissions: CUSTOMER_PERMISSIONS.concat("admin") });
 
   // Tenant A's admin creates a customer.
   const createRes = makeRes();
@@ -127,9 +118,7 @@ test("Company-wide shared data: every user of a tenant sees all of that tenant's
     return res.body.data.map((c) => c.customerId.toString());
   };
 
-  // staffA has a completely different branchId from adminA, yet still sees
-  // the same shared company data — proving branch is no longer a boundary.
-  assert.ok((await listCustomerIds(staffA)).includes(customerId), "a different employee of the SAME tenant must see the customer regardless of branchId");
+  assert.ok((await listCustomerIds(staffA)).includes(customerId), "a different employee of the SAME tenant must see the customer");
   assert.ok((await listCustomerIds(adminA)).includes(customerId));
 
   // Tenant B, a completely separate company, must never see it.

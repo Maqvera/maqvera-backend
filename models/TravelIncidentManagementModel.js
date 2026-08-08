@@ -6,10 +6,6 @@ const TravelIncidentManagementSchema = new mongoose.Schema({
     required: true,
     index: true
   },
-  branchId: {
-    type: String,
-    default: "default"
-  },
   incidentNumber: {
     type: String,
     required: true,

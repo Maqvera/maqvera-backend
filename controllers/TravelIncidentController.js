@@ -11,11 +11,6 @@ import { getAccessScope } from "../utils/accessScope.js";
 
 const incidentConfig = getIncidentConfig();
 
-// A branch-scoped caller's own branch always wins for a write (their own
-// scope.branchId is authoritative, never client-suppliable) — a tenant-scoped
-// caller may specify a branch in the body, defaulting to "main" like before.
-const resolveWriteBranchId = (scope, req, fallback = "main") => scope.branchId || req.body?.branchId || fallback;
-
 /**
 / * 1. GET /api/v1/incidents
 / * Returns paginated incidents visible to the authenticated tenant.
@@ -92,7 +87,6 @@ export const CreateIncident = async (req, res) => {
     if (!scope) {
       return sendError(res, 403, "Tenant context is required.", requestId);
     }
-    const branchId = resolveWriteBranchId(scope, req);
     const userId = req.auth?.userId || req.auth?.id || "system";
     const permissions = req.auth?.permissions || [];
 
@@ -103,7 +97,7 @@ export const CreateIncident = async (req, res) => {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
-    const newIncident = await EnterpriseIncidentEngineService.createIncident(req.body, scope.tenantId, branchId, userId);
+    const newIncident = await EnterpriseIncidentEngineService.createIncident(req.body, scope.tenantId, userId);
 
     return sendSuccess(res, 201, "Incident reported successfully.", newIncident, requestId);
   } catch (err) {

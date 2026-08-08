@@ -41,7 +41,7 @@ export const toDocTicketStatus = (internalStatus) => ({
  * AmadeusFlightPricingService (EXT-003) rather than reimplementing either.
  */
 class AmadeusFlightBookingService {
-  static async createBooking({ tenantId, branchId, userId, userName, travelPlanId, flightAssignmentId, flightOffer, travelers, contact, requestId }) {
+  static async createBooking({ tenantId, userId, userName, travelPlanId, flightAssignmentId, flightOffer, travelers, contact, requestId }) {
     // Validation Rules §10: Travel Plan Exists, Flight Assignment Exists,
     // Same Tenant.
     if (!travelPlanId || !flightAssignmentId) {
@@ -137,7 +137,7 @@ class AmadeusFlightBookingService {
     const ticketingDeadline = gdsResult.ticketingDeadline ? new Date(gdsResult.ticketingDeadline) : new Date(Date.now() + 24 * 60 * 60 * 1000);
 
     const flightBooking = await FlightBookingModel.create({
-      tenantId, branchId,
+      tenantId,
       travelPlanId,
       flightAssignmentId,
       offerId: flightOffer.providerOfferId,
@@ -201,7 +201,7 @@ class AmadeusFlightBookingService {
     if (mongoose.connection?.readyState === 1) {
       AuditLogModel.create({
         tenantId, userId, action: "AMADEUS_FLIGHT_BOOKING_CREATED", module: "ExternalIntegrations",
-        requestId, branchId, targetId: flightBooking._id.toString(),
+        requestId, targetId: flightBooking._id.toString(),
         details: { provider: "Amadeus", pnr: gdsResult.pnr, airlineOrderId: flightAssignment.externalOrderId, travelPlanId: travelPlanId.toString(), flightAssignmentId: flightAssignmentId.toString() }
       }).catch((err) => console.error("Flight booking audit log error:", err));
     }

@@ -241,7 +241,6 @@ export const AddTravelPlanFlights = async (req, res) => {
       const assignment = await TravelFlightAssignmentModel.create({
         travelPlanId,
         tenantId,
-        branchId: travelPlan.branchId,
         flightCatalogId: flightCatalogId || null,
         airline,
         flightNumber,

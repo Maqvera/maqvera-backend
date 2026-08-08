@@ -51,7 +51,7 @@ class AISupervisorService {
    * back to the existing single-pass full-catalog chat instead of failing
    * the whole request.
    */
-  static async selectAgents({ tenantId, branchId, permissions, message, requestId = null }) {
+  static async selectAgents({ tenantId, permissions, message, requestId = null }) {
     const { candidates, text: agentCatalog } = await this._buildAgentCatalogText(tenantId, permissions);
     if (candidates.length === 0) {
       return { agentIds: [], reasoning: "No active agents are available for this tenant/permission set.", degraded: true };
@@ -59,12 +59,12 @@ class AISupervisorService {
 
     try {
       const { text: selectionPrompt, versionRef } = await AIPromptService.composeWorkflowPrompt({
-        tenantId, branchId, key: "agent_selection", language: "en", variables: { agentCatalog }
+        tenantId, key: "agent_selection", language: "en", variables: { agentCatalog }
       });
 
       const callStartedAt = Date.now();
       const llmResult = await AIModelRouterService.route({
-        tenantId, branchId, category: "planning", correlationId: requestId,
+        tenantId, category: "planning", correlationId: requestId,
         messages: [{ role: "user", content: message }], tools: [], systemPrompt: selectionPrompt
       });
       if (versionRef) {
@@ -102,7 +102,7 @@ class AISupervisorService {
    * AIConversationModel itself — `coordinate()` is the single writer, once,
    * after every agent has finished.
    */
-  static async _runAgentTurn({ agent, tenantId, branchId, userId, userName, permissions, role, message, baseHistory, context }) {
+  static async _runAgentTurn({ agent, tenantId, userId, userName, permissions, role, message, baseHistory, context }) {
     const config = getAIConfig();
     const tools = AIAgentRegistry.getToolsForAgent(agent.agentId, permissions).map((t) => ({ name: t.name, description: t.description, parameters: t.parameters }));
     const agentStartedAt = Date.now();
@@ -127,7 +127,7 @@ class AISupervisorService {
       while (iterations < config.maxToolIterations) {
         iterations += 1;
         const llmResult = await AIModelRouterService.route({
-          tenantId, branchId, category: "general_chat", correlationId: context.conversationId,
+          tenantId, category: "general_chat", correlationId: context.conversationId,
           messages: history, tools, systemPrompt: `You are the ${agent.name} — ${agent.description} Answer ONLY using your own tools, grounded in their real results. If the user's request needs a capability outside your scope, say so briefly rather than guessing.`
         });
         usedProvider = llmResult.provider;
@@ -183,21 +183,21 @@ class AISupervisorService {
    */
   static async coordinate(params) {
     const startedAt = Date.now();
-    const { tenantId, branchId, userId, userName = "User", permissions = [], role, message, conversationId = null, mode = "Assistant", requestId = null } = params;
+    const { tenantId, userId, userName = "User", permissions = [], role, message, conversationId = null, mode = "Assistant", requestId = null } = params;
     try {
       const config = getAIConfig();
       if (!message || !message.trim()) throw new Error("message is required.");
       if (message.length > config.maxMessageLength) throw new Error(`message exceeds the maximum allowed length of ${config.maxMessageLength} characters.`);
 
       const flaggedInjection = AIGuardrailService.detectPromptInjection(message);
-      const selection = await this.selectAgents({ tenantId, branchId, permissions, message, requestId });
+      const selection = await this.selectAgents({ tenantId, permissions, message, requestId });
 
       // §17 "Graceful Degradation" — 0 or 1 relevant agent needs no
       // parallel coordination at all; reuse the existing, fully-tested
       // single-pass path unchanged rather than a second implementation of
       // the same thing.
       if (selection.degraded || selection.agentIds.length <= 1) {
-        const chatResult = await AIAssistantService.chat({ tenantId, branchId, userId, userName, permissions, role, message, conversationId, mode, agentId: selection.agentIds[0] || null, requestId });
+        const chatResult = await AIAssistantService.chat({ tenantId, userId, userName, permissions, role, message, conversationId, mode, agentId: selection.agentIds[0] || null, requestId });
         return { ...chatResult, supervisorDecision: { agentIds: selection.agentIds, reasoning: selection.reasoning, degraded: selection.degraded, coordinated: false } };
       }
 
@@ -205,7 +205,7 @@ class AISupervisorService {
       let conversation = conversationId ? await AIConversationModel.findOne({ _id: conversationId, tenantId, userId }) : null;
       const isNewConversation = !conversation;
       if (!conversation) {
-        conversation = new AIConversationModel({ tenantId, branchId, userId, mode, messages: [], toolExecutions: [] });
+        conversation = new AIConversationModel({ tenantId, userId, mode, messages: [], toolExecutions: [] });
         publishEvent("AIConversationStarted", { conversationId: conversation._id, tenantId, userId, mode });
       }
       conversation.messages.push({ role: "user", content: message });
@@ -215,13 +215,13 @@ class AISupervisorService {
       const contextExpired = storedContext?.expiresAt && new Date(storedContext.expiresAt).getTime() < Date.now();
       const sessionMemory = (storedContext && storedContext.flight && !contextExpired) ? storedContext : AIContextMemory.empty();
 
-      const context = { tenantId, branchId, userId, userName, permissions, role, conversationId: conversation._id.toString(), executionId: null, promptInjectionFlagged: flaggedInjection };
+      const context = { tenantId, userId, userName, permissions, role, conversationId: conversation._id.toString(), executionId: null, promptInjectionFlagged: flaggedInjection };
       const baseHistory = conversation.messages.slice(-config.maxHistoryMessages).filter((m) => m.role !== "tool").map((m) => ({ role: m.role, content: m.content }));
 
       publishEvent("AISupervisorAgentsSelected", { conversationId: conversation._id, tenantId, agentIds: selection.agentIds, reasoning: selection.reasoning });
 
       const agentResults = await Promise.allSettled(
-        selection.agentIds.map((agentId) => this._runAgentTurn({ agent: AIAgentRegistry.getAgent(agentId), tenantId, branchId, userId, userName, permissions, role, message, baseHistory, context }))
+        selection.agentIds.map((agentId) => this._runAgentTurn({ agent: AIAgentRegistry.getAgent(agentId), tenantId, userId, userName, permissions, role, message, baseHistory, context }))
       );
       const results = agentResults.map((r, idx) => (r.status === "fulfilled" ? r.value : { agentId: selection.agentIds[idx], succeeded: false, error: r.reason?.message || "Agent turn failed.", answer: null, toolExecutions: [], toolMessages: [], durationMs: 0, provider: null, model: null, fallbackCount: 0, inputTokens: 0, outputTokens: 0, ragInfo: null }));
 
@@ -247,10 +247,10 @@ class AISupervisorService {
         finalAnswer = "None of the specialized agents relevant to this request could complete their part right now. Please try again shortly or rephrase your request.";
       } else {
         const resultsSummary = results.map((r) => `Agent "${r.agentId}" (${r.succeeded ? "succeeded" : `failed: ${r.error}`}): ${r.answer || "no answer"}`).join("\n\n");
-        const { text: mergePrompt, versionRef: mergeVersionRef } = await AIPromptService.composeWorkflowPrompt({ tenantId, branchId, key: "agent_merge", language: "en", variables: { tenantName: tenantId, branchName: branchId } });
+        const { text: mergePrompt, versionRef: mergeVersionRef } = await AIPromptService.composeWorkflowPrompt({ tenantId, key: "agent_merge", language: "en", variables: { tenantName: tenantId } });
         const mergeCallStartedAt = Date.now();
         const mergeResult = await AIModelRouterService.route({
-          tenantId, branchId, category: "reasoning", correlationId: conversation._id.toString(),
+          tenantId, category: "reasoning", correlationId: conversation._id.toString(),
           messages: [{ role: "user", content: `User's original request: "${message}"\n\nSpecialized agent results:\n${resultsSummary}` }], tools: [], systemPrompt: mergePrompt
         });
         finalAnswer = mergeResult.content || "I gathered information from multiple specialists but could not finalize a combined answer.";
@@ -313,7 +313,7 @@ class AISupervisorService {
       const estimatedCostUsd = Number((((totalInputTokens / 1000) * costRates.input) + ((totalOutputTokens / 1000) * costRates.output)).toFixed(6));
 
       AIObservabilityService.recordRequestMetric({
-        tenantId, branchId, userId, requestId, correlationId: conversation._id.toString(), type: "chat",
+        tenantId, userId, requestId, correlationId: conversation._id.toString(), type: "chat",
         provider: mergeProvider, model: mergeModel, modelFallbackCount: (selection.fallbackCount || 0) + results.reduce((s, r) => s + r.fallbackCount, 0) + mergeFallbackCount,
         durationMs: Date.now() - startedAt,
         inputTokens: totalInputTokens, outputTokens: totalOutputTokens, totalTokens: totalInputTokens + totalOutputTokens,
@@ -337,7 +337,7 @@ class AISupervisorService {
       };
     } catch (err) {
       AIObservabilityService.recordRequestMetric({
-        tenantId, branchId, userId, requestId: requestId || null, correlationId: conversationId || null, type: "chat",
+        tenantId, userId, requestId: requestId || null, correlationId: conversationId || null, type: "chat",
         durationMs: Date.now() - startedAt, succeeded: false, status: "failed",
         errorCategory: AIObservabilityService.classifyError(err.message), errorMessage: err.message,
         flaggedPromptInjection: AIGuardrailService.detectPromptInjection(message || ""), supervisorUsed: true

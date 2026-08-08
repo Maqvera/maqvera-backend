@@ -82,7 +82,7 @@ User + AIConversationModel (persisted history)
 
 ## 5. AI Context Sources
 
-Every source below is read-only, called with the requesting user's real `tenantId`/`branchId`/`permissions` — the AI can never see data the same user couldn't already see through the real API:
+Every source below is read-only, called with the requesting user's real `tenantId`/`permissions` — the AI can never see data the same user couldn't already see through the real API:
 
 Flight Search · Hotel Search · Visa Requirements · Booking Status · Travel Operations Status · Operations Dashboard · Revenue Dashboard (requires `visa.dashboard.management` permission) · Incident Summaries · Enterprise Search (Knowledge Base fallback)
 

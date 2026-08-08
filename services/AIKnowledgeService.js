@@ -60,7 +60,7 @@ class AIKnowledgeService {
     for (const chunk of chunks) {
       const { embedding, model, provider } = await AIEmbeddingService.generateEmbedding(chunk.content);
       created.push(await AIKnowledgeChunkModel.create({
-        documentId: doc._id, tenantId: doc.tenantId, branchId: doc.branchId,
+        documentId: doc._id, tenantId: doc.tenantId,
         chunkIndex: chunk.chunkIndex, sectionTitle: chunk.sectionTitle, content: chunk.content,
         embedding, embeddingModel: model, embeddingProvider: provider,
         documentTitle: doc.title, documentCategory: doc.category, documentVersion: doc.version,
@@ -71,13 +71,13 @@ class AIKnowledgeService {
     return created;
   }
 
-  static async createDocument({ tenantId, branchId, userId, title, category, visibilityLevel, content, tags, language, author, sourceType, sourceFileName }) {
+  static async createDocument({ tenantId, userId, title, category, visibilityLevel, content, tags, language, author, sourceType, sourceFileName }) {
     if (!title || !title.trim()) throw new Error("title is required.");
     if (!content || !content.trim()) throw new Error("content is required.");
     await this._validateCategory(category);
 
     const doc = await AIKnowledgeDocumentModel.create({
-      tenantId, branchId: branchId || "main", title: title.trim(), category,
+      tenantId, title: title.trim(), category,
       visibilityLevel: visibilityLevel || "internal", content: content.trim(),
       tags: Array.isArray(tags) ? tags : [], language: language || "en", author: author || null,
       sourceType: sourceType || "text", sourceFileName: sourceFileName || null,
@@ -145,11 +145,10 @@ class AIKnowledgeService {
     return doc;
   }
 
-  static async listDocuments({ tenantId, branchId, category, status = "active", page = 1, pageSize = 20 }) {
+  static async listDocuments({ tenantId, category, status = "active", page = 1, pageSize = 20 }) {
     const safePage = Math.max(parseInt(page, 10) || 1, 1);
     const safePageSize = Math.min(Math.max(parseInt(pageSize, 10) || 20, 1), 100);
     const filter = { tenantId };
-    if (branchId) filter.branchId = { $in: [branchId, "main"] };
     if (category) filter.category = category;
     if (status) filter.status = status;
 
@@ -222,20 +221,20 @@ class AIKnowledgeService {
 
   /**
    * The end-to-end retrieval flow (§7): normalize -> embed -> candidate
-   * fetch (tenant + branch, "main" as this codebase's existing
-   * branch-wide-default convention, same as every other branchId field
-   * here) -> permission filter (§12, BEFORE ranking — an unauthorized
+   * fetch (tenant-wide — every user of a tenant shares the same knowledge
+   * base, see docs/06-external-integrations/03-final-architecture-no-branches-rbac.md)
+   * -> permission filter (§12, BEFORE ranking — an unauthorized
    * chunk never even reaches the ranker, let alone the LLM) -> rank ->
    * context assembly. Real popularity tracking: every chunk that actually
    * makes the top-K increments its retrievalCount.
    */
-  static async retrieveKnowledge({ tenantId, branchId, role, permissions = [], query, topK, includeArchived = false }) {
+  static async retrieveKnowledge({ tenantId, role, permissions = [], query, topK, includeArchived = false }) {
     if (!query || !query.trim()) throw new Error("query is required.");
     const config = getAIKnowledgeConfig();
 
     const { embedding } = await AIEmbeddingService.generateEmbedding(query.trim());
 
-    const filter = { tenantId, branchId: { $in: [branchId || "main", "main"] } };
+    const filter = { tenantId };
     if (!includeArchived) filter.isActive = true;
     const candidates = await AIKnowledgeChunkModel.find(filter).lean();
 

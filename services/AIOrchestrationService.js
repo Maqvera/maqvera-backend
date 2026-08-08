@@ -97,7 +97,7 @@ class AIOrchestrationService {
    * Decomposition → Tool Discovery → Dependency Resolution → Execution
    * Plan. No tool is executed here.
    */
-  static async createPlan({ tenantId, branchId, userId, userName, role, permissions, prompt, conversationId = null }) {
+  static async createPlan({ tenantId, userId, userName, role, permissions, prompt, conversationId = null }) {
     if (!prompt || !prompt.trim()) throw new Error("prompt is required.");
     const config = getAIConfig();
     if (prompt.length > config.maxMessageLength) throw new Error(`prompt exceeds the maximum allowed length of ${config.maxMessageLength} characters.`);
@@ -118,14 +118,14 @@ class AIOrchestrationService {
 
     const catalog = AIToolRegistry.getCatalog(permissions);
     const { text: planningSystemPrompt, versionRef: planningVersionRef } = await AIPromptService.composeWorkflowPrompt({
-      tenantId, branchId, key: "planning", language: "en",
-      variables: { toolCatalog: _buildToolCatalogText(catalog), maxPlanSteps: config.maxPlanSteps, tenantName: tenantId, branchName: branchId }
+      tenantId, key: "planning", language: "en",
+      variables: { toolCatalog: _buildToolCatalogText(catalog), maxPlanSteps: config.maxPlanSteps, tenantName: tenantId }
     });
     const planningPromptFull = planningSystemPrompt + (memorySummary ? `\n\nKNOWN CONTEXT FROM THIS SESSION (reuse these details instead of asking the user again or re-planning a search that's already been done):\n${memorySummary}` : "");
 
     const planningCallStartedAt = Date.now();
     const llmResult = await AIModelRouterService.route({
-      tenantId, branchId, category: "planning", correlationId: conversation?._id?.toString() || null,
+      tenantId, category: "planning", correlationId: conversation?._id?.toString() || null,
       messages: [{ role: "user", content: prompt }], tools: [], systemPrompt: planningPromptFull
     });
     if (planningVersionRef) {
@@ -203,7 +203,7 @@ class AIOrchestrationService {
 
     const execution = await AIToolExecutionModel.create({
       _id: executionObjectId,
-      tenantId, branchId, userId,
+      tenantId, userId,
       userName: userName || "User", role: role || "", permissions: permissions || [],
       conversationId: conversation ? conversation._id : null,
       prompt,
@@ -238,7 +238,7 @@ class AIOrchestrationService {
    * auto-cancel the flight's pending approval, only flag it so the human
    * approver sees the partial failure before deciding.
    */
-  static async _flagFlightForManualReview({ tenantId, branchId, userId, execution, flightProposalStep, hotelFailureStep }) {
+  static async _flagFlightForManualReview({ tenantId, userId, execution, flightProposalStep, hotelFailureStep }) {
     const reason = `Hotel step (${hotelFailureStep.toolName}, step ${hotelFailureStep.stepNumber}) failed in the same plan as this flight proposal (step ${flightProposalStep.stepNumber}): ${hotelFailureStep.error || "unknown error"}. Per policy, the flight proposal is NOT auto-cancelled — review manually before approving.`;
 
     let approvalRequest = null;
@@ -265,7 +265,7 @@ class AIOrchestrationService {
           severity: "Medium",
           title: `AI plan ${execution.correlationId}: flight proposal needs manual review`,
           description: reason
-        }, tenantId, branchId, userId);
+        }, tenantId, userId);
       } catch (err) {
         logger.error("AI compensation incident creation error.", { error: err.message });
       }
@@ -291,7 +291,7 @@ class AIOrchestrationService {
       flightStepNumber: flightProposalStep.stepNumber, hotelStepNumber: hotelFailureStep.stepNumber
     });
     publishEvent("NotificationRequested", {
-      tenantId, branchId, event: "AIFlightProposalNeedsManualReview", priority: "high",
+      tenantId, event: "AIFlightProposalNeedsManualReview", priority: "high",
       approvalRequestId: approvalRequest?._id || null, incidentId: incident?._id || null, executionId: execution._id
     });
   }
@@ -302,7 +302,7 @@ class AIOrchestrationService {
    * otherwise, with tool-level retry) → Collect Responses → Validate
    * Results → Generate Final Response → Audit.
    */
-  static async executePlan({ tenantId, branchId, userId, userName, permissions, role, executionId, isRecoveryResume = false, requestId = null }) {
+  static async executePlan({ tenantId, userId, userName, permissions, role, executionId, isRecoveryResume = false, requestId = null }) {
     // EXT-036 §23 "Idempotency ... Duplicate executions ignored safely." A
     // plain findOne-then-save has a real race: two concurrent calls (e.g. a
     // double-submitted "Execute" click) can both read status "planned"
@@ -336,7 +336,7 @@ class AIOrchestrationService {
     // EXT-032 §9 — read back the flag persisted at plan-creation time so
     // AIToolRegistry.execute's own defense-in-depth check applies exactly
     // the same way here as it does for a live conversational turn.
-    const context = { tenantId, branchId, userId, userName, permissions, role, executionId: execution._id.toString(), conversationId: execution.conversationId, promptInjectionFlagged: Boolean(execution.promptInjectionFlagged) };
+    const context = { tenantId, userId, userName, permissions, role, executionId: execution._id.toString(), conversationId: execution.conversationId, promptInjectionFlagged: Boolean(execution.promptInjectionFlagged) };
 
     // EXT-028 §16 "Memory Integration" — loaded once up front (not
     // per-group) and mutated in-memory as steps succeed; persisted once at
@@ -565,7 +565,7 @@ class AIOrchestrationService {
       // EXT-033 §6/§8/§9/§15 — recorded on every real exit path, including
       // a cooperative halt (never only the "clean" completion path).
       AIObservabilityService.recordRequestMetric({
-        tenantId, branchId, userId, requestId, correlationId: execution.correlationId, type: "plan_execution",
+        tenantId, userId, requestId, correlationId: execution.correlationId, type: "plan_execution",
         provider: execution.provider, model: execution.model, durationMs: execution.totalExecutionTimeMs,
         inputTokens: execution.tokenUsage.inputTokens, outputTokens: execution.tokenUsage.outputTokens, totalTokens: execution.tokenUsage.totalTokens,
         estimatedCostUsd: execution.estimatedCostUsd, succeeded: false, status: execution.status,
@@ -587,7 +587,7 @@ class AIOrchestrationService {
     const flightProposalStep = toolExecutions.find((t) => t.toolName === "propose_flight_booking" && t.succeeded);
     const hotelFailureStep = toolExecutions.find((t) => t.toolName === "propose_hotel_booking" && !t.succeeded);
     if (flightProposalStep && hotelFailureStep) {
-      await this._flagFlightForManualReview({ tenantId, branchId, userId, execution, flightProposalStep, hotelFailureStep });
+      await this._flagFlightForManualReview({ tenantId, userId, execution, flightProposalStep, hotelFailureStep });
     }
 
     const succeededCount = toolExecutions.filter((t) => t.succeeded).length;
@@ -607,11 +607,11 @@ class AIOrchestrationService {
       try {
         const resultsSummary = toolExecutions.map((t) => `Step ${t.stepNumber} (${t.toolName}): ${t.succeeded ? "succeeded" : `failed - ${t.error}`}`).join("\n");
         const { text: synthesisSystemPrompt, versionRef: synthesisVersionRef } = await AIPromptService.composeWorkflowPrompt({
-          tenantId, branchId, key: "synthesis", language: "en", variables: { tenantName: tenantId, branchName: branchId }
+          tenantId, key: "synthesis", language: "en", variables: { tenantName: tenantId }
         });
         const synthesisCallStartedAt = Date.now();
         const llmResult = await AIModelRouterService.route({
-          tenantId, branchId, category: "reasoning", correlationId: execution.correlationId,
+          tenantId, category: "reasoning", correlationId: execution.correlationId,
           messages: [{ role: "user", content: `User's original request: "${execution.prompt}"\n\nTool execution results:\n${resultsSummary}` }],
           tools: [], systemPrompt: synthesisSystemPrompt
         });
@@ -684,7 +684,7 @@ class AIOrchestrationService {
     // recorded as succeeded=true — a workflow correctly pausing for a
     // required human decision is not itself a failure.
     AIObservabilityService.recordRequestMetric({
-      tenantId, branchId, userId, requestId, correlationId: execution.correlationId, type: "plan_execution",
+      tenantId, userId, requestId, correlationId: execution.correlationId, type: "plan_execution",
       provider: synthesisProvider, model: synthesisModel, modelFallbackCount: synthesisFallbackCount, abTestId: synthesisAbTestId, abVariant: synthesisAbVariant,
       durationMs: execution.totalExecutionTimeMs,
       inputTokens: execution.tokenUsage.inputTokens, outputTokens: execution.tokenUsage.outputTokens, totalTokens: execution.tokenUsage.totalTokens,
@@ -836,7 +836,6 @@ class AIOrchestrationService {
       try {
         await this.executePlan({
           tenantId: execution.tenantId,
-          branchId: execution.branchId,
           userId: execution.userId,
           userName: execution.userName,
           role: execution.role,

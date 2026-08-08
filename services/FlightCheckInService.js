@@ -27,7 +27,7 @@ const findBooking = (identifier, tenantId) => {
  * install (unlike Amadeus's Self-Service catalog).
  */
 class FlightCheckInService {
-  static async checkIn({ tenantId, branchId, userId, userName, bookingId, travelerIds, requestId }) {
+  static async checkIn({ tenantId, userId, userName, bookingId, travelerIds, requestId }) {
     // §9 request shape.
     if (!bookingId || !String(bookingId).trim()) {
       throwStructured("bookingId is required.", "INVALID_REQUEST", 400);
@@ -40,11 +40,6 @@ class FlightCheckInService {
     const booking = await findBooking(String(bookingId), tenantId);
     if (!booking) {
       throwStructured("Flight booking not found for this tenant.", "BOOKING_NOT_FOUND", 404);
-    }
-
-    // "Same Branch" — consistent with EXT-005/EXT-009's own convention.
-    if (branchId && booking.branchId && booking.branchId !== branchId) {
-      throwStructured("Flight booking belongs to a different branch.", "BRANCH_MISMATCH", 403);
     }
 
     if (INACTIVE_BOOKING_STATUSES.includes(booking.status)) {
@@ -79,7 +74,7 @@ class FlightCheckInService {
       if (mongoose.connection?.readyState === 1) {
         AuditLogModel.create({
           tenantId, userId, action: "AIRLINE_CHECKIN_UNSUPPORTED", module: "ExternalIntegrations",
-          requestId, branchId, targetId: booking._id.toString(),
+          requestId, targetId: booking._id.toString(),
           details: { airlineCode: booking.airlineCode, travelerIds, executionTimeMs: 0 }
         }).catch((err) => console.error("Check-in (unsupported) audit log error:", err));
       }
@@ -107,7 +102,7 @@ class FlightCheckInService {
         if (mongoose.connection?.readyState === 1) {
           AuditLogModel.create({
             tenantId, userId, action: "AIRLINE_CHECKIN_FAILED", module: "ExternalIntegrations",
-            requestId, branchId, targetId: booking._id.toString(),
+            requestId, targetId: booking._id.toString(),
             details: { airlineCode: booking.airlineCode, travelerIds: pendingTravelerIds, reason: err.message, executionTimeMs: Date.now() - startedAt }
           }).catch((auditErr) => console.error("Check-in failure audit log error:", auditErr));
         }
@@ -213,13 +208,13 @@ class FlightCheckInService {
     // "Notify Traveler" — no real Email/SMS/WhatsApp/Push provider exists in
     // this codebase; same honest pattern as EXT-005/EXT-009.
     for (const travelerId of travelerIds) {
-      publishEvent("NotificationRequested", { tenantId, branchId, event: "CheckInCompleted", priority: "normal", channel: "Email", recipientId: travelerId, flightBookingId: booking._id });
+      publishEvent("NotificationRequested", { tenantId, event: "CheckInCompleted", priority: "normal", channel: "Email", recipientId: travelerId, flightBookingId: booking._id });
     }
 
     if (mongoose.connection?.readyState === 1) {
       AuditLogModel.create({
         tenantId, userId, action: "AIRLINE_CHECKIN_COMPLETED", module: "ExternalIntegrations",
-        requestId, branchId, targetId: booking._id.toString(),
+        requestId, targetId: booking._id.toString(),
         details: { airlineCode: booking.airlineCode, travelerIds, executionTimeMs: Date.now() - startedAt }
       }).catch((err) => console.error("Check-in audit log error:", err));
     }

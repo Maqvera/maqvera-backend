@@ -212,7 +212,6 @@ export const AddTravelPlanHotels = async (req, res) => {
       const hotelAssignment = await TravelHotelAssignmentModel.create({
         travelPlanId,
         tenantId,
-        branchId: travelPlan.branchId,
         hotelCatalogId: hotelCatalogId || null,
         hotelName,
         city,

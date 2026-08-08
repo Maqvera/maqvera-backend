@@ -29,7 +29,7 @@ async function sweepPendingApprovals() {
     await request.save();
     reminderCount += 1;
     publishEvent("NotificationRequested", {
-      tenantId: request.tenantId, branchId: request.branchId, event: "AIApprovalReminder", priority: "normal",
+      tenantId: request.tenantId, event: "AIApprovalReminder", priority: "normal",
       approvalRequestId: request._id, toolName: request.toolName, requestedBy: request.requestedBy, requiredRole: request.requiredRole
     });
   }
@@ -45,7 +45,7 @@ async function sweepPendingApprovals() {
     await request.save();
     escalationCount += 1;
     publishEvent("NotificationRequested", {
-      tenantId: request.tenantId, branchId: request.branchId, event: "AIApprovalEscalated", priority: "high",
+      tenantId: request.tenantId, event: "AIApprovalEscalated", priority: "high",
       approvalRequestId: request._id, toolName: request.toolName, requestedBy: request.requestedBy, requiredRole: request.requiredRole
     });
     publishEvent("AIApprovalEscalated", { approvalRequestId: request._id, tenantId: request.tenantId, toolName: request.toolName });

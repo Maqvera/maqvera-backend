@@ -31,11 +31,6 @@ const AuditLogSchema = new mongoose.Schema({
         default: null,
         index: true
     },
-    branchId: {
-        type: String,
-        default: null,
-        index: true
-    },
     sessionId: {
         type: mongoose.Schema.Types.ObjectId,
         ref: "session",

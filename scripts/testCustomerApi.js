@@ -26,7 +26,6 @@ const token = jwt.sign(
     username: "TestAdmin",
     name: "Test Administrator",
     tenantId: "ALNOOR",
-    branchId: "KARACHI",
     permissions: [
       "customers.read",
       "customers.create",

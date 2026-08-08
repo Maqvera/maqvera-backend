@@ -25,7 +25,7 @@ User Mgmt ──►  What organization do you belong to?
                   │
           ──►  What role do you have?
                   │
-          ──►  Which branch & department do you work in?
+          ──►  Which department do you work in?
                   │
           ──►  What permissions do you have?
 ```
@@ -96,20 +96,6 @@ Changes an employee's employment status across the controlled lifecycle:
 - Suspended users cannot log in.
 - Active users may access the system.
 - Status history is preserved in `EmploymentHistoryModel`.
-
----
-
-## Endpoint Contract: PATCH /api/v1/users/{userId}/branch
-
-### Business Purpose
-Transfers an employee between branches within the same tenant.
-
-### Request Payload
-```json
-{
-  "branchId": "KARACHI"
-}
-```
 
 ---
 
@@ -199,7 +185,6 @@ User Management
 ├── Employee Profiles
 │
 ├── Organization
-│   ├── Branch Assignment
 │   ├── Department Assignment
 │   └── Reporting Structure
 │

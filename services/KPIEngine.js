@@ -40,11 +40,10 @@ class KPIEngine {
    * Compute all Travel operational metrics from database.
    * Zero hardcoding — every number comes from aggregation queries.
    */
-  static async computeTravelMetrics({ tenantId, branchId = "all" }) {
+  static async computeTravelMetrics({ tenantId }) {
     if (mongoose.connection.readyState !== 1) return null;
 
-    const branchFilter = branchId === "all" ? {} : { branchId };
-    const baseFilter = { tenantId, ...branchFilter };
+    const baseFilter = { tenantId };
     const now = new Date();
     const dayStart = startOfDay(now);
     const dayEnd = endOfDay(now);
@@ -456,21 +455,20 @@ class KPIEngine {
   /**
    * Build and persist the Travel summary table for today.
    */
-  static async refreshTravelSummary({ tenantId, branchId = "all" }) {
-    const result = await this.computeTravelMetrics({ tenantId, branchId });
+  static async refreshTravelSummary({ tenantId }) {
+    const result = await this.computeTravelMetrics({ tenantId });
     if (!result) return null;
 
     const { metrics, kpis } = result;
     const date = todayStr();
     const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-    const yesterdaySummary = await TravelOperationsSummaryModel.findOne({ tenantId, branchId, summaryDate: yesterday }).lean();
+    const yesterdaySummary = await TravelOperationsSummaryModel.findOne({ tenantId, summaryDate: yesterday }).lean();
     const aiInsights = this.generateTravelAIInsights(metrics, kpis, yesterdaySummary);
 
     const summary = await TravelOperationsSummaryModel.findOneAndUpdate(
-      { tenantId, branchId, summaryDate: date },
+      { tenantId, summaryDate: date },
       {
         tenantId,
-        branchId,
         summaryDate: date,
         metrics,
         kpis,
@@ -481,9 +479,9 @@ class KPIEngine {
     );
 
     // Invalidate cache
-    await CacheManager.invalidatePattern(`dashboard:*:${tenantId}:${branchId}`);
-    publishEvent("DashboardRefreshed", { tenantId, branchId, module: "travel" });
-    publishEvent("KPICalculated", { tenantId, branchId, module: "travel" });
+    await CacheManager.invalidatePattern(`dashboard:*:${tenantId}`);
+    publishEvent("DashboardRefreshed", { tenantId, module: "travel" });
+    publishEvent("KPICalculated", { tenantId, module: "travel" });
 
     return summary;
   }
@@ -495,11 +493,10 @@ class KPIEngine {
   /**
    * Compute all Visa metrics from database — single source of truth for dashboard KPIs.
    */
-  static async computeVisaMetrics({ tenantId, branchId = "main" }) {
+  static async computeVisaMetrics({ tenantId }) {
     if (mongoose.connection.readyState !== 1) return null;
 
-    const branchFilter = branchId === "all" ? {} : { branchId };
-    const caseFilter = { tenantId, isSoftDeleted: false, ...branchFilter };
+    const caseFilter = { tenantId, isSoftDeleted: false };
     const now = new Date();
     const dayStart = startOfDay(now);
     const dayEnd = endOfDay(now);
@@ -620,7 +617,7 @@ class KPIEngine {
       rejectionReasonStats,
     ] = await Promise.all([
       EmbassySubmissionModel.aggregate([
-        { $match: { tenantId, isSoftDeleted: false, ...branchFilter } },
+        { $match: { tenantId, isSoftDeleted: false } },
         {
           $group: {
             _id: "$embassyName",
@@ -647,11 +644,11 @@ class KPIEngine {
         { $limit: 20 },
       ]),
       EmbassySubmissionModel.aggregate([
-        { $match: { tenantId, isSoftDeleted: false, ...branchFilter, createdAt: { $gte: dayStart, $lte: dayEnd } } },
+        { $match: { tenantId, isSoftDeleted: false, createdAt: { $gte: dayStart, $lte: dayEnd } } },
         { $group: { _id: null, todaysSubmissions: { $sum: 1 } } },
       ]),
       VisaAppointmentModel.aggregate([
-        { $match: { tenantId, isSoftDeleted: false, ...branchFilter } },
+        { $match: { tenantId, isSoftDeleted: false } },
         {
           $group: {
             _id: null,
@@ -704,21 +701,20 @@ class KPIEngine {
         },
       ]),
       PassportTrackingModel.aggregate([
-        { $match: { tenantId, ...branchFilter } },
+        { $match: { tenantId } },
         { $group: { _id: "$currentStatus", count: { $sum: 1 } } },
       ]),
       PassportTrackingModel.aggregate([
         {
           $match: {
             tenantId,
-            ...branchFilter,
             currentStatus: { $in: ["Ready For Dispatch", "Dispatched", "With Courier"] },
           },
         },
         { $group: { _id: null, pendingCourierDispatch: { $sum: 1 } } },
       ]),
       TravelIncidentManagementModel.aggregate([
-        { $match: { tenantId, isSoftDeleted: false, ...branchFilter, sourceModule: { $in: ["Visa", "Customer", "Compliance"] } } },
+        { $match: { tenantId, isSoftDeleted: false, sourceModule: { $in: ["Visa", "Customer", "Compliance"] } } },
         {
           $group: {
             _id: null,
@@ -777,7 +773,7 @@ class KPIEngine {
         },
       ]),
       VisaAppointmentModel.aggregate([
-        { $match: { tenantId, isSoftDeleted: false, ...branchFilter, assignedOfficer: { $ne: null } } },
+        { $match: { tenantId, isSoftDeleted: false, assignedOfficer: { $ne: null } } },
         {
           $group: {
             _id: "$assignedOfficer",
@@ -791,14 +787,13 @@ class KPIEngine {
         },
       ]),
       EnterpriseVerificationModel.aggregate([
-        { $match: { tenantId, isSoftDeleted: false, ...branchFilter, verificationStatus: { $in: pendingVerificationStatuses } } },
+        { $match: { tenantId, isSoftDeleted: false, verificationStatus: { $in: pendingVerificationStatuses } } },
         { $group: { _id: null, pendingVerification: { $sum: 1 } } },
       ]),
       BookingHeaderModel.aggregate([
         {
           $match: {
             tenantId,
-            ...branchFilter,
             bookingType: { $in: ["visa_only", "umrah", "hajj", "corporate_travel", "custom_package"] },
           },
         },
@@ -948,8 +943,8 @@ class KPIEngine {
   /**
    * Build and persist the Visa summary table for today.
    */
-  static async refreshVisaSummary({ tenantId, branchId = "main" }) {
-    const result = await this.computeVisaMetrics({ tenantId, branchId });
+  static async refreshVisaSummary({ tenantId }) {
+    const result = await this.computeVisaMetrics({ tenantId });
     if (!result) return null;
 
     const {
@@ -964,10 +959,9 @@ class KPIEngine {
     const date = todayStr();
 
     const summary = await VisaAnalyticsSummaryModel.findOneAndUpdate(
-      { tenantId, branchId, summaryDate: date },
+      { tenantId, summaryDate: date },
       {
         tenantId,
-        branchId,
         summaryDate: date,
         metrics,
         kpis,
@@ -982,17 +976,17 @@ class KPIEngine {
       { upsert: true, new: true, setDefaultsOnInsert: true }
     );
 
-    await CacheManager.invalidatePattern(`visa-dashboard:*:${tenantId}:${branchId}*`);
-    await this.refreshVisaCustomerSummaries({ tenantId, branchId });
-    publishEvent("DashboardRefreshed", { tenantId, branchId, module: "visa" });
-    publishEvent("KPICalculated", { tenantId, branchId, module: "visa" });
-    publishEvent("AnalyticsUpdated", { tenantId, branchId, module: "visa" });
-    publishEvent("PerformanceSnapshotCreated", { tenantId, branchId, module: "visa" });
-    publishEvent("RevenueSummaryUpdated", { tenantId, branchId, module: "visa", revenue: metrics.revenue });
-    publishEvent("OfficerMetricsUpdated", { tenantId, branchId, module: "visa", officerCount: officerMetrics.length });
-    publishEvent("EmbassyMetricsUpdated", { tenantId, branchId, module: "visa", embassyCount: embassyMetrics.length });
+    await CacheManager.invalidatePattern(`visa-dashboard:*:${tenantId}*`);
+    await this.refreshVisaCustomerSummaries({ tenantId });
+    publishEvent("DashboardRefreshed", { tenantId, module: "visa" });
+    publishEvent("KPICalculated", { tenantId, module: "visa" });
+    publishEvent("AnalyticsUpdated", { tenantId, module: "visa" });
+    publishEvent("PerformanceSnapshotCreated", { tenantId, module: "visa" });
+    publishEvent("RevenueSummaryUpdated", { tenantId, module: "visa", revenue: metrics.revenue });
+    publishEvent("OfficerMetricsUpdated", { tenantId, module: "visa", officerCount: officerMetrics.length });
+    publishEvent("EmbassyMetricsUpdated", { tenantId, module: "visa", embassyCount: embassyMetrics.length });
     if (metrics.slaBreaches > 0) {
-      publishEvent("SLAExceeded", { tenantId, branchId, module: "visa", slaBreachCount: metrics.slaBreaches });
+      publishEvent("SLAExceeded", { tenantId, module: "visa", slaBreachCount: metrics.slaBreaches });
     }
 
     return summary;
@@ -1002,15 +996,14 @@ class KPIEngine {
    * Materialize per-customer KPIs. This runs only in the event/cron refresh
    * worker; customer-facing dashboard requests read this collection only.
    */
-  static async refreshVisaCustomerSummaries({ tenantId, branchId = "main" }) {
+  static async refreshVisaCustomerSummaries({ tenantId }) {
     if (mongoose.connection.readyState !== 1) return 0;
 
-    const branchFilter = branchId === "all" ? {} : { branchId };
     const date = todayStr();
     const pendingAppointmentStatuses = ["Scheduled", "Confirmed", "In Progress", "Reminder Sent"];
     const [caseMetrics, appointmentMetrics] = await Promise.all([
       VisaCaseModel.aggregate([
-        { $match: { tenantId, isSoftDeleted: false, travelerId: { $ne: null }, ...branchFilter } },
+        { $match: { tenantId, isSoftDeleted: false, travelerId: { $ne: null } } },
         {
           $group: {
             _id: "$travelerId",
@@ -1032,7 +1025,7 @@ class KPIEngine {
         },
       ]).allowDiskUse(true),
       VisaAppointmentModel.aggregate([
-        { $match: { tenantId, isSoftDeleted: false, travelerId: { $ne: null }, ...branchFilter } },
+        { $match: { tenantId, isSoftDeleted: false, travelerId: { $ne: null } } },
         {
           $group: {
             _id: "$travelerId",
@@ -1047,7 +1040,7 @@ class KPIEngine {
       const completedOrRejected = (item.completedApplications || 0) + (item.rejectedApplications || 0);
       return {
         updateOne: {
-          filter: { tenantId, branchId, customerId: String(item._id), summaryDate: date },
+          filter: { tenantId, customerId: String(item._id), summaryDate: date },
           update: {
             $set: {
               metrics: {
@@ -1061,7 +1054,7 @@ class KPIEngine {
               lastRefreshedAt: new Date(),
               source: "event-driven-kpi-engine",
             },
-            $setOnInsert: { tenantId, branchId, customerId: String(item._id), summaryDate: date },
+            $setOnInsert: { tenantId, customerId: String(item._id), summaryDate: date },
           },
           upsert: true,
         },
@@ -1069,7 +1062,7 @@ class KPIEngine {
     });
 
     if (operations.length > 0) await VisaCustomerAnalyticsSummaryModel.bulkWrite(operations, { ordered: false });
-    await CacheManager.invalidatePattern(`visa-dashboard:customer:${tenantId}:${branchId}:*`);
+    await CacheManager.invalidatePattern(`visa-dashboard:customer:${tenantId}:*`);
     return operations.length;
   }
 
@@ -1080,11 +1073,10 @@ class KPIEngine {
   /**
    * Refresh summaries for a single tenant across all modules.
    */
-  static async refreshAllForTenant({ tenantId, branchId }) {
+  static async refreshAllForTenant({ tenantId }) {
     const results = await Promise.allSettled([
-      this.refreshTravelSummary({ tenantId, branchId: branchId || "all" }),
-      this.refreshVisaSummary({ tenantId, branchId: branchId || "main" }),
-      this.refreshVisaSummary({ tenantId, branchId: "all" }),
+      this.refreshTravelSummary({ tenantId }),
+      this.refreshVisaSummary({ tenantId }),
     ]);
 
     const failures = results.filter((r) => r.status === "rejected");

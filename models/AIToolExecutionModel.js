@@ -9,7 +9,6 @@ import mongoose from "mongoose";
 const AIToolExecutionSchema = new mongoose.Schema(
   {
     tenantId: { type: String, required: true, index: true },
-    branchId: { type: String, default: "main", index: true },
     userId: { type: String, required: true, index: true },
     // Snapshot of the requesting user's identity/authorization at plan
     // creation time — EXT-036 §22 "Recovery" needs to reconstruct the

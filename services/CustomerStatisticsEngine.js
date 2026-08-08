@@ -48,7 +48,7 @@ class CustomerStatisticsEngine {
   }
 
   static async refreshCustomerStatistics({ customerId, tenantId }) {
-    const bookings = await BookingHeaderModel.find({ customerId, tenantId }).select("status visaStatus totalAmount travelDate financialSnapshot branchId").lean();
+    const bookings = await BookingHeaderModel.find({ customerId, tenantId }).select("status visaStatus totalAmount travelDate financialSnapshot").lean();
 
     const now = new Date();
     const metrics = { ...ZERO_METRICS };
@@ -66,11 +66,9 @@ class CustomerStatisticsEngine {
     metrics.refundAmount = bookings.reduce((sum, b) => sum + (b.financialSnapshot?.refundAmount || 0), 0);
     metrics.averageBookingValue = revenueBookings.length > 0 ? Math.round((metrics.totalRevenue / revenueBookings.length) * 100) / 100 : 0;
 
-    const branchId = bookings[0]?.branchId || null;
-
     await CustomerStatisticsSummaryModel.findOneAndUpdate(
       { tenantId, customerId },
-      { tenantId, branchId, customerId, metrics, lastRefreshedAt: new Date() },
+      { tenantId, customerId, metrics, lastRefreshedAt: new Date() },
       { upsert: true, setDefaultsOnInsert: true }
     );
 

@@ -4,13 +4,6 @@ import { createRequestId } from "../utils/authTokens.js";
 import { publishEvent } from "../utils/eventBus.js";
 import { getAccessScope } from "../utils/accessScope.js";
 
-// There is no branch-level data isolation (see
-// docs/06-external-integrations/03-final-architecture-no-branches-rbac.md) —
-// branchId here is purely an optional, descriptive narrowing filter. Every
-// tenant user can already see every branch's data; requesting "all" only
-// requires the search.branch.all permission below, not a specific role/branch.
-const resolveSearchBranch = (scope, requestedBranchId) => requestedBranchId || "all";
-
 /**
  * 1. GET /api/v1/search
  * Performs global search across all authorized ERP entities.
@@ -31,7 +24,6 @@ export const GlobalSearch = async (req, res) => {
       page = "1",
       pageSize = "20",
       entityType,
-      branchId,
       sort = "score",
       order = "desc",
       country, embassy, visaType, status, officer, nationality, priority, severity, dateFrom, dateTo
@@ -40,16 +32,11 @@ export const GlobalSearch = async (req, res) => {
     const parsedPage = Math.max(parseInt(page, 10), 1);
     // The search service applies the environment-configured upper bound.
     const parsedPageSize = Math.max(parseInt(pageSize, 10) || 20, 1);
-    const resolvedBranchId = resolveSearchBranch(scope, branchId);
-    if (resolvedBranchId === "all" && !(req.auth?.permissions || []).includes("search.branch.all")) {
-      return sendError(res, 403, "Branch-wide search requires search.branch.all permission.", requestId);
-    }
 
     const { results, meta } = await SearchEngineService.globalSearch({
       tenantId,
       query: q,
       entityType,
-      branchId: resolvedBranchId,
       permissions: req.auth?.permissions || [],
       filters: { country, embassy, visaType, status, officer, nationality, priority, severity, dateFrom, dateTo },
       page: parsedPage,
@@ -86,7 +73,7 @@ export const GetSearchSuggestions = async (req, res) => {
       return sendError(res, 403, "Tenant context is required.", requestId);
     }
 
-    const suggestions = await SearchEngineService.getSuggestions({ tenantId: scope.tenantId, userId: req.auth?.userId || req.auth?.id, branchId: resolveSearchBranch(scope, req.query.branchId), permissions: req.auth?.permissions || [] });
+    const suggestions = await SearchEngineService.getSuggestions({ tenantId: scope.tenantId, userId: req.auth?.userId || req.auth?.id, permissions: req.auth?.permissions || [] });
 
     return sendSuccess(res, 200, "Search suggestions retrieved successfully.", suggestions, requestId);
   } catch (err) {
@@ -175,7 +162,7 @@ export const RebuildSearchIndex = async (req, res) => {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
-    const result = await SearchEngineService.rebuildIndexForTenant({ tenantId: scope.tenantId, branchId: scope.branchId || req.body?.branchId || req.query.branchId || null });
+    const result = await SearchEngineService.rebuildIndexForTenant({ tenantId: scope.tenantId });
     return sendSuccess(res, 200, "Search index rebuild completed.", result, requestId);
   } catch (err) {
     console.error("RebuildSearchIndex Error:", err);
