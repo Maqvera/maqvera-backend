@@ -11,6 +11,8 @@ import { validateEnv } from "./config/envValidator.js";
 import { requestLogger } from "./utils/logger.js";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler.js";
 import requestContext from "./middleware/requestContext.js";
+import swaggerUi from "swagger-ui-express";
+import { swaggerSpec } from "./config/swaggerConfig.js";
 
 import route from "./routes/Authroute.js";
 import customerRoute from "./routes/CustomerRoutes.js";
@@ -80,8 +82,8 @@ const bootstrapEnterpriseServices = async () => {
 
 const app = express();
 
-// Security & parsing
-app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
+// Security & parsing (Disable CSP for Swagger UI compatibility)
+app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" }, contentSecurityPolicy: false }));
 app.use(compression());
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
@@ -109,6 +111,9 @@ app.get("/health", async (req, res) => {
     timestamp: new Date().toISOString()
   });
 });
+
+// Swagger OpenAPI Documentation
+app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec, { explorer: true }));
 
 // Routes
 app.use("/api/v1/auth", route);
