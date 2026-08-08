@@ -5,8 +5,12 @@ import mongoose from "mongoose";
 
 dotenv.config();
 
-// Cross-tenant + cross-branch isolation check for BookingController.js after
-// its getAccessScope migration (docs/06-external-integrations/02-tenant-isolation-audit.md §7/§8).
+// Company-level isolation check for BookingController.js — see
+// docs/06-external-integrations/03-final-architecture-no-branches-rbac.md.
+// Bookings are shared business data within a tenant: every authenticated
+// user of a company sees all of that company's bookings regardless of their
+// own branchId (purely descriptive now, never an access boundary). Tenant
+// isolation itself remains absolute.
 
 let dbAvailable = false;
 const uri = process.env.URI || process.env.MONGO_URI;
@@ -28,57 +32,61 @@ const makeRes = () => ({
   json(payload) { this.body = payload; return this; },
 });
 
-const authFor = (tenantId, branchId, roleScope) => ({ tenantId, branchId, id: "tester", userId: "tester", permissions: ["admin", "bookings.read", "booking.read"], roleScope });
+const authFor = (tenantId, branchId) => ({ tenantId, branchId, id: "tester", userId: "tester", permissions: ["admin", "bookings.read", "booking.read"] });
 
-test("Bookings are isolated by tenant AND by branch (branch-scoped roles), tenant-wide for tenant-scoped roles", { skip: !dbAvailable && dbSkipReason }, async (t) => {
+test("Bookings are shared company-wide within a tenant (branchId is descriptive only, never enforced), and tenant isolation remains absolute", { skip: !dbAvailable && dbSkipReason }, async (t) => {
   const { ListBookings, GetBooking } = await import("../controllers/BookingController.js");
   const BookingHeaderModel = (await import("../models/BookingHeaderModel.js")).default;
 
   const suffix = Date.now();
   const tenantA = `test-booking-iso-a-${suffix}`;
   const tenantB = `test-booking-iso-b-${suffix}`;
-  const branch1 = "BR1";
-  const branch2 = "BR2";
 
   t.after(async () => {
     await BookingHeaderModel.deleteMany({ tenantId: { $in: [tenantA, tenantB] } });
   });
 
+  // Two bookings under tenant A, deliberately tagged with different
+  // (now purely descriptive) branchId values, plus one under tenant B.
   const bookingA1 = await BookingHeaderModel.create({
-    tenantId: tenantA, branchId: branch1, bookingReference: `BK-A1-${suffix}`, customerId: new mongoose.Types.ObjectId()
+    tenantId: tenantA, branchId: "OFFICE-1", bookingReference: `BK-A1-${suffix}`, customerId: new mongoose.Types.ObjectId()
+  });
+  const bookingA2 = await BookingHeaderModel.create({
+    tenantId: tenantA, branchId: "OFFICE-2", bookingReference: `BK-A2-${suffix}`, customerId: new mongoose.Types.ObjectId()
   });
   await BookingHeaderModel.create({
-    tenantId: tenantA, branchId: branch2, bookingReference: `BK-A2-${suffix}`, customerId: new mongoose.Types.ObjectId()
-  });
-  await BookingHeaderModel.create({
-    tenantId: tenantB, branchId: branch1, bookingReference: `BK-B1-${suffix}`, customerId: new mongoose.Types.ObjectId()
+    tenantId: tenantB, branchId: "OFFICE-1", bookingReference: `BK-B1-${suffix}`, customerId: new mongoose.Types.ObjectId()
   });
 
-  const listAndGetRefs = async (tenantId, branchId, roleScope) => {
+  const listRefs = async (tenantId, branchId) => {
     const res = makeRes();
-    await ListBookings({ auth: authFor(tenantId, branchId, roleScope), query: {} }, res);
+    await ListBookings({ auth: authFor(tenantId, branchId), query: {} }, res);
     assert.equal(res.statusCode, 200, JSON.stringify(res.body));
     return res.body.data.data.map((b) => b.bookingNumber);
   };
 
-  // Branch-scoped: only their own branch's booking.
-  assert.deepEqual(await listAndGetRefs(tenantA, branch1, "branch"), [`BK-A1-${suffix}`]);
-  assert.deepEqual(await listAndGetRefs(tenantA, branch2, "branch"), [`BK-A2-${suffix}`]);
-  assert.deepEqual(await listAndGetRefs(tenantB, branch1, "branch"), [`BK-B1-${suffix}`]);
+  // Any employee of tenant A sees BOTH tenant A bookings, regardless of
+  // which office their own token says they belong to.
+  const seenFromOffice1 = await listRefs(tenantA, "OFFICE-1");
+  const seenFromOffice2 = await listRefs(tenantA, "OFFICE-2");
+  const seenFromNoOffice = await listRefs(tenantA, null);
+  assert.deepEqual(seenFromOffice1.sort(), [`BK-A1-${suffix}`, `BK-A2-${suffix}`].sort());
+  assert.deepEqual(seenFromOffice2.sort(), [`BK-A1-${suffix}`, `BK-A2-${suffix}`].sort());
+  assert.deepEqual(seenFromNoOffice.sort(), [`BK-A1-${suffix}`, `BK-A2-${suffix}`].sort());
 
-  // Tenant-scoped: every branch within the tenant, never another tenant.
-  const tenantAAll = await listAndGetRefs(tenantA, branch1, "tenant");
-  assert.deepEqual(tenantAAll.sort(), [`BK-A1-${suffix}`, `BK-A2-${suffix}`].sort());
+  // Tenant B only ever sees its own booking.
+  assert.deepEqual(await listRefs(tenantB, "OFFICE-1"), [`BK-B1-${suffix}`]);
 
-  // A branch-scoped caller in branch2 cannot fetch branch1's booking by ID.
-  const crossBranchRes = makeRes();
-  await GetBooking({ auth: authFor(tenantA, branch2, "branch"), params: { bookingId: bookingA1._id.toString() } }, crossBranchRes);
-  assert.equal(crossBranchRes.statusCode, 404, JSON.stringify(crossBranchRes.body));
+  // A tenant A employee tagged with a different office than the booking's
+  // own can still fetch it directly by ID — no branch gate on reads.
+  const crossOfficeRes = makeRes();
+  await GetBooking({ auth: authFor(tenantA, "OFFICE-2"), params: { bookingId: bookingA1._id.toString() } }, crossOfficeRes);
+  assert.equal(crossOfficeRes.statusCode, 200, JSON.stringify(crossOfficeRes.body));
 
-  // Its own branch's booking is fetchable.
-  const ownBranchRes = makeRes();
-  await GetBooking({ auth: authFor(tenantA, branch1, "branch"), params: { bookingId: bookingA1._id.toString() } }, ownBranchRes);
-  assert.equal(ownBranchRes.statusCode, 200, JSON.stringify(ownBranchRes.body));
+  // But tenant B can never fetch tenant A's booking, regardless of office.
+  const crossTenantRes = makeRes();
+  await GetBooking({ auth: authFor(tenantB, "OFFICE-1"), params: { bookingId: bookingA2._id.toString() } }, crossTenantRes);
+  assert.equal(crossTenantRes.statusCode, 404, JSON.stringify(crossTenantRes.body));
 
   // No auth context at all -> rejected, never defaulted.
   const noAuthRes = makeRes();

@@ -35,7 +35,10 @@ export const DEFAULT_PERMISSIONS = [
   { key: "travel_plans.write", description: "Create/update travel plan records (alias)" },
   { key: "finance.read", description: "Read finance records" },
   { key: "visa.read", description: "Read visa records" },
+  { key: "visa.dashboard.management", description: "View management-only visa dashboards (executive, finance, compliance, AI insights)" },
   { key: "reporting.read", description: "Read reporting data" },
+  { key: "roles.read", description: "View the company's role catalog and permission assignments" },
+  { key: "roles.manage", description: "Create, edit, and delete roles and their permission assignments" },
   { key: "admin", description: "Full administrative override across all modules" },
 ];
 
@@ -64,7 +67,7 @@ export const ensureAdministratorRole = async (tenantId) => {
   const administratorPermissions = DEFAULT_PERMISSIONS.map((permission) => permission.key);
   return RoleModel.findOneAndUpdate(
     { tenantId, name: ADMINISTRATOR_ROLE_NAME },
-    { tenantId, name: ADMINISTRATOR_ROLE_NAME, permissions: administratorPermissions, scope: "tenant", status: "active" },
+    { tenantId, name: ADMINISTRATOR_ROLE_NAME, permissions: administratorPermissions, description: "Full administrative access to every module.", isSystemRole: true, status: "active" },
     { upsert: true, new: true }
   );
 };

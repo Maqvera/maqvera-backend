@@ -10,6 +10,10 @@ module: Auth / Tenant Isolation
 
 ---
 
+> **Superseded in part**: the branch-level isolation this document built (§7/§8, and every "branch-scoped vs. tenant-scoped role" reference below) was intentionally removed by a later architectural decision — the company/tenant is now the *only* data-isolation boundary; branches are descriptive metadata only. See `docs/06-external-integrations/03-final-architecture-no-branches-rbac.md`. This document's **tenant-isolation** findings and fixes (the `"default-tenant"`/`|| "default"` hardcoded-fallback bugs, the public-route PII leak, `getAccessScope` centralization) remain accurate and unaffected — only the branch dimension is superseded.
+
+---
+
 ## 1. Findings confirmed
 
 - Every controller sampled (`CustomerController.js`, `BookingController.js`, `UserController.js`, and ~35 others) already required `req.auth.tenantId` and 403'd if absent — the disease from `01-tenant-provisioning-fix.md` was genuinely isolated to the provisioning entry point.

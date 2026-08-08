@@ -5,8 +5,11 @@ import mongoose from "mongoose";
 
 dotenv.config();
 
-// Cross-tenant + cross-branch isolation check for UserController.js after
-// its getAccessScope migration (docs/06-external-integrations/02-tenant-isolation-audit.md §7/§8).
+// Company-level isolation check for UserController.js — see
+// docs/06-external-integrations/03-final-architecture-no-branches-rbac.md.
+// Employee profiles are shared business data within a tenant: every
+// authenticated user of a company sees the whole company roster regardless
+// of their own branchId. Tenant isolation itself remains absolute.
 
 let dbAvailable = false;
 const uri = process.env.URI || process.env.MONGO_URI;
@@ -28,17 +31,15 @@ const makeRes = () => ({
   json(payload) { this.body = payload; return this; },
 });
 
-const authFor = (tenantId, branchId, roleScope) => ({ tenantId, branchId, id: "tester", userId: "tester", permissions: ["users.read", "employee.read"], roleScope });
+const authFor = (tenantId, branchId) => ({ tenantId, branchId, id: "tester", userId: "tester", permissions: ["users.read", "employee.read"] });
 
-test("Employee profiles are isolated by tenant AND by branch (branch-scoped roles), tenant-wide for tenant-scoped roles", { skip: !dbAvailable && dbSkipReason }, async (t) => {
+test("Employee profiles are shared company-wide within a tenant (branchId is descriptive only, never enforced), and tenant isolation remains absolute", { skip: !dbAvailable && dbSkipReason }, async (t) => {
   const { ListUsers } = await import("../controllers/UserController.js");
   const EmployeeProfileModel = (await import("../models/EmployeeProfilemodel.js")).default;
 
   const suffix = Date.now();
   const tenantA = `test-user-iso-a-${suffix}`;
   const tenantB = `test-user-iso-b-${suffix}`;
-  const branch1 = "BR1";
-  const branch2 = "BR2";
 
   t.after(async () => {
     await EmployeeProfileModel.deleteMany({ tenantId: { $in: [tenantA, tenantB] } });
@@ -49,23 +50,25 @@ test("Employee profiles are isolated by tenant AND by branch (branch-scoped role
     employeeCode, firstName: "Test", lastName: "Employee", email: `${employeeCode.toLowerCase()}@example.com`, phone: "+923001234567"
   });
 
-  await makeProfile(tenantA, branch1, `EMP-A1-${suffix}`);
-  await makeProfile(tenantA, branch2, `EMP-A2-${suffix}`);
-  await makeProfile(tenantB, branch1, `EMP-B1-${suffix}`);
+  await makeProfile(tenantA, "OFFICE-1", `EMP-A1-${suffix}`);
+  await makeProfile(tenantA, "OFFICE-2", `EMP-A2-${suffix}`);
+  await makeProfile(tenantB, "OFFICE-1", `EMP-B1-${suffix}`);
 
-  const listCodes = async (tenantId, branchId, roleScope) => {
+  const listCodes = async (tenantId, branchId) => {
     const res = makeRes();
-    await ListUsers({ auth: authFor(tenantId, branchId, roleScope), query: {} }, res);
+    await ListUsers({ auth: authFor(tenantId, branchId), query: {} }, res);
     assert.equal(res.statusCode, 200, JSON.stringify(res.body));
     return res.body.data.map((u) => u.employeeCode);
   };
 
-  assert.deepEqual(await listCodes(tenantA, branch1, "branch"), [`EMP-A1-${suffix}`]);
-  assert.deepEqual(await listCodes(tenantA, branch2, "branch"), [`EMP-A2-${suffix}`]);
-  assert.deepEqual(await listCodes(tenantB, branch1, "branch"), [`EMP-B1-${suffix}`]);
+  // Any employee of tenant A sees the WHOLE company roster, regardless of
+  // which office their own token says they belong to.
+  assert.deepEqual((await listCodes(tenantA, "OFFICE-1")).sort(), [`EMP-A1-${suffix}`, `EMP-A2-${suffix}`].sort());
+  assert.deepEqual((await listCodes(tenantA, "OFFICE-2")).sort(), [`EMP-A1-${suffix}`, `EMP-A2-${suffix}`].sort());
+  assert.deepEqual((await listCodes(tenantA, null)).sort(), [`EMP-A1-${suffix}`, `EMP-A2-${suffix}`].sort());
 
-  const tenantAAll = await listCodes(tenantA, branch1, "tenant");
-  assert.deepEqual(tenantAAll.sort(), [`EMP-A1-${suffix}`, `EMP-A2-${suffix}`].sort());
+  // Tenant B only ever sees its own roster.
+  assert.deepEqual(await listCodes(tenantB, "OFFICE-1"), [`EMP-B1-${suffix}`]);
 
   const noAuthRes = makeRes();
   await ListUsers({ auth: null, query: {} }, noAuthRes);

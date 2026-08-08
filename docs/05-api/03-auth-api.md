@@ -1,12 +1,10 @@
 # Auth API Contract
 
-## Role Scope (Branch vs. Tenant-wide access)
+## Role-Based Access Control (RBAC)
 
-`Role.name` (`models/Rolemodel.js`) is unique **per tenant**, not globally — each tenant owns and can independently customize its own role catalog. Every role also carries a `scope`:
-- `"branch"` (default) — the role can only access data in the caller's own `branchId`.
-- `"tenant"` — the role can access every branch within its own tenant, but never crosses into another tenant. The `Administrator` role every tenant gets at `POST /auth/setup` is seeded with `scope: "tenant"`.
+`Role.name` (`models/Rolemodel.js`) is unique **per tenant**, not globally — each tenant owns and can independently customize its own role catalog via `POST/PATCH/DELETE /api/v1/roles` (see `controllers/RoleController.js`). There is no branch-scoped vs. tenant-scoped role distinction — **the tenant (company) is the only data-isolation boundary**. Every authenticated user of a tenant shares that tenant's business data (customers, bookings, visa cases, etc.) regardless of their own `branchId`, which is retained only as a descriptive/organizational field, never as an access filter. See `docs/06-external-integrations/03-final-architecture-no-branches-rbac.md` for the full rationale.
 
-`authenticateAccessToken` resolves the caller's role (tenant-scoped lookup: `{ tenantId, name }`) on every request and attaches `req.auth.roleScope`, which `GET /auth/me` also echoes back as `roleScope`. Controllers derive their Mongo filter from this via `getAccessScope(req)` (`utils/accessScope.js`) instead of a hand-rolled `{ tenantId }`/`{ tenantId, branchId }` filter — see `docs/05-api/05-customer-api.md`'s "Access Scope" section for a concrete example of the enforced behavior.
+What a user may actually *do* is governed entirely by their role's `permissions` array (e.g. `"customer.read"`, `"booking.create"`, `"admin"`). `authenticateAccessToken` resolves the caller's role (tenant-scoped lookup: `{ tenantId, name }`) on every request and attaches the resolved list as `req.auth.permissions`, which `GET /auth/me` also echoes back as `permissions`. Controllers derive their Mongo filter from `getAccessScope(req)` (`utils/accessScope.js`), which returns `{ tenantId }` (or `null` if unauthenticated) — never a hand-rolled `{ tenantId, branchId }` filter — and separately check `req.auth.permissions` for the specific permission key(s) an action requires. See `docs/05-api/05-customer-api.md`'s "Access Scope" section for a concrete example of the tenant-scoping behavior.
 
 ## Tenant Provisioning
 

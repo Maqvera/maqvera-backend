@@ -4,11 +4,12 @@ import { createRequestId } from "../utils/authTokens.js";
 import { publishEvent } from "../utils/eventBus.js";
 import { getAccessScope } from "../utils/accessScope.js";
 
-// Branch-scoped roles (models/Rolemodel.js scope: "branch") are always
-// locked to their own branch, regardless of ?branchId= — previously only the
-// literal "all" was blocked, so a branch-scoped caller could still request a
-// DIFFERENT specific branch's search results/suggestions by name.
-const resolveSearchBranch = (scope, requestedBranchId) => scope.branchId || requestedBranchId || "all";
+// There is no branch-level data isolation (see
+// docs/06-external-integrations/03-final-architecture-no-branches-rbac.md) —
+// branchId here is purely an optional, descriptive narrowing filter. Every
+// tenant user can already see every branch's data; requesting "all" only
+// requires the search.branch.all permission below, not a specific role/branch.
+const resolveSearchBranch = (scope, requestedBranchId) => requestedBranchId || "all";
 
 /**
  * 1. GET /api/v1/search

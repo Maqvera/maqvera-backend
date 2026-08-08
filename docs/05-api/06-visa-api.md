@@ -2974,13 +2974,14 @@ Dashboards never query transactional Visa collections directly. `KPIEngine.compu
 
 ## Business Purpose
 
-Returns one of 9 role-scoped dashboards, each reading only from the cached summary table.
+Returns one of 9 dashboards, each reading only from the cached summary table. Access is governed entirely by RBAC permissions (admin-configurable via `/api/v1/roles`), never by role name — see `docs/06-external-integrations/03-final-architecture-no-branches-rbac.md`.
 
 ## Business Rules
 
-- `executive`, `finance`, `compliance`, and `ai-insights` require a management role (`administrator`, `manager`, `director`, `executive`, `finance`, `compliance`).
-- `branchId=all` (branch-wide visibility) also requires a management role.
-- **Sensitive KPI masking**: `branch` dashboard (available to non-management branch staff) strips `revenue`/`refundRatio` unless the requester holds a management role.
+- Every endpoint requires the `visa.read` permission.
+- `executive`, `finance`, `compliance`, and `ai-insights` additionally require the `visa.dashboard.management` permission (or `admin`).
+- `branchId` is a purely descriptive, optional narrowing query param — there is no branch-level data isolation, so `branchId=all` is available to any caller with `visa.read`.
+- **Sensitive KPI masking**: `branch` dashboard strips `revenue`/`refundRatio` unless the requester holds `visa.dashboard.management` (or `admin`).
 - Every dashboard view is written to `AuditLogModel` (`VIEW_DASHBOARD`) — Search/Dashboard Audit Access.
 
 ## Endpoint Contract: GET /api/v1/dashboard/kpis

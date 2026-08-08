@@ -67,7 +67,10 @@ class PassportTrackingEngineService {
   }
 
   static async receivePassport({ visaCaseId, receivedBy, receivedDate, remarks, location = "Branch Office" }, tenantId, branchId, userId) {
-    const visaCase = await VisaCaseModel.findOne({ _id: visaCaseId, tenantId, branchId, isSoftDeleted: { $ne: true } });
+    // No branch-level data isolation — branchId (if provided) is descriptive
+    // only, never part of the existence lookup, or a real case on a
+    // different branchId would wrongly 404 here.
+    const visaCase = await VisaCaseModel.findOne({ _id: visaCaseId, tenantId, isSoftDeleted: { $ne: true } });
     if (!visaCase) {
       throw new Error(`Visa Case with ID ${visaCaseId} not found.`);
     }

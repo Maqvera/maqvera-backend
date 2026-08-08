@@ -37,7 +37,7 @@ Reuses this codebase's already-installed `openai` SDK (the same package `OpenAIA
 
 ### Permission filtering (§6/§12) — `AIKnowledgeService.hasKnowledgeAccess()`
 
-Five hierarchical tiers (public/internal/operations/management/executive), config-driven role mapping (`utils/aiKnowledgeConfig.js`, deliberately a separate knob from `AIToolRegistry.js`'s own `MANAGEMENT_ROLES` — one gates tool execution, this gates knowledge content visibility). Applied **before** ranking — an unauthorized chunk is filtered out of the candidate set entirely, never scored, never reaches the LLM.
+Five hierarchical tiers (public/internal/operations/management/executive), config-driven role mapping (`utils/aiKnowledgeConfig.js`'s `managementRoles`/`executiveRoles`/`operationsRoles` — a deliberately separate, content-tiering knob, distinct from `AIToolRegistry.js`'s tool-execution gating, which is permission-based via `req.auth.permissions`). Applied **before** ranking — an unauthorized chunk is filtered out of the candidate set entirely, never scored, never reaches the LLM.
 
 ### Real weighted ranking (§9) + context assembly (§10/§13)
 

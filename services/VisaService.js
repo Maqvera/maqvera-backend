@@ -644,7 +644,11 @@ class VisaService {
       attachments: noteData.attachments || [],
       isPrivate: noteData.isPrivate || false,
       tenantId,
-      branchId,
+      // branchId is a required, descriptive stamp on the timeline event —
+      // inherit the case's own real branchId rather than a caller-omitted
+      // null (which fails TravelTimelineModel's schema validation) or a
+      // hardcoded "main" (which is wrong for any other branch).
+      branchId: branchId || visaCase.branchId,
       userId,
       userName,
       userRole,

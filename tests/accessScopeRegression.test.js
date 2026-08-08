@@ -22,9 +22,24 @@ const listJsFiles = (dir) => {
     .map((f) => path.join(dir, f));
 };
 
+const listJsFilesRecursive = (dir) => {
+  const full = path.join(repoRoot, dir);
+  if (!fs.existsSync(full)) return [];
+  return fs.readdirSync(full, { withFileTypes: true }).flatMap((entry) => {
+    const relPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) return listJsFilesRecursive(relPath);
+    return entry.name.endsWith(".js") ? [relPath] : [];
+  });
+};
+
 const controllerFiles = listJsFiles("controllers");
 const middlewareFiles = listJsFiles("middleware");
 const scannedFiles = [...controllerFiles, ...middlewareFiles];
+// Authorization-gate checks (role-name-allowlist regression, below) also need
+// to cover services/ — that's exactly where a second instance of the
+// hardcoded-role-gate bug was found (services/ai/AIToolRegistry.js), missed
+// by the controllers/middleware-only scan above.
+const authGateScannedFiles = [...scannedFiles, ...listJsFilesRecursive("services")];
 
 const readRepoFile = (relativePath) => fs.readFileSync(path.join(repoRoot, relativePath), "utf8");
 
@@ -75,6 +90,17 @@ const MIGRATED_TO_ACCESS_SCOPE = [
   "controllers/TravelHotelController.js",
   "controllers/TravelPlanController.js",
 ];
+
+// Guards the bug found and fixed in VisaDashboardController.js: API/dashboard
+// authorization must go through req.auth.permissions (admin-configurable via
+// /api/v1/roles — controllers/RoleController.js), never a hardcoded set of
+// role-name literals. See
+// docs/06-external-integrations/03-final-architecture-no-branches-rbac.md.
+test("no controller/middleware/service file gates access with a hardcoded role-name allowlist", () => {
+  const roleSetPattern = /const\s+\w*ROLES\w*\s*=\s*(new Set\(|\[)/;
+  const offenders = authGateScannedFiles.filter((file) => roleSetPattern.test(readRepoFile(file)));
+  assert.deepEqual(offenders, [], "these files define a hardcoded role-name allowlist for authorization instead of checking req.auth.permissions/context.permissions: " + offenders.join(", "));
+});
 
 test("every controller on the getAccessScope migration list actually imports it", () => {
   const offenders = MIGRATED_TO_ACCESS_SCOPE.filter((relativePath) => {

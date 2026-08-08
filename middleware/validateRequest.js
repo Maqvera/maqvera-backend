@@ -225,6 +225,20 @@ export const userSchemas = {
   }),
 };
 
+export const roleSchemas = {
+  createRole: Joi.object({
+    name: Joi.string().trim().min(2).max(100).required(),
+    description: Joi.string().trim().max(500).optional().allow(""),
+    permissions: Joi.array().items(Joi.string().trim().min(1).max(100)).min(1).required(),
+  }),
+
+  updateRole: Joi.object({
+    description: Joi.string().trim().max(500).optional().allow(""),
+    permissions: Joi.array().items(Joi.string().trim().min(1).max(100)).min(1).optional(),
+    status: Joi.string().valid("active", "inactive").optional(),
+  }).min(1),
+};
+
 const buildBookingSchemas = () => {
   const {
     bookingTypeValues,

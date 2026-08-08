@@ -15,13 +15,19 @@ const RoleSchema = new mongoose.Schema({
         type: String,
         required: true
     }],
-    // "branch" (default): the role can only access data in req.auth.branchId.
-    // "tenant": the role can access every branch within its own tenant, but
-    // never crosses into another tenant. See utils/accessScope.js.
-    scope: {
+    // Human-readable label only (e.g. "Sales Manager", "Visa Officer") —
+    // access control is entirely driven by `permissions`, never by scope/
+    // branch. See docs/06-external-integrations/03-final-architecture-no-branches-rbac.md.
+    description: {
         type: String,
-        enum: ["branch", "tenant"],
-        default: "branch"
+        default: null
+    },
+    // System roles (e.g. the "Administrator" role every tenant is seeded
+    // with at setup) cannot be deleted via the Role management API, though
+    // their permission set can still be edited.
+    isSystemRole: {
+        type: Boolean,
+        default: false
     },
     status: {
         type: String,

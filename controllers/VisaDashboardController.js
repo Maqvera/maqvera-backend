@@ -5,35 +5,20 @@ import { sendError, sendSuccess } from "../utils/apiResponse.js";
 import { createRequestId } from "../utils/authTokens.js";
 import { getAccessScope } from "../utils/accessScope.js";
 
-const MANAGEMENT_ROLES = new Set([
-  "administrator",
-  "admin",
-  "manager",
-  "management",
-  "director",
-  "executive",
-  "finance",
-  "compliance",
-]);
-
-const resolveRole = (req) => String(req.auth?.role || req.auth?.roles?.[0] || "").toLowerCase();
+// Dashboard access is governed entirely by RBAC permissions (admin-configurable
+// via /api/v1/roles), never by hardcoded role names — see
+// docs/06-external-integrations/03-final-architecture-no-branches-rbac.md.
+// "branchId" below is a descriptive/optional query narrowing parameter, not an
+// isolation boundary — every user of the tenant can already see every branch's
+// data; there is no branch-scoped restriction to check.
+const hasManagementAccess = (permissions) => permissions.includes("visa.dashboard.management") || permissions.includes("admin");
 
 const dashboardScope = (req) => {
-  const role = resolveRole(req);
-  // Branch-scoped roles (models/Rolemodel.js scope: "branch") are always
-  // locked to their own branch, regardless of ?branchId= — previously only
-  // the literal "all" was blocked, so a branch-scoped, non-management caller
-  // could still request a DIFFERENT specific branch's dashboard by name.
-  // Tenant-scoped roles may request "all" (subject to the separate
-  // MANAGEMENT_ROLES business-permission gate below) or narrow to one branch.
   const accessScope = getAccessScope(req);
-  const requestedBranch = accessScope?.branchId || req.query.branchId || "all";
-  if (!accessScope?.branchId && requestedBranch === "all" && !MANAGEMENT_ROLES.has(role)) {
-    throw new Error("Branch-wide dashboard access requires a management role.");
-  }
+  const permissions = req.auth?.permissions || [];
   return {
     tenantId: accessScope?.tenantId || null,
-    branchId: requestedBranch,
+    branchId: req.query.branchId || "all",
     userId: req.auth?.userId || req.auth?.id || null,
     customerId: req.query.customerId || req.auth?.customerId || null,
     embassyId: req.query.embassyId || null,
@@ -41,15 +26,9 @@ const dashboardScope = (req) => {
     period: req.query.period || "7 Days",
     dateFrom: req.query.dateFrom || null,
     dateTo: req.query.dateTo || null,
-    isManagement: MANAGEMENT_ROLES.has(role),
-    role,
+    isManagement: hasManagementAccess(permissions),
+    permissions,
   };
-};
-
-const requireManagementRole = (role) => {
-  if (!MANAGEMENT_ROLES.has(role)) {
-    throw new Error("This dashboard requires a management role.");
-  }
 };
 
 const handle = (method, message, { managementOnly = false, dashboardType = "unknown" } = {}) => async (req, res) => {
@@ -57,7 +36,12 @@ const handle = (method, message, { managementOnly = false, dashboardType = "unkn
   try {
     const scope = dashboardScope(req);
     if (!scope.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
-    if (managementOnly) requireManagementRole(scope.role);
+    if (!scope.permissions.includes("visa.read") && !scope.permissions.includes("admin")) {
+      return sendError(res, 403, "visa.read permission required.", requestId);
+    }
+    if (managementOnly && !scope.isManagement) {
+      return sendError(res, 403, "This dashboard requires the visa.dashboard.management permission.", requestId);
+    }
 
     const result = await method.call(VisaAnalyticsEngine, scope);
 
@@ -71,7 +55,7 @@ const handle = (method, message, { managementOnly = false, dashboardType = "unkn
         userId: scope.userId || "system",
         action: "VIEW_DASHBOARD",
         module: "VisaAnalytics",
-        details: { dashboardType, role: scope.role, fromCache: result.fromCache },
+        details: { dashboardType, isManagement: scope.isManagement, fromCache: result.fromCache },
       }).catch((err) => console.error("Dashboard audit log error:", err));
     }
 
@@ -90,8 +74,7 @@ const handle = (method, message, { managementOnly = false, dashboardType = "unkn
       requestId
     );
   } catch (error) {
-    const statusCode = error.message.includes("management role") || error.message.includes("Branch-wide") ? 403 : 500;
-    return sendError(res, statusCode, error.message || "Dashboard unavailable.", requestId);
+    return sendError(res, 500, error.message || "Dashboard unavailable.", requestId);
   }
 };
 

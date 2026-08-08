@@ -210,8 +210,8 @@ export const CreateTravelPlan = async (req, res) => {
       return sendError(res, 400, "arrivalDate must be after departureDate.", requestId);
     }
 
-    // 1. Fetch & Validate Booking — branch-scoped too, so a travel plan can
-    // never be created off a booking the caller can't themselves see.
+    // 1. Fetch & Validate Booking — tenant-scoped, so a travel plan can
+    // never be created off a booking belonging to another tenant.
     const booking = await BookingHeaderModel.findOne({ _id: bookingId, ...scope });
     if (!booking) {
       return sendError(res, 404, "Booking not found or does not belong to tenant.", requestId);
@@ -1039,9 +1039,8 @@ export const SearchTravelPlans = async (req, res) => {
     const page = Math.max(parseInt(req.query.page || "1", 10), 1);
     const pageSize = Math.min(Math.max(parseInt(req.query.pageSize || String(travelConfig.defaultPageSize), 10), 1), travelConfig.maxPageSize);
 
-    // Branch-scoped roles are always locked to their own branch, regardless
-    // of ?branchId= — previously any authenticated caller could search any
-    // branch's (or every branch's) travel plans by name.
+    // branchId is an optional, descriptive narrowing filter only — every
+    // tenant user can already search every branch's travel plans.
     const { results, meta } = await SearchEngineService.globalSearch({
       tenantId: scope.tenantId,
       query,

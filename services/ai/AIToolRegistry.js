@@ -24,8 +24,6 @@ import AIApprovalRequestModel from "../../models/AIApprovalRequestModel.js";
 import { publishEvent } from "../../utils/eventBus.js";
 import { getAIConfig } from "../../utils/aiConfig.js";
 
-const MANAGEMENT_ROLES = new Set(["administrator", "admin", "manager", "management", "director", "executive", "finance", "compliance"]);
-
 const hasPermission = (permissions, required) => required.some((p) => permissions.includes(p)) || permissions.includes("admin");
 
 /**
@@ -702,20 +700,20 @@ const TOOLS = [
   },
   {
     name: "get_revenue_dashboard",
-    description: "Get revenue/finance KPIs. Only available to management-tier roles (executive, finance, director, manager, admin).",
+    description: "Get revenue/finance KPIs. Only available to callers whose role grants the visa.dashboard.management permission (admin-configurable via /api/v1/roles).",
     parameters: { type: "object", properties: {} },
-    outputSchema: { type: "object", description: "Finance dashboard summary object, or { denied: true } if the caller's role isn't management-tier." },
+    outputSchema: { type: "object", description: "Finance dashboard summary object, or { denied: true } if the caller lacks the visa.dashboard.management permission." },
     requiredPermissions: ["visa.read"],
-    requiredRoles: [...MANAGEMENT_ROLES],
+    requiredRoles: [],
     executionType: "Synchronous",
     riskLevel: "read",
     requiresApproval: false,
     version: "1.0.0",
     ownerModule: "Analytics",
     handler: async (args, context) => {
-      const role = (context.role || "").toLowerCase();
-      if (!MANAGEMENT_ROLES.has(role) && !context.permissions.includes("admin")) {
-        return { denied: true, message: "This user's role does not have access to financial dashboards." };
+      const permissions = context.permissions || [];
+      if (!permissions.includes("visa.dashboard.management") && !permissions.includes("admin")) {
+        return { denied: true, message: "This user's permissions do not include visa.dashboard.management." };
       }
       const result = await VisaAnalyticsEngine.financeDashboard({ tenantId: context.tenantId, branchId: context.branchId || "main" });
       return result.data;

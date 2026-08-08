@@ -33,7 +33,7 @@ const makeRes = () => ({
   json(payload) { this.body = payload; return this; },
 });
 
-const authFor = (tenantId, branchId) => ({ tenantId, branchId, id: "tester", userId: "tester", permissions: ["admin"], roleScope: "tenant" });
+const authFor = (tenantId, branchId) => ({ tenantId, branchId, id: "tester", userId: "tester", permissions: ["admin"] });
 
 test("Visa case reads never cross tenant boundaries, and a missing tenant context is rejected rather than defaulted", { skip: !dbAvailable && dbSkipReason }, async (t) => {
   const { getVisaCases, getVisaCaseById } = await import("../controllers/VisaController.js");

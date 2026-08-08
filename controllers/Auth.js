@@ -216,10 +216,10 @@ const resolveDomainContext = async (user) => {
     user.branchId ? BranchModel.findOne({ branchKey: user.branchId, tenantKey: user.tenantId, status: "active" }).lean() : null,
     // Role.name is unique per tenant, not globally — must filter by the
     // user's own tenant, or this could resolve a different tenant's
-    // same-named role (wrong permission set/scope entirely).
+    // same-named role (wrong permission set entirely).
     user.role && user.tenantId ? RoleModel.findOne({ tenantId: user.tenantId, name: user.role, status: "active" }).lean() : null,
   ]);
-  return { tenant, branch, role, permissions: role?.permissions || [], roleScope: role?.scope || "branch" };
+  return { tenant, branch, role, permissions: role?.permissions || [] };
 };
 
 // Signup must always land a new user in an explicit, caller-specified
@@ -785,7 +785,6 @@ export const Me = async (Req, Res) => {
       tenant: { id: domain.tenant?._id || user.tenantId, name: domain.tenant?.name || null, key: domain.tenant?.tenantKey || user.tenantId },
       branch: { id: domain.branch?._id || user.branchId, name: domain.branch?.name || null, key: domain.branch?.branchKey || user.branchId },
       permissions: domain.permissions,
-      roleScope: domain.roleScope,
       preferences,
     }, meta.requestId);
   } catch (error) {

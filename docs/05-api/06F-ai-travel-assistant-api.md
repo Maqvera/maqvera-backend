@@ -35,7 +35,7 @@ Users describe what they need in natural language; the assistant determines whic
 ✓ Flight/Hotel Recommendations (via real `GdsIntegrationService` search calls)
 ✓ Visa Requirement Explanation (via `VisaRequirementService`)
 ✓ Booking/Travel Plan Status Lookup
-✓ Operational & Revenue Dashboard Questions (via `VisaAnalyticsEngine`, revenue gated to management roles)
+✓ Operational & Revenue Dashboard Questions (via `VisaAnalyticsEngine`, revenue gated to the `visa.dashboard.management` permission)
 ✓ Incident Summaries (via `EnterpriseIncidentEngineService`)
 ✓ Natural Language / Knowledge Base Search (via `SearchEngineService.globalSearch`, which applies its own real permission filtering)
 ✓ Multi-step planning (chained tool calls within one conversation turn)
@@ -84,7 +84,7 @@ User + AIConversationModel (persisted history)
 
 Every source below is read-only, called with the requesting user's real `tenantId`/`branchId`/`permissions` — the AI can never see data the same user couldn't already see through the real API:
 
-Flight Search · Hotel Search · Visa Requirements · Booking Status · Travel Operations Status · Operations Dashboard · Revenue Dashboard (management roles only) · Incident Summaries · Enterprise Search (Knowledge Base fallback)
+Flight Search · Hotel Search · Visa Requirements · Booking Status · Travel Operations Status · Operations Dashboard · Revenue Dashboard (requires `visa.dashboard.management` permission) · Incident Summaries · Enterprise Search (Knowledge Base fallback)
 
 ---
 
@@ -137,7 +137,7 @@ All routes require `Authorization: Bearer <JWT>` and the `ai.assistant.use` perm
 
 ### AI Decision Rules (enforced, not just prompted)
 - Never invent flights/hotels/prices/availability — `recommendations` are built directly from real tool-call results, never parsed out of the model's free text.
-- Tool execution is permission-checked per call against the real caller's permissions (`flight.search`, `hotel.search`, `visa.read`, `bookings.read`/`booking.read`, `travel.read`/`travel_plans.read`, `incidents.read`; `get_revenue_dashboard` additionally requires a management-tier role).
+- Tool execution is permission-checked per call against the real caller's permissions (`flight.search`, `hotel.search`, `visa.read`, `bookings.read`/`booking.read`, `travel.read`/`travel_plans.read`, `incidents.read`; `get_revenue_dashboard` additionally requires the `visa.dashboard.management` permission).
 - Bounded tool-calling loop (`AI_MAX_TOOL_ITERATIONS`, default 4) — never an unbounded agent loop.
 
 ---

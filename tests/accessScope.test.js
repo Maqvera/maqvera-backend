@@ -9,6 +9,12 @@ dotenv.config();
 
 // ---------------------------------------------------------------------------
 // Pure unit coverage for the shared helper — no DB required.
+//
+// Company = tenant is the ONLY data-isolation boundary in this system (see
+// docs/06-external-integrations/03-final-architecture-no-branches-rbac.md).
+// There is no branch-level restriction: every authenticated user of a
+// tenant shares the same business data. WHICH APIs/actions a user may use is
+// governed entirely by req.auth.permissions (RBAC), not by this helper.
 // ---------------------------------------------------------------------------
 
 test("getAccessScope returns null (never a wide-open filter) when there is no tenant context", () => {
@@ -16,36 +22,25 @@ test("getAccessScope returns null (never a wide-open filter) when there is no te
   assert.equal(getAccessScope({ auth: {} }), null);
 });
 
-test("getAccessScope restricts a branch-scoped role to its own tenant + branch", () => {
-  const scope = getAccessScope({ auth: { tenantId: "acme", branchId: "KARACHI", roleScope: "branch" } });
-  assert.deepEqual(scope, { tenantId: "acme", branchId: "KARACHI" });
+test("getAccessScope returns tenant-only scope regardless of any other auth fields", () => {
+  assert.deepEqual(getAccessScope({ auth: { tenantId: "acme" } }), { tenantId: "acme" });
+  assert.deepEqual(getAccessScope({ auth: { tenantId: "acme", branchId: "LAHORE" } }), { tenantId: "acme" });
+  assert.deepEqual(getAccessScope({ auth: { tenantId: "acme", role: "SalesManager", permissions: ["booking.read"] } }), { tenantId: "acme" });
 });
 
-test("getAccessScope grants a tenant-scoped role every branch within its own tenant only", () => {
-  const scope = getAccessScope({ auth: { tenantId: "acme", branchId: "KARACHI", roleScope: "tenant" } });
-  assert.deepEqual(scope, { tenantId: "acme" });
-});
-
-test("getAccessScope defaults to branch-restricted when roleScope is missing/unknown (fail-safe)", () => {
-  const scope = getAccessScope({ auth: { tenantId: "acme", branchId: "KARACHI" } });
-  assert.deepEqual(scope, { tenantId: "acme", branchId: "KARACHI" });
-});
-
-test("applyOptionalBranchFilter lets a tenant-scoped caller narrow to a branch via query param", () => {
+test("applyOptionalBranchFilter is a no-op passthrough — branchId is no longer a filter dimension", () => {
   const scope = { tenantId: "acme" };
-  assert.deepEqual(applyOptionalBranchFilter(scope, "LAHORE"), { tenantId: "acme", branchId: "LAHORE" });
-});
-
-test("applyOptionalBranchFilter cannot widen a branch-locked caller onto a different branch", () => {
-  const scope = { tenantId: "acme", branchId: "KARACHI" };
-  assert.deepEqual(applyOptionalBranchFilter(scope, "LAHORE"), { tenantId: "acme", branchId: "KARACHI" });
+  assert.deepEqual(applyOptionalBranchFilter(scope, "LAHORE"), scope);
+  assert.deepEqual(applyOptionalBranchFilter(scope, undefined), scope);
+  assert.equal(applyOptionalBranchFilter(null, "LAHORE"), null);
 });
 
 // ---------------------------------------------------------------------------
-// End-to-end isolation matrix: (tenant A/branch1, tenant A/branch2,
-// tenant B/branch1) x (branch-role, tenant-role), verified against the real
-// CustomerController + real MongoDB. Only runs when a DB is reachable, and
-// cleans up everything it creates — same pattern as tests/authSetup.test.js.
+// End-to-end proof: every authenticated user of a tenant shares the same
+// business data (no per-branch/per-user partitioning), and tenant isolation
+// still holds absolutely. Verified against the real CustomerController +
+// real MongoDB. Only runs when a DB is reachable, and cleans up everything
+// it creates.
 // ---------------------------------------------------------------------------
 
 let dbAvailable = false;
@@ -70,7 +65,7 @@ const makeRes = () => ({
 
 const CUSTOMER_PERMISSIONS = ["customer.read", "customer.create", "customers.read", "customers.create"];
 
-test("Branch vs. tenant role scope: exact visibility matrix across (tenant A/branch1, tenant A/branch2, tenant B/branch1) x (branch-role, tenant-role)", { skip: !dbAvailable && dbSkipReason }, async (t) => {
+test("Company-wide shared data: every user of a tenant sees all of that tenant's customers regardless of their own branchId, and tenant B never sees tenant A's data", { skip: !dbAvailable && dbSkipReason }, async (t) => {
   const { SetupTenant } = await import("../controllers/Auth.js");
   const { ListCustomers, CreateCustomer } = await import("../controllers/CustomerController.js");
   const TenantModel = (await import("../models/Tenantmodel.js")).default;
@@ -82,8 +77,6 @@ test("Branch vs. tenant role scope: exact visibility matrix across (tenant A/bra
   const suffix = Date.now();
   const tenantAKey = `test-scope-a-${suffix}`;
   const tenantBKey = `test-scope-b-${suffix}`;
-  const branch1Key = "MAIN";
-  const branch2Key = "BRANCH2";
 
   t.after(async () => {
     await CustomerModel.deleteMany({ tenantId: { $in: [tenantAKey, tenantBKey] } });
@@ -93,7 +86,6 @@ test("Branch vs. tenant role scope: exact visibility matrix across (tenant A/bra
     await TenantModel.deleteMany({ tenantKey: { $in: [tenantAKey, tenantBKey] } });
   });
 
-  // --- Provision tenant A (with a second branch) and tenant B via the real setup endpoint ---
   const adminAEmail = `admin-a-${suffix}@example.com`;
   const setupARes = makeRes();
   await SetupTenant({ body: { companyName: "Tenant A Co", tenantKey: tenantAKey, username: "tenantAadmin", email: adminAEmail, password: "StrongPass1!" }, requestId: `setup-a-${suffix}`, headers: {}, header: () => null }, setupARes);
@@ -104,88 +96,44 @@ test("Branch vs. tenant role scope: exact visibility matrix across (tenant A/bra
   await SetupTenant({ body: { companyName: "Tenant B Co", tenantKey: tenantBKey, username: "tenantBadmin", email: adminBEmail, password: "StrongPass1!" }, requestId: `setup-b-${suffix}`, headers: {}, header: () => null }, setupBRes);
   assert.equal(setupBRes.statusCode, 201, JSON.stringify(setupBRes.body));
 
-  await BranchModel.create({ branchKey: branch2Key, tenantKey: tenantAKey, name: "Second Branch", status: "active" });
-
-  // Sanity: the tenant-wide Administrator role SetupTenant creates must be
-  // its own tenant-scoped document with scope "tenant" — not a shared/global row.
+  // Sanity: each tenant owns an independent Administrator role document —
+  // that part of tenant isolation (role catalogs never shared across
+  // companies) is unaffected by removing branch enforcement.
   const roleA = await RoleModel.findOne({ tenantId: tenantAKey, name: "Administrator" }).lean();
   const roleB = await RoleModel.findOne({ tenantId: tenantBKey, name: "Administrator" }).lean();
-  assert.ok(roleA && roleA.scope === "tenant");
-  assert.ok(roleB && roleB.scope === "tenant");
+  assert.ok(roleA && roleB);
   assert.notEqual(roleA._id.toString(), roleB._id.toString(), "each tenant must own an independent Administrator role document");
 
-  // --- Branch-scoped roles, one per tenant (role names are unique per tenant, not globally) ---
-  await RoleModel.create({ tenantId: tenantAKey, name: "BranchStaff", permissions: CUSTOMER_PERMISSIONS, scope: "branch", status: "active" });
-  await RoleModel.create({ tenantId: tenantBKey, name: "BranchStaff", permissions: CUSTOMER_PERMISSIONS, scope: "branch", status: "active" });
-
-  // --- Branch-scoped identities (created directly — no invite/role-assignment API exists yet) ---
+  // A second, non-admin employee of tenant A, on a DIFFERENT "branch" value
+  // than the admin (branchId is now purely descriptive, never enforced).
   const hash = await bcrypt.hash("StrongPass1!", 10);
-  const brancherA1 = await UserModel.create({ username: "brancherA1", email: `brancher-a1-${suffix}@example.com`, password: hash, tenantId: tenantAKey, branchId: branch1Key, role: "BranchStaff", status: "active", emailVerified: true });
-  const brancherA2 = await UserModel.create({ username: "brancherA2", email: `brancher-a2-${suffix}@example.com`, password: hash, tenantId: tenantAKey, branchId: branch2Key, role: "BranchStaff", status: "active", emailVerified: true });
-  const brancherB1 = await UserModel.create({ username: "brancherB1", email: `brancher-b1-${suffix}@example.com`, password: hash, tenantId: tenantBKey, branchId: branch1Key, role: "BranchStaff", status: "active", emailVerified: true });
+  const staffA = await UserModel.create({ username: "staffA", email: `staff-a-${suffix}@example.com`, password: hash, tenantId: tenantAKey, branchId: "SOME-OTHER-OFFICE", role: "Administrator", status: "active", emailVerified: true });
 
   const adminA = await UserModel.findOne({ email: adminAEmail });
   const adminB = await UserModel.findOne({ email: adminBEmail });
 
-  const authFor = (user, roleScope) => ({ tenantId: user.tenantId, branchId: user.branchId, id: user._id.toString(), permissions: roleScope === "tenant" ? CUSTOMER_PERMISSIONS.concat("admin") : CUSTOMER_PERMISSIONS, roleScope });
+  const authFor = (user) => ({ tenantId: user.tenantId, branchId: user.branchId, id: user._id.toString(), permissions: CUSTOMER_PERMISSIONS.concat("admin") });
 
-  // --- Write-side: each branch-scoped user creates "their" customer in their own branch ---
-  // Distinct phone/lastName per customer: duplicate-detection is tenant-wide
-  // (see detectDuplicateCustomer), so two same-tenant customers sharing an
-  // identifier would otherwise trip a false-positive 409 here.
-  let phoneCounter = 0;
-  const createCustomer = async (user, roleScope, extraBody = {}) => {
-    phoneCounter += 1;
-    const req = { auth: authFor(user, roleScope), body: { firstName: "Test", lastName: `Customer${phoneCounter}-${suffix}`, primaryEmail: `cust-${Math.random().toString(36).slice(2)}-${suffix}@example.com`, primaryPhone: `+9230012${String(suffix).slice(-3)}${phoneCounter}`, ...extraBody }, query: {}, requestId: `create-${suffix}-${Math.random()}` };
+  // Tenant A's admin creates a customer.
+  const createRes = makeRes();
+  await CreateCustomer({ auth: authFor(adminA), body: { firstName: "Test", lastName: `Customer-${suffix}`, primaryEmail: `cust-${suffix}@example.com`, primaryPhone: "+923001234567" }, query: {}, requestId: `create-${suffix}` }, createRes);
+  assert.equal(createRes.statusCode, 201, JSON.stringify(createRes.body));
+  const customerId = createRes.body.data.customerId.toString();
+
+  const listCustomerIds = async (user) => {
     const res = makeRes();
-    await CreateCustomer(req, res);
-    return res;
-  };
-
-  const custA1Res = await createCustomer(brancherA1, "branch");
-  assert.equal(custA1Res.statusCode, 201, JSON.stringify(custA1Res.body));
-  const custA2Res = await createCustomer(brancherA2, "branch");
-  assert.equal(custA2Res.statusCode, 201, JSON.stringify(custA2Res.body));
-  const custB1Res = await createCustomer(brancherB1, "branch");
-  assert.equal(custB1Res.statusCode, 201, JSON.stringify(custB1Res.body));
-
-  const custA1Id = custA1Res.body.data.customerId.toString();
-  const custA2Id = custA2Res.body.data.customerId.toString();
-  const custB1Id = custB1Res.body.data.customerId.toString();
-
-  // Write-side branch enforcement: a branch-scoped user cannot create a
-  // customer in a DIFFERENT branch of their own tenant by naming it in the body.
-  const crossBranchAttempt = await createCustomer(brancherA1, "branch", { branchId: branch2Key });
-  assert.equal(crossBranchAttempt.statusCode, 403, JSON.stringify(crossBranchAttempt.body));
-  const branch2CountAfterAttempt = await CustomerModel.countDocuments({ tenantId: tenantAKey, branchId: branch2Key });
-  assert.equal(branch2CountAfterAttempt, 1, "the rejected cross-branch create must not have persisted a second customer under branch2");
-
-  // --- Read-side: exact visibility matrix ---
-  const listCustomerIds = async (user, roleScope) => {
-    const req = { auth: authFor(user, roleScope), query: {} };
-    const res = makeRes();
-    await ListCustomers(req, res);
+    await ListCustomers({ auth: authFor(user), query: {} }, res);
     assert.equal(res.statusCode, 200, JSON.stringify(res.body));
-    return res.body.data.map((c) => c.customerId.toString()).sort();
+    return res.body.data.map((c) => c.customerId.toString());
   };
 
-  const visibleToA1 = await listCustomerIds(brancherA1, "branch");
-  assert.deepEqual(visibleToA1, [custA1Id], "tenant A / branch1 (branch-role) must see only its own branch's customer");
+  // staffA has a completely different branchId from adminA, yet still sees
+  // the same shared company data — proving branch is no longer a boundary.
+  assert.ok((await listCustomerIds(staffA)).includes(customerId), "a different employee of the SAME tenant must see the customer regardless of branchId");
+  assert.ok((await listCustomerIds(adminA)).includes(customerId));
 
-  const visibleToA2 = await listCustomerIds(brancherA2, "branch");
-  assert.deepEqual(visibleToA2, [custA2Id], "tenant A / branch2 (branch-role) must see only its own branch's customer");
-
-  const visibleToB1 = await listCustomerIds(brancherB1, "branch");
-  assert.deepEqual(visibleToB1, [custB1Id], "tenant B / branch1 (branch-role) must see only its own branch's customer");
-
-  const visibleToAdminA = await listCustomerIds(adminA, "tenant");
-  assert.deepEqual(visibleToAdminA.sort(), [custA1Id, custA2Id].sort(), "tenant A admin (tenant-role) must see every branch within tenant A, and nothing from tenant B");
-
-  const visibleToAdminAFromBranch2Token = await listCustomerIds({ ...adminA.toObject(), branchId: branch2Key }, "tenant");
-  assert.deepEqual(visibleToAdminAFromBranch2Token.sort(), [custA1Id, custA2Id].sort(), "tenant-scoped access must not depend on which branch happens to be on the caller's own token");
-
-  const visibleToAdminB = await listCustomerIds(adminB, "tenant");
-  assert.deepEqual(visibleToAdminB, [custB1Id], "tenant B admin (tenant-role) must see tenant B's customer only — never tenant A's");
+  // Tenant B, a completely separate company, must never see it.
+  assert.ok(!(await listCustomerIds(adminB)).includes(customerId), "tenant B must never see tenant A's customer");
 });
 
 after(async () => {

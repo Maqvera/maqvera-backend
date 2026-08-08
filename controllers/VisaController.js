@@ -12,10 +12,15 @@ import EnterpriseTimelineEngineService from "../services/EnterpriseTimelineEngin
 import AuditLogModel from "../models/AuditLogmodel.js";
 import { getAccessScope } from "../utils/accessScope.js";
 
-// A branch-scoped caller's own branch always wins for a write (their own
-// scope.branchId is authoritative, never client-suppliable) — a tenant-scoped
-// caller may specify a branch in the body, defaulting to "main" like before.
-const resolveWriteBranchId = (scope, req, fallback = "main") => scope.branchId || req.body?.branchId || fallback;
+// There is no branch-level data isolation — branchId is a purely descriptive
+// stamp. Resolves to the caller's explicit body value if given, otherwise
+// null so downstream services fall back to inheriting the parent record's
+// real branchId instead of forcing a wrong hardcoded default. A truthy
+// fallback here would leak back into services' existence-lookup filters
+// (e.g. VisaService.getVisaCaseById's `if (branchId) filter.branchId = ...`)
+// and wrongly 404 real cases whose branchId isn't literally "main" — see
+// docs/06-external-integrations/03-final-architecture-no-branches-rbac.md.
+const resolveWriteBranchId = (scope, req, fallback = null) => scope.branchId || req.body?.branchId || fallback;
 
 /**
  * GET /api/v1/visa-cases
@@ -1122,7 +1127,7 @@ export const getVisaCaseTimeline = async (req, res) => {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
-    const timelineData = await VisaService.getVisaCaseTimeline(visaCaseId, req.query, scope.tenantId, scope.branchId || "main", {
+    const timelineData = await VisaService.getVisaCaseTimeline(visaCaseId, req.query, scope.tenantId, scope.branchId || null, {
       userId,
       isAdmin: permissions.includes("admin")
     });
@@ -1188,7 +1193,7 @@ export const getVisaCaseAIContext = async (req, res) => {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
-    const aiContext = await VisaService.getVisaCaseAIContext(visaCaseId, scope.tenantId, scope.branchId || "main");
+    const aiContext = await VisaService.getVisaCaseAIContext(visaCaseId, scope.tenantId, scope.branchId || null);
     return sendSuccess(res, 200, "AI context generated successfully.", aiContext, requestId);
   } catch (error) {
     console.error("getVisaCaseAIContext error:", error);

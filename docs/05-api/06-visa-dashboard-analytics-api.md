@@ -10,4 +10,4 @@ When a summary has not yet been generated, an API returns an explicitly marked `
 - `GET /api/v1/dashboard/operations` returns the current queue, document and embassy backlog, today’s work, passport inventory, and incidents.
 - `GET /api/v1/dashboard/officer` returns an officer-oriented operations view.
 
-All endpoints require JWT authentication and tenant context. `branchId` defaults to the authenticated branch; `branchId=all` requires a management role. A newly onboarded tenant may receive `pendingRefresh: true` until the first event-driven summary refresh completes.
+All endpoints require JWT authentication, tenant context, and the `visa.read` permission; management-tier dashboards (executive, finance, compliance, ai-insights) additionally require `visa.dashboard.management` (or `admin`) — see `docs/05-api/06-visa-api.md` Part 12 for the full business rules. `branchId` is a descriptive, optional narrowing query param only — there is no branch-level data isolation (`docs/06-external-integrations/03-final-architecture-no-branches-rbac.md`). A newly onboarded tenant may receive `pendingRefresh: true` until the first event-driven summary refresh completes.

@@ -49,15 +49,13 @@ Traveler (Person Traveling)
 - `POST /api/v1/customers` — Creation with duplicate detection
 - `GET /api/v1/customers/{customerId}` — Full profile view
 
-## Access Scope (Company + Branch Isolation)
+## Access Scope (Company-Wide, RBAC-Gated)
 
-Every one of the CRUD endpoints above (`ListCustomers`, `SearchCustomers`, `CreateCustomer`, `GetCustomer`, `UpdateCustomer`, `ArchiveCustomer`) is filtered through `getAccessScope(req)` (`utils/accessScope.js`), derived from the caller's Role (`models/Rolemodel.js`, `scope: "branch" | "tenant"`):
+Every one of the CRUD endpoints above (`ListCustomers`, `SearchCustomers`, `CreateCustomer`, `GetCustomer`, `UpdateCustomer`, `ArchiveCustomer`) is filtered through `getAccessScope(req)` (`utils/accessScope.js`), which returns `{ tenantId }` for any authenticated caller (or `null`, rejected with `403`, if unauthenticated). **There is no branch-level data isolation** — see `docs/06-external-integrations/03-final-architecture-no-branches-rbac.md`. Every user of a tenant sees and can act on every customer in that tenant, regardless of their own `branchId`; `branchId` on a customer record is descriptive/organizational only, never an access filter, and `?branchId=`/body `branchId` is never used to widen or narrow visibility. Cross-tenant access is always rejected regardless of any query/body/header value.
 
-- **`scope: "branch"` (default)** — the caller only sees/acts on customers in their own `branchId`, within their own tenant. `GET /customers?branchId=...` can never widen this — a branch-scoped caller's own branch always wins over the query param.
-- **`scope: "tenant"`** — the caller sees/acts on every branch within their own tenant (never another tenant). `?branchId=` may be used to narrow to one branch.
-- **`POST /customers`** mirrors this on the write side: a branch-scoped caller cannot create a customer under a different branch by naming it in the request body (`403`) — the new customer is always created in the caller's own branch. A tenant-scoped caller may specify any active branch within their tenant.
+Which of these endpoints a caller may actually use is governed by their role's `permissions` (e.g. `customer.read`, `customer.create`, `customer.update`, `customer.delete` — see `controllers/RoleController.js` for how a company admin configures this per role), not by tenant/branch scoping.
 
-Sub-resource endpoints under `/customers/{customerId}/...` (documents, notes, family, passports, phones, emails, addresses, preferences, emergency contacts) currently enforce tenant isolation only (`{ _id: customerId, tenantId }`) — branch-level enforcement has not yet been extended to them.
+Sub-resource endpoints under `/customers/{customerId}/...` (documents, notes, family, passports, phones, emails, addresses, preferences, emergency contacts) enforce the same tenant isolation (`{ _id: customerId, tenantId }`).
 
 ---
 
