@@ -422,3 +422,157 @@
 {"error":"Invalid login: 535-5.7.8 Username and Password not accepted. For more information, go to\n535 5.7.8  https://support.google.com/mail/?p=BadCredentials 5b1f17b1804b1-4995ea3361esm130611085e9.15 - gsmtp","level":"warn","message":"SMTP transport not available","service":"maqvera-api","timestamp":"2026-08-08 20:33:08"}
 {"error":"Invalid login: 535-5.7.8 Username and Password not accepted. For more information, go to\n535 5.7.8  https://support.google.com/mail/?p=BadCredentials 5b1f17b1804b1-4995e9f9424sm110887515e9.8 - gsmtp","level":"warn","message":"SMTP transport not available","service":"maqvera-api","timestamp":"2026-08-08 20:33:09"}
 {"error":"Invalid login: 535-5.7.8 Username and Password not accepted. For more information, go to\n535 5.7.8  https://support.google.com/mail/?p=BadCredentials 5b1f17b1804b1-4995bb8b668sm110142125e9.0 - gsmtp","level":"error","message":"Email send failed","service":"maqvera-api","subject":"Verify Your Email","timestamp":"2026-08-08 20:33:10","to":"sys-role-1786203187987@example.com"}
+{"error":"connect ECONNREFUSED 127.0.0.1:587","level":"warn","message":"SMTP transport not available","service":"maqvera-api","timestamp":"2026-08-09 04:23:13"}
+{"error":"connect ECONNREFUSED 127.0.0.1:587","level":"warn","message":"SMTP transport not available","service":"maqvera-api","timestamp":"2026-08-09 04:23:13"}
+{"error":"Plan executor error during findAndModify :: caused by :: E11000 duplicate key error collection: test.roles index: name_1 dup key: { name: \"Administrator\" }","level":"error","message":"SetupTenant error","service":"maqvera-api","timestamp":"2026-08-09 04:23:15"}
+{"error":"Plan executor error during findAndModify :: caused by :: E11000 duplicate key error collection: test.roles index: name_1 dup key: { name: \"Administrator\" }","level":"error","message":"SetupTenant error","service":"maqvera-api","timestamp":"2026-08-09 04:23:16"}
+{"error":"Plan executor error during findAndModify :: caused by :: E11000 duplicate key error collection: test.roles index: name_1 dup key: { name: \"Administrator\" }","level":"error","message":"SetupTenant error","service":"maqvera-api","timestamp":"2026-08-09 04:23:16"}
+{"error":"connect ECONNREFUSED 127.0.0.1:587","level":"warn","message":"SMTP transport not available","service":"maqvera-api","timestamp":"2026-08-09 04:23:18"}
+{"error":"connect ECONNREFUSED 127.0.0.1:587","level":"warn","message":"SMTP transport not available","service":"maqvera-api","timestamp":"2026-08-09 04:23:18"}
+{"error":"connect ECONNREFUSED 127.0.0.1:587","level":"warn","message":"SMTP transport not available","service":"maqvera-api","timestamp":"2026-08-09 04:23:20"}
+{"error":"Plan executor error during findAndModify :: caused by :: E11000 duplicate key error collection: test.roles index: name_1 dup key: { name: \"Administrator\" }","level":"error","message":"SetupTenant error","service":"maqvera-api","timestamp":"2026-08-09 04:23:22"}
+{"error":"connect ECONNREFUSED 127.0.0.1:587","level":"warn","message":"SMTP transport not available","service":"maqvera-api","timestamp":"2026-08-09 04:23:51"}
+{"error":"connect ECONNREFUSED 127.0.0.1:587","level":"warn","message":"SMTP transport not available","service":"maqvera-api","timestamp":"2026-08-09 04:23:51"}
+{"level":"info","message":"CacheManager initialized with backend: memory","service":"maqvera-api","timestamp":"2026-08-09 04:23:52"}
+{"level":"info","message":"AnalyticsScheduler started — incremental: \"*/5 * * * *\", nightly: \"0 2 * * *\"","service":"maqvera-api","timestamp":"2026-08-09 04:23:52"}
+{"level":"info","message":"DocumentExpiryScheduler started — schedule: \"0 3 * * *\", reminder window: 30 days.","service":"maqvera-api","timestamp":"2026-08-09 04:23:52"}
+{"level":"info","message":"AppointmentReminderScheduler started — schedule: \"*/15 * * * *\".","service":"maqvera-api","timestamp":"2026-08-09 04:23:52"}
+{"level":"info","message":"IncidentSlaScheduler started — schedule: \"*/10 * * * *\".","service":"maqvera-api","timestamp":"2026-08-09 04:23:52"}
+{"level":"info","message":"ReferenceDataScheduler started — schedule: \"0 3 * * *\"","service":"maqvera-api","timestamp":"2026-08-09 04:23:52"}
+{"level":"info","message":"Reference master tables are empty — triggering an initial sync.","service":"maqvera-api","timestamp":"2026-08-09 04:23:54"}
+{"level":"info","message":"FlightScheduleSyncScheduler started — standard: \"*/15 * * * *\", high-priority: \"*/5 * * * *\"","service":"maqvera-api","timestamp":"2026-08-09 04:23:54"}
+{"level":"info","message":"AIWorkflowRecoveryScheduler started — schedule: \"*/5 * * * *\".","service":"maqvera-api","timestamp":"2026-08-09 04:23:54"}
+{"level":"info","message":"AIContextExpiryScheduler started — schedule: \"*/15 * * * *\".","service":"maqvera-api","timestamp":"2026-08-09 04:23:54"}
+{"level":"info","message":"AIApprovalTimeoutScheduler started — schedule: \"*/15 * * * *\".","service":"maqvera-api","timestamp":"2026-08-09 04:23:54"}
+{"level":"info","message":"AIObservabilityAlertScheduler started — schedule: \"*/10 * * * *\".","service":"maqvera-api","timestamp":"2026-08-09 04:23:54"}
+{"error":"connect ECONNREFUSED 127.0.0.1:587","level":"warn","message":"SMTP transport not available","service":"maqvera-api","timestamp":"2026-08-09 04:24:24"}
+{"error":"connect ECONNREFUSED 127.0.0.1:587","level":"warn","message":"SMTP transport not available","service":"maqvera-api","timestamp":"2026-08-09 04:24:24"}
+{"level":"info","message":"CacheManager initialized with backend: memory","service":"maqvera-api","timestamp":"2026-08-09 04:24:25"}
+{"level":"info","message":"AnalyticsScheduler started — incremental: \"*/5 * * * *\", nightly: \"0 2 * * *\"","service":"maqvera-api","timestamp":"2026-08-09 04:24:25"}
+{"level":"info","message":"DocumentExpiryScheduler started — schedule: \"0 3 * * *\", reminder window: 30 days.","service":"maqvera-api","timestamp":"2026-08-09 04:24:25"}
+{"level":"info","message":"AppointmentReminderScheduler started — schedule: \"*/15 * * * *\".","service":"maqvera-api","timestamp":"2026-08-09 04:24:25"}
+{"level":"info","message":"IncidentSlaScheduler started — schedule: \"*/10 * * * *\".","service":"maqvera-api","timestamp":"2026-08-09 04:24:25"}
+{"level":"info","message":"ReferenceDataScheduler started — schedule: \"0 3 * * *\"","service":"maqvera-api","timestamp":"2026-08-09 04:24:25"}
+{"level":"info","message":"FlightScheduleSyncScheduler started — standard: \"*/15 * * * *\", high-priority: \"*/5 * * * *\"","service":"maqvera-api","timestamp":"2026-08-09 04:24:27"}
+{"level":"info","message":"AIWorkflowRecoveryScheduler started — schedule: \"*/5 * * * *\".","service":"maqvera-api","timestamp":"2026-08-09 04:24:27"}
+{"level":"info","message":"AIContextExpiryScheduler started — schedule: \"*/15 * * * *\".","service":"maqvera-api","timestamp":"2026-08-09 04:24:27"}
+{"level":"info","message":"AIApprovalTimeoutScheduler started — schedule: \"*/15 * * * *\".","service":"maqvera-api","timestamp":"2026-08-09 04:24:27"}
+{"level":"info","message":"AIObservabilityAlertScheduler started — schedule: \"*/10 * * * *\".","service":"maqvera-api","timestamp":"2026-08-09 04:24:27"}
+{"level":"info","message":"Analytics incremental refresh started.","service":"maqvera-api","timestamp":"2026-08-09 04:25:00"}
+{"level":"info","message":"No active tenants found — skipping incremental refresh.","service":"maqvera-api","timestamp":"2026-08-09 04:25:00"}
+{"level":"info","message":"[EXT-018] Flight schedule sync cycle (high, scheduler) completed: 0 synced, 0 failed, 0 skipped, 0 tenant(s), 62ms.","service":"maqvera-api","timestamp":"2026-08-09 04:25:00"}
+{"error":"connect ECONNREFUSED 127.0.0.1:587","level":"warn","message":"SMTP transport not available","service":"maqvera-api","timestamp":"2026-08-09 04:27:16"}
+{"error":"connect ECONNREFUSED 127.0.0.1:587","level":"warn","message":"SMTP transport not available","service":"maqvera-api","timestamp":"2026-08-09 04:27:16"}
+{"level":"info","message":"CacheManager initialized with backend: memory","service":"maqvera-api","timestamp":"2026-08-09 04:27:17"}
+{"level":"info","message":"AnalyticsScheduler started — incremental: \"*/5 * * * *\", nightly: \"0 2 * * *\"","service":"maqvera-api","timestamp":"2026-08-09 04:27:17"}
+{"level":"info","message":"DocumentExpiryScheduler started — schedule: \"0 3 * * *\", reminder window: 30 days.","service":"maqvera-api","timestamp":"2026-08-09 04:27:17"}
+{"level":"info","message":"AppointmentReminderScheduler started — schedule: \"*/15 * * * *\".","service":"maqvera-api","timestamp":"2026-08-09 04:27:17"}
+{"level":"info","message":"IncidentSlaScheduler started — schedule: \"*/10 * * * *\".","service":"maqvera-api","timestamp":"2026-08-09 04:27:17"}
+{"level":"info","message":"ReferenceDataScheduler started — schedule: \"0 3 * * *\"","service":"maqvera-api","timestamp":"2026-08-09 04:27:17"}
+{"error":"connect ECONNREFUSED 127.0.0.1:587","level":"warn","message":"SMTP transport not available","service":"maqvera-api","timestamp":"2026-08-09 04:27:22"}
+{"error":"connect ECONNREFUSED 127.0.0.1:587","level":"warn","message":"SMTP transport not available","service":"maqvera-api","timestamp":"2026-08-09 04:27:22"}
+{"level":"info","message":"CacheManager initialized with backend: memory","service":"maqvera-api","timestamp":"2026-08-09 04:27:22"}
+{"level":"info","message":"AnalyticsScheduler started — incremental: \"*/5 * * * *\", nightly: \"0 2 * * *\"","service":"maqvera-api","timestamp":"2026-08-09 04:27:22"}
+{"level":"info","message":"DocumentExpiryScheduler started — schedule: \"0 3 * * *\", reminder window: 30 days.","service":"maqvera-api","timestamp":"2026-08-09 04:27:22"}
+{"level":"info","message":"AppointmentReminderScheduler started — schedule: \"*/15 * * * *\".","service":"maqvera-api","timestamp":"2026-08-09 04:27:22"}
+{"level":"info","message":"IncidentSlaScheduler started — schedule: \"*/10 * * * *\".","service":"maqvera-api","timestamp":"2026-08-09 04:27:22"}
+{"level":"info","message":"ReferenceDataScheduler started — schedule: \"0 3 * * *\"","service":"maqvera-api","timestamp":"2026-08-09 04:27:22"}
+{"level":"info","message":"FlightScheduleSyncScheduler started — standard: \"*/15 * * * *\", high-priority: \"*/5 * * * *\"","service":"maqvera-api","timestamp":"2026-08-09 04:27:24"}
+{"level":"info","message":"AIWorkflowRecoveryScheduler started — schedule: \"*/5 * * * *\".","service":"maqvera-api","timestamp":"2026-08-09 04:27:24"}
+{"level":"info","message":"AIContextExpiryScheduler started — schedule: \"*/15 * * * *\".","service":"maqvera-api","timestamp":"2026-08-09 04:27:24"}
+{"level":"info","message":"AIApprovalTimeoutScheduler started — schedule: \"*/15 * * * *\".","service":"maqvera-api","timestamp":"2026-08-09 04:27:24"}
+{"level":"info","message":"AIObservabilityAlertScheduler started — schedule: \"*/10 * * * *\".","service":"maqvera-api","timestamp":"2026-08-09 04:27:24"}
+{"error":"connect ECONNREFUSED 127.0.0.1:587","level":"warn","message":"SMTP transport not available","service":"maqvera-api","timestamp":"2026-08-09 04:28:50"}
+{"error":"connect ECONNREFUSED 127.0.0.1:587","level":"warn","message":"SMTP transport not available","service":"maqvera-api","timestamp":"2026-08-09 04:28:50"}
+{"level":"info","message":"CacheManager initialized with backend: memory","service":"maqvera-api","timestamp":"2026-08-09 04:28:51"}
+{"level":"info","message":"AnalyticsScheduler started — incremental: \"*/5 * * * *\", nightly: \"0 2 * * *\"","service":"maqvera-api","timestamp":"2026-08-09 04:28:51"}
+{"level":"info","message":"DocumentExpiryScheduler started — schedule: \"0 3 * * *\", reminder window: 30 days.","service":"maqvera-api","timestamp":"2026-08-09 04:28:51"}
+{"level":"info","message":"AppointmentReminderScheduler started — schedule: \"*/15 * * * *\".","service":"maqvera-api","timestamp":"2026-08-09 04:28:51"}
+{"level":"info","message":"IncidentSlaScheduler started — schedule: \"*/10 * * * *\".","service":"maqvera-api","timestamp":"2026-08-09 04:28:51"}
+{"level":"info","message":"ReferenceDataScheduler started — schedule: \"0 3 * * *\"","service":"maqvera-api","timestamp":"2026-08-09 04:28:51"}
+{"level":"info","message":"FlightScheduleSyncScheduler started — standard: \"*/15 * * * *\", high-priority: \"*/5 * * * *\"","service":"maqvera-api","timestamp":"2026-08-09 04:28:53"}
+{"level":"info","message":"AIWorkflowRecoveryScheduler started — schedule: \"*/5 * * * *\".","service":"maqvera-api","timestamp":"2026-08-09 04:28:53"}
+{"level":"info","message":"AIContextExpiryScheduler started — schedule: \"*/15 * * * *\".","service":"maqvera-api","timestamp":"2026-08-09 04:28:53"}
+{"level":"info","message":"AIApprovalTimeoutScheduler started — schedule: \"*/15 * * * *\".","service":"maqvera-api","timestamp":"2026-08-09 04:28:53"}
+{"level":"info","message":"AIObservabilityAlertScheduler started — schedule: \"*/10 * * * *\".","service":"maqvera-api","timestamp":"2026-08-09 04:28:53"}
+{"level":"info","message":"Analytics incremental refresh started.","service":"maqvera-api","timestamp":"2026-08-09 04:30:00"}
+{"level":"info","message":"No active tenants found — skipping incremental refresh.","service":"maqvera-api","timestamp":"2026-08-09 04:30:00"}
+{"level":"info","message":"Appointment sweep completed in 0.1s — 0 reminder(s) sent, 0 marked missed.","service":"maqvera-api","timestamp":"2026-08-09 04:30:00"}
+{"level":"info","message":"[EXT-018] Flight schedule sync cycle (high, scheduler) completed: 0 synced, 0 failed, 0 skipped, 0 tenant(s), 53ms.","service":"maqvera-api","timestamp":"2026-08-09 04:30:00"}
+{"level":"info","message":"Incident SLA sweep completed in 0.1s — 0 first-response breach(es) flagged, 0 incident(s) escalated.","service":"maqvera-api","timestamp":"2026-08-09 04:30:00"}
+{"level":"info","message":"[EXT-018] Flight schedule sync cycle (standard, scheduler) completed: 0 synced, 0 failed, 0 skipped, 0 tenant(s), 58ms.","service":"maqvera-api","timestamp":"2026-08-09 04:30:00"}
+{"error":"connect ECONNREFUSED 127.0.0.1:587","level":"warn","message":"SMTP transport not available","service":"maqvera-api","timestamp":"2026-08-09 04:30:41"}
+{"error":"connect ECONNREFUSED 127.0.0.1:587","level":"warn","message":"SMTP transport not available","service":"maqvera-api","timestamp":"2026-08-09 04:30:41"}
+{"level":"info","message":"CacheManager initialized with backend: memory","service":"maqvera-api","timestamp":"2026-08-09 04:30:43"}
+{"level":"info","message":"AnalyticsScheduler started — incremental: \"*/5 * * * *\", nightly: \"0 2 * * *\"","service":"maqvera-api","timestamp":"2026-08-09 04:30:43"}
+{"level":"info","message":"DocumentExpiryScheduler started — schedule: \"0 3 * * *\", reminder window: 30 days.","service":"maqvera-api","timestamp":"2026-08-09 04:30:43"}
+{"level":"info","message":"AppointmentReminderScheduler started — schedule: \"*/15 * * * *\".","service":"maqvera-api","timestamp":"2026-08-09 04:30:43"}
+{"level":"info","message":"IncidentSlaScheduler started — schedule: \"*/10 * * * *\".","service":"maqvera-api","timestamp":"2026-08-09 04:30:43"}
+{"level":"info","message":"ReferenceDataScheduler started — schedule: \"0 3 * * *\"","service":"maqvera-api","timestamp":"2026-08-09 04:30:43"}
+{"level":"info","message":"FlightScheduleSyncScheduler started — standard: \"*/15 * * * *\", high-priority: \"*/5 * * * *\"","service":"maqvera-api","timestamp":"2026-08-09 04:30:44"}
+{"level":"info","message":"AIWorkflowRecoveryScheduler started — schedule: \"*/5 * * * *\".","service":"maqvera-api","timestamp":"2026-08-09 04:30:44"}
+{"level":"info","message":"AIContextExpiryScheduler started — schedule: \"*/15 * * * *\".","service":"maqvera-api","timestamp":"2026-08-09 04:30:44"}
+{"level":"info","message":"AIApprovalTimeoutScheduler started — schedule: \"*/15 * * * *\".","service":"maqvera-api","timestamp":"2026-08-09 04:30:44"}
+{"level":"info","message":"AIObservabilityAlertScheduler started — schedule: \"*/10 * * * *\".","service":"maqvera-api","timestamp":"2026-08-09 04:30:44"}
+{"error":"connect ECONNREFUSED 127.0.0.1:587","level":"warn","message":"SMTP transport not available","service":"maqvera-api","timestamp":"2026-08-09 04:31:05"}
+{"error":"connect ECONNREFUSED 127.0.0.1:587","level":"warn","message":"SMTP transport not available","service":"maqvera-api","timestamp":"2026-08-09 04:31:06"}
+{"level":"info","message":"CacheManager initialized with backend: memory","service":"maqvera-api","timestamp":"2026-08-09 04:31:06"}
+{"level":"info","message":"AnalyticsScheduler started — incremental: \"*/5 * * * *\", nightly: \"0 2 * * *\"","service":"maqvera-api","timestamp":"2026-08-09 04:31:06"}
+{"level":"info","message":"DocumentExpiryScheduler started — schedule: \"0 3 * * *\", reminder window: 30 days.","service":"maqvera-api","timestamp":"2026-08-09 04:31:06"}
+{"level":"info","message":"AppointmentReminderScheduler started — schedule: \"*/15 * * * *\".","service":"maqvera-api","timestamp":"2026-08-09 04:31:06"}
+{"level":"info","message":"IncidentSlaScheduler started — schedule: \"*/10 * * * *\".","service":"maqvera-api","timestamp":"2026-08-09 04:31:06"}
+{"level":"info","message":"ReferenceDataScheduler started — schedule: \"0 3 * * *\"","service":"maqvera-api","timestamp":"2026-08-09 04:31:06"}
+{"level":"info","message":"FlightScheduleSyncScheduler started — standard: \"*/15 * * * *\", high-priority: \"*/5 * * * *\"","service":"maqvera-api","timestamp":"2026-08-09 04:31:08"}
+{"level":"info","message":"AIWorkflowRecoveryScheduler started — schedule: \"*/5 * * * *\".","service":"maqvera-api","timestamp":"2026-08-09 04:31:08"}
+{"level":"info","message":"AIContextExpiryScheduler started — schedule: \"*/15 * * * *\".","service":"maqvera-api","timestamp":"2026-08-09 04:31:08"}
+{"level":"info","message":"AIApprovalTimeoutScheduler started — schedule: \"*/15 * * * *\".","service":"maqvera-api","timestamp":"2026-08-09 04:31:08"}
+{"level":"info","message":"AIObservabilityAlertScheduler started — schedule: \"*/10 * * * *\".","service":"maqvera-api","timestamp":"2026-08-09 04:31:08"}
+{"duration":12,"ip":"::1","level":"info","message":"GET /api-docs 301 12ms","method":"GET","requestId":"63a4fe85-e11e-4b85-9554-65e6d5c2ac14","service":"maqvera-api","statusCode":301,"timestamp":"2026-08-09 04:31:24","url":"/api-docs","userAgent":"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"}
+{"duration":21,"ip":"::1","level":"info","message":"GET /api-docs/ 200 21ms","method":"GET","requestId":"2cd1bd4b-3387-433d-bc43-e57c1b099e0f","service":"maqvera-api","statusCode":200,"timestamp":"2026-08-09 04:31:24","url":"/api-docs/","userAgent":"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"}
+{"duration":11,"ip":"::1","level":"info","message":"GET /api-docs/swagger-ui-init.js 200 11ms","method":"GET","requestId":"24efbeba-e595-4df0-acd5-be03924584c0","service":"maqvera-api","statusCode":200,"timestamp":"2026-08-09 04:31:25","url":"/api-docs/swagger-ui-init.js","userAgent":"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"}
+{"duration":58,"ip":"::1","level":"info","message":"GET /api-docs/swagger-ui.css 200 58ms","method":"GET","requestId":"857f509b-7f5a-4774-8ef1-7a2d2fed1c85","service":"maqvera-api","statusCode":200,"timestamp":"2026-08-09 04:31:25","url":"/api-docs/swagger-ui.css","userAgent":"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"}
+{"duration":73,"ip":"::1","level":"info","message":"GET /api-docs/swagger-ui-standalone-preset.js 200 73ms","method":"GET","requestId":"40bc8b95-43bd-4231-a5b1-4b10089c91fe","service":"maqvera-api","statusCode":200,"timestamp":"2026-08-09 04:31:25","url":"/api-docs/swagger-ui-standalone-preset.js","userAgent":"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"}
+{"duration":137,"ip":"::1","level":"info","message":"GET /api-docs/swagger-ui-bundle.js 200 137ms","method":"GET","requestId":"7d5f12e4-e9d8-4c35-be27-d9e05fec9388","service":"maqvera-api","statusCode":200,"timestamp":"2026-08-09 04:31:25","url":"/api-docs/swagger-ui-bundle.js","userAgent":"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"}
+{"duration":8,"ip":"::1","level":"info","message":"GET /api-docs/favicon-32x32.png 200 8ms","method":"GET","requestId":"4cb495a3-9926-4163-98a1-6acf764633f9","service":"maqvera-api","statusCode":200,"timestamp":"2026-08-09 04:31:27","url":"/api-docs/favicon-32x32.png","userAgent":"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"}
+{"level":"info","message":"Analytics incremental refresh started.","service":"maqvera-api","timestamp":"2026-08-09 04:35:00"}
+{"level":"info","message":"No active tenants found — skipping incremental refresh.","service":"maqvera-api","timestamp":"2026-08-09 04:35:00"}
+{"level":"info","message":"[EXT-018] Flight schedule sync cycle (high, scheduler) completed: 0 synced, 0 failed, 0 skipped, 0 tenant(s), 58ms.","service":"maqvera-api","timestamp":"2026-08-09 04:35:00"}
+{"level":"info","message":"Analytics incremental refresh started.","service":"maqvera-api","timestamp":"2026-08-09 04:40:00"}
+{"level":"info","message":"Incident SLA sweep completed in 0.1s — 0 first-response breach(es) flagged, 0 incident(s) escalated.","service":"maqvera-api","timestamp":"2026-08-09 04:40:00"}
+{"level":"info","message":"No active tenants found — skipping incremental refresh.","service":"maqvera-api","timestamp":"2026-08-09 04:40:00"}
+{"level":"info","message":"[EXT-018] Flight schedule sync cycle (high, scheduler) completed: 0 synced, 0 failed, 0 skipped, 0 tenant(s), 80ms.","service":"maqvera-api","timestamp":"2026-08-09 04:40:00"}
+{"level":"info","message":"Analytics incremental refresh started.","service":"maqvera-api","timestamp":"2026-08-09 04:45:00"}
+{"level":"info","message":"No active tenants found — skipping incremental refresh.","service":"maqvera-api","timestamp":"2026-08-09 04:45:00"}
+{"level":"info","message":"[EXT-018] Flight schedule sync cycle (high, scheduler) completed: 0 synced, 0 failed, 0 skipped, 0 tenant(s), 85ms.","service":"maqvera-api","timestamp":"2026-08-09 04:45:00"}
+{"level":"info","message":"[EXT-018] Flight schedule sync cycle (standard, scheduler) completed: 0 synced, 0 failed, 0 skipped, 0 tenant(s), 54ms.","service":"maqvera-api","timestamp":"2026-08-09 04:45:00"}
+{"level":"info","message":"Appointment sweep completed in 0.1s — 0 reminder(s) sent, 0 marked missed.","service":"maqvera-api","timestamp":"2026-08-09 04:45:00"}
+{"level":"info","message":"Analytics incremental refresh started.","service":"maqvera-api","timestamp":"2026-08-09 04:50:00"}
+{"level":"info","message":"[EXT-018] Flight schedule sync cycle (high, scheduler) completed: 0 synced, 0 failed, 0 skipped, 0 tenant(s), 61ms.","service":"maqvera-api","timestamp":"2026-08-09 04:50:00"}
+{"level":"info","message":"Incident SLA sweep completed in 0.1s — 0 first-response breach(es) flagged, 0 incident(s) escalated.","service":"maqvera-api","timestamp":"2026-08-09 04:50:00"}
+{"level":"info","message":"No active tenants found — skipping incremental refresh.","service":"maqvera-api","timestamp":"2026-08-09 04:50:00"}
+{"error":"connect ECONNREFUSED 127.0.0.1:587","level":"warn","message":"SMTP transport not available","service":"maqvera-api","timestamp":"2026-08-09 04:51:52"}
+{"error":"connect ECONNREFUSED 127.0.0.1:587","level":"warn","message":"SMTP transport not available","service":"maqvera-api","timestamp":"2026-08-09 04:51:52"}
+{"level":"info","message":"CacheManager initialized with backend: memory","service":"maqvera-api","timestamp":"2026-08-09 04:51:53"}
+{"level":"info","message":"AnalyticsScheduler started — incremental: \"*/5 * * * *\", nightly: \"0 2 * * *\"","service":"maqvera-api","timestamp":"2026-08-09 04:51:53"}
+{"level":"info","message":"DocumentExpiryScheduler started — schedule: \"0 3 * * *\", reminder window: 30 days.","service":"maqvera-api","timestamp":"2026-08-09 04:51:53"}
+{"level":"info","message":"AppointmentReminderScheduler started — schedule: \"*/15 * * * *\".","service":"maqvera-api","timestamp":"2026-08-09 04:51:53"}
+{"level":"info","message":"IncidentSlaScheduler started — schedule: \"*/10 * * * *\".","service":"maqvera-api","timestamp":"2026-08-09 04:51:53"}
+{"level":"info","message":"ReferenceDataScheduler started — schedule: \"0 3 * * *\"","service":"maqvera-api","timestamp":"2026-08-09 04:51:53"}
+{"level":"info","message":"FlightScheduleSyncScheduler started — standard: \"*/15 * * * *\", high-priority: \"*/5 * * * *\"","service":"maqvera-api","timestamp":"2026-08-09 04:51:55"}
+{"level":"info","message":"AIWorkflowRecoveryScheduler started — schedule: \"*/5 * * * *\".","service":"maqvera-api","timestamp":"2026-08-09 04:51:55"}
+{"level":"info","message":"AIContextExpiryScheduler started — schedule: \"*/15 * * * *\".","service":"maqvera-api","timestamp":"2026-08-09 04:51:55"}
+{"level":"info","message":"AIApprovalTimeoutScheduler started — schedule: \"*/15 * * * *\".","service":"maqvera-api","timestamp":"2026-08-09 04:51:55"}
+{"level":"info","message":"AIObservabilityAlertScheduler started — schedule: \"*/10 * * * *\".","service":"maqvera-api","timestamp":"2026-08-09 04:51:55"}
+{"duration":19,"ip":"::1","level":"info","message":"GET /api-docs/ 304 19ms","method":"GET","requestId":"78aef2e9-740f-4087-ae0c-7dd96292c6ce","service":"maqvera-api","statusCode":304,"timestamp":"2026-08-09 04:52:35","url":"/api-docs/","userAgent":"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"}
+{"duration":7,"ip":"::1","level":"info","message":"GET /api-docs/swagger-ui.css 304 7ms","method":"GET","requestId":"c8330680-5b88-4819-b3d8-cf151653fc60","service":"maqvera-api","statusCode":304,"timestamp":"2026-08-09 04:52:36","url":"/api-docs/swagger-ui.css","userAgent":"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"}
+{"duration":7,"ip":"::1","level":"info","message":"GET /api-docs/swagger-ui-bundle.js 304 7ms","method":"GET","requestId":"d241b480-c582-49be-8d88-f87717d8a65d","service":"maqvera-api","statusCode":304,"timestamp":"2026-08-09 04:52:36","url":"/api-docs/swagger-ui-bundle.js","userAgent":"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"}
+{"duration":4,"ip":"::1","level":"info","message":"GET /api-docs/swagger-ui-standalone-preset.js 304 4ms","method":"GET","requestId":"53d7510e-0baa-4a28-8b9c-53e3b027a398","service":"maqvera-api","statusCode":304,"timestamp":"2026-08-09 04:52:36","url":"/api-docs/swagger-ui-standalone-preset.js","userAgent":"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"}
+{"duration":92,"ip":"::1","level":"info","message":"GET /api-docs/swagger-ui-init.js 200 92ms","method":"GET","requestId":"1dcd48eb-34d6-4c9e-8b43-219879478557","service":"maqvera-api","statusCode":200,"timestamp":"2026-08-09 04:52:36","url":"/api-docs/swagger-ui-init.js","userAgent":"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"}
+{"duration":1,"ip":"::1","level":"info","message":"GET /api-docs/favicon-32x32.png 304 1ms","method":"GET","requestId":"65a5f384-b496-42a2-8064-54b254b916a2","service":"maqvera-api","statusCode":304,"timestamp":"2026-08-09 04:52:38","url":"/api-docs/favicon-32x32.png","userAgent":"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"}
+{"error":"connect ECONNREFUSED 127.0.0.1:587","level":"error","message":"Email send failed","service":"maqvera-api","subject":"Verify Your Email","timestamp":"2026-08-09 04:54:23","to":"bilal@example.com"}
+{"duration":925,"ip":"::1","level":"info","message":"POST /api/v1/auth/signup 201 925ms","method":"POST","requestId":"5c9c21e9-63d9-4ad1-8f2c-be97001b4755","service":"maqvera-api","statusCode":201,"timestamp":"2026-08-09 04:54:23","url":"/api/v1/auth/signup","userAgent":"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"}
+{"duration":326,"ip":"::1","level":"info","message":"POST /api/v1/auth/login 403 326ms","method":"POST","requestId":"ba93dfce-babc-4834-b28b-b84777a9de4d","service":"maqvera-api","statusCode":403,"timestamp":"2026-08-09 04:54:52","url":"/api/v1/auth/login","userAgent":"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"}
+{"level":"info","message":"Analytics incremental refresh started.","service":"maqvera-api","timestamp":"2026-08-09 04:55:00"}
+{"level":"info","message":"[EXT-018] Flight schedule sync cycle (high, scheduler) completed: 0 synced, 0 failed, 0 skipped, 1 tenant(s), 156ms.","service":"maqvera-api","timestamp":"2026-08-09 04:55:00"}
+{"failures":["Unrecognized expression '$nin'","Unrecognized expression '$nin'"],"level":"error","message":"KPIEngine partial refresh failure","service":"maqvera-api","tenantId":"ALNOOR","timestamp":"2026-08-09 04:55:00"}
+{"level":"info","message":"Analytics incremental refresh completed. 1 tenant(s) processed in 0.2s.","service":"maqvera-api","timestamp":"2026-08-09 04:55:00"}
