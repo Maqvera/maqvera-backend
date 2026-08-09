@@ -19,7 +19,11 @@ const idempotency = () => async (req, res, next) => {
   const idempotencyKey = req.header("Idempotency-Key");
   if (!idempotencyKey) return next();
 
-  const tenantId = req.auth?.tenantId || req.headers["x-tenant-id"] || "default-tenant";
+  // Tenant identity must come only from the verified JWT (req.auth), never
+  // a client-settable header. No tenant context -> skip idempotency rather
+  // than dedupe requests under a fake shared tenant bucket.
+  const tenantId = req.auth?.tenantId;
+  if (!tenantId) return next();
 
   try {
     const existing = await IdempotencyKeyModel.findOne({ tenantId, idempotencyKey }).lean();

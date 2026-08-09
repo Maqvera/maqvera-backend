@@ -17,7 +17,8 @@ import CacheManager from "../utils/cacheManager.js";
 export const CreateFlightBooking = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || "default";
+    const tenantId = req.auth?.tenantId;
+    if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     const userId = req.auth?.userId || req.auth?.id;
     const permissions = req.auth?.permissions || [];
 
@@ -251,7 +252,7 @@ export const CreateFlightBooking = async (req, res) => {
   } catch (err) {
     console.error("CreateFlightBooking Error:", err);
     publishEvent("FlightBookingFailed", {
-      tenantId: req.auth?.tenantId || "default",
+      tenantId: req.auth?.tenantId || null,
       offerId: req.body?.offerId || null,
       error: err.message
     });
@@ -266,7 +267,8 @@ export const CreateFlightBooking = async (req, res) => {
 export const GetFlightBookingById = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || "default";
+    const tenantId = req.auth?.tenantId;
+    if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     const permissions = req.auth?.permissions || [];
     if (!permissions.includes("flight.book") && !permissions.includes("flight.read") && !permissions.includes("admin")) {
       return sendError(res, 403, "Permission denied.", requestId);
@@ -296,7 +298,8 @@ export const GetFlightBookingById = async (req, res) => {
 export const RevalidateBookingOffer = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || "default";
+    const tenantId = req.auth?.tenantId;
+    if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     const permissions = req.auth?.permissions || [];
     if (!permissions.includes("flight.book") && !permissions.includes("admin")) {
       return sendError(res, 403, "Permission denied.", requestId);
@@ -324,7 +327,8 @@ export const RevalidateBookingOffer = async (req, res) => {
 export const CancelFlightBooking = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || "default";
+    const tenantId = req.auth?.tenantId;
+    if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     const userId = req.auth?.userId || req.auth?.id;
     const permissions = req.auth?.permissions || [];
     if (!permissions.includes("flight.book") && !permissions.includes("admin")) {
@@ -409,7 +413,8 @@ export const CancelFlightBooking = async (req, res) => {
 export const SyncFlightBooking = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || "default";
+    const tenantId = req.auth?.tenantId;
+    if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     const userId = req.auth?.userId || req.auth?.id;
     const permissions = req.auth?.permissions || [];
     if (!permissions.includes("flight.book") && !permissions.includes("admin")) {
@@ -502,7 +507,8 @@ export const SyncFlightBooking = async (req, res) => {
 export const GetPnrDetails = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || "default";
+    const tenantId = req.auth?.tenantId;
+    if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     const permissions = req.auth?.permissions || [];
     if (!permissions.includes("flight.ticket") && !permissions.includes("flight.book") && !permissions.includes("flight.read") && !permissions.includes("admin")) {
       return sendError(res, 403, "Permission denied.", requestId);
@@ -532,7 +538,8 @@ export const GetPnrDetails = async (req, res) => {
 export const IssueTicket = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || "default";
+    const tenantId = req.auth?.tenantId;
+    if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     const userId = req.auth?.userId || req.auth?.id;
     const permissions = req.auth?.permissions || [];
     if (!permissions.includes("flight.ticket") && !permissions.includes("flight.book") && !permissions.includes("admin")) {
@@ -645,7 +652,8 @@ export const IssueTicket = async (req, res) => {
 export const VoidTicket = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || "default";
+    const tenantId = req.auth?.tenantId;
+    if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     const userId = req.auth?.userId || req.auth?.id;
     const permissions = req.auth?.permissions || [];
     if (!permissions.includes("flight.ticket") && !permissions.includes("flight.book") && !permissions.includes("admin")) {
@@ -736,7 +744,8 @@ export const VoidTicket = async (req, res) => {
 export const ReissueTicket = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || "default";
+    const tenantId = req.auth?.tenantId;
+    if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     const userId = req.auth?.userId || req.auth?.id;
     const permissions = req.auth?.permissions || [];
     if (!permissions.includes("flight.ticket") && !permissions.includes("flight.book") && !permissions.includes("admin")) {
@@ -846,7 +855,8 @@ export const ReissueTicket = async (req, res) => {
 export const RefundTicket = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || "default";
+    const tenantId = req.auth?.tenantId;
+    if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     const userId = req.auth?.userId || req.auth?.id;
     const permissions = req.auth?.permissions || [];
     if (!permissions.includes("flight.ticket") && !permissions.includes("flight.book") && !permissions.includes("admin")) {
@@ -950,7 +960,8 @@ export const RefundTicket = async (req, res) => {
 export const AddSSR = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || "default";
+    const tenantId = req.auth?.tenantId;
+    if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     const userId = req.auth?.userId || req.auth?.id;
     const permissions = req.auth?.permissions || [];
     if (!permissions.includes("flight.ticket") && !permissions.includes("flight.book") && !permissions.includes("admin")) {
@@ -1031,7 +1042,8 @@ export const AddSSR = async (req, res) => {
 export const AddOSI = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || "default";
+    const tenantId = req.auth?.tenantId;
+    if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     const userId = req.auth?.userId || req.auth?.id;
     const permissions = req.auth?.permissions || [];
     if (!permissions.includes("flight.ticket") && !permissions.includes("flight.book") && !permissions.includes("admin")) {
@@ -1110,7 +1122,8 @@ export const AddOSI = async (req, res) => {
 export const IssueEMD = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || "default";
+    const tenantId = req.auth?.tenantId;
+    if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     const userId = req.auth?.userId || req.auth?.id;
     const permissions = req.auth?.permissions || [];
     if (!permissions.includes("flight.ticket") && !permissions.includes("flight.book") && !permissions.includes("admin")) {
@@ -1186,7 +1199,8 @@ export const IssueEMD = async (req, res) => {
 export const GetFlightBookingHistory = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId || "default";
+    const tenantId = req.auth?.tenantId;
+    if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     const permissions = req.auth?.permissions || [];
     if (!permissions.includes("flight.book") && !permissions.includes("flight.read") && !permissions.includes("admin")) {
       return sendError(res, 403, "Permission denied.", requestId);

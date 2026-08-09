@@ -7,7 +7,6 @@ import VisaService from "../services/VisaService.js";
 const createMockVisaCase = (id = "507f1f77bcf86cd799439099") => ({
   _id: id,
   tenantId: "tenant_enterprise",
-  branchId: "branch_main",
   caseNumber: "VIS-2026-000001",
   travelerId: "60d5ecb8b5c9c2234c8e4321",
   status: "documents_pending",
@@ -44,7 +43,6 @@ test("VisaService adds incident via EnterpriseIncidentEngine and auto-locks Visa
       description: "Courier package untraceable."
     },
     "tenant_enterprise",
-    "branch_main",
     "user_officer"
   );
 

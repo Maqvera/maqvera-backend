@@ -9,10 +9,8 @@ class DocumentVerificationService {
   /**
    * Start Multi-Stage Document Verification Pipeline
    */
-  static async startVerification(documentId, tenantId, branchId, userId) {
-    const documentFilter = { _id: documentId, tenantId, isSoftDeleted: { $ne: true } };
-    if (branchId) documentFilter.branchId = branchId;
-    const doc = await EnterpriseDocumentModel.findOne(documentFilter);
+  static async startVerification(documentId, tenantId, userId) {
+    const doc = await EnterpriseDocumentModel.findOne({ _id: documentId, tenantId, isSoftDeleted: { $ne: true } });
     if (!doc) {
       throw new Error("Document not found.");
     }
@@ -32,7 +30,6 @@ class DocumentVerificationService {
     if (!verification) {
       verification = new EnterpriseVerificationModel({
         tenantId,
-        branchId: branchId || doc.branchId || "main",
         documentId: doc._id,
         referenceId: doc.referenceId,
         versionNumber: doc.currentVersion
@@ -56,7 +53,7 @@ class DocumentVerificationService {
       engine: "Document storage scanner",
       scannedAt: new Date()
     };
-    publishEvent("VirusScanCompleted", { verificationId: verification._id, documentId: doc._id, status: latestVersion.virusScanStatus, tenantId, branchId: doc.branchId });
+    publishEvent("VirusScanCompleted", { verificationId: verification._id, documentId: doc._id, status: latestVersion.virusScanStatus, tenantId });
 
     // Stage 4: Duplicate Detection by real content checksum — this needs no
     // OCR/AI provider at all, just the genuine SHA-256/ETag EnterpriseDocumentService
@@ -101,7 +98,7 @@ class DocumentVerificationService {
       await visaCase.save();
 
       await AuditLogModel.create({ tenantId, userId: userId || "system", action: "START_DOCUMENT_VERIFICATION", resource: "EnterpriseVerification", resourceId: verification._id.toString(), details: { documentId: doc._id, version: doc.currentVersion, duplicateScore: verification.duplicateScore } }).catch(err => console.error("Audit error:", err));
-      publishEvent("VerificationStarted", { verificationId: verification._id, documentId: doc._id, visaCaseId: visaCase._id, tenantId, branchId: doc.branchId });
+      publishEvent("VerificationStarted", { verificationId: verification._id, documentId: doc._id, visaCaseId: visaCase._id, tenantId });
       publishEvent("OCRQueued", { verificationId: verification._id, documentId: doc._id, tenantId });
       publishEvent("AIValidationQueued", { verificationId: verification._id, documentId: doc._id, tenantId });
       return verification;
@@ -274,7 +271,7 @@ class DocumentVerificationService {
       details: { documentId: doc._id, riskScore, riskLevel, duplicateScore: verification.duplicateScore }
     }).catch(err => console.error("Audit error:", err));
 
-    publishEvent("VerificationStarted", { verificationId: verification._id, documentId: doc._id, visaCaseId: visaCase._id, tenantId, branchId: doc.branchId });
+    publishEvent("VerificationStarted", { verificationId: verification._id, documentId: doc._id, visaCaseId: visaCase._id, tenantId });
     publishEvent("OCRCompleted", { verificationId: verification._id, documentId: doc._id, tenantId });
     publishEvent("AIValidationCompleted", { verificationId: verification._id, documentId: doc._id, tenantId });
     publishEvent("BusinessValidationCompleted", { verificationId: verification._id, documentId: doc._id, tenantId });
@@ -453,10 +450,10 @@ class DocumentVerificationService {
     // published. DocumentVerified is also what SearchEngineService
     // re-indexes a document on.
     if (isApproved) {
-      publishEvent("DocumentVerified", { verificationId: verification._id, documentId: doc._id, visaCaseId: doc.referenceId, tenantId, branchId: doc.branchId });
-      publishEvent("DocumentApproved", { verificationId: verification._id, documentId: doc._id, visaCaseId: doc.referenceId, tenantId, branchId: doc.branchId });
+      publishEvent("DocumentVerified", { verificationId: verification._id, documentId: doc._id, visaCaseId: doc.referenceId, tenantId });
+      publishEvent("DocumentApproved", { verificationId: verification._id, documentId: doc._id, visaCaseId: doc.referenceId, tenantId });
     } else {
-      publishEvent("DocumentRejected", { verificationId: verification._id, documentId: doc._id, visaCaseId: doc.referenceId, reason: remarks || decision, tenantId, branchId: doc.branchId });
+      publishEvent("DocumentRejected", { verificationId: verification._id, documentId: doc._id, visaCaseId: doc.referenceId, reason: remarks || decision, tenantId });
     }
 
     return verification;
@@ -500,7 +497,7 @@ class DocumentVerificationService {
     publishEvent("VerificationRestarted", { documentId: doc._id, tenantId });
 
     // Re-run pipeline
-    return await this.startVerification(documentId, tenantId, doc.branchId, userId);
+    return await this.startVerification(documentId, tenantId, userId);
   }
 }
 

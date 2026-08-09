@@ -20,7 +20,6 @@ const TrackingEventSchema = new mongoose.Schema({
 
 const PassportTrackingSchema = new mongoose.Schema({
   tenantId: { type: String, required: true, index: true },
-  branchId: { type: String, default: "main", index: true },
   visaCaseId: { type: mongoose.Schema.Types.ObjectId, ref: "visa_case", required: true, index: true },
   travelerId: { type: String, default: null, index: true },
   passportNumber: { type: String, required: true, index: true },

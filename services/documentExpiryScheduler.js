@@ -33,7 +33,6 @@ async function checkExpiredDocuments() {
     publishEvent("DocumentExpired", {
       documentId: doc._id,
       tenantId: doc.tenantId,
-      branchId: doc.branchId,
       referenceId: doc.referenceId,
       documentType: doc.documentType,
       expiryDate: doc.expiryDate
@@ -81,7 +80,6 @@ async function sendExpiryReminders() {
 
     publishEvent("NotificationRequested", {
       tenantId: doc.tenantId,
-      branchId: doc.branchId,
       event: "DocumentExpiringSoon",
       priority: "normal",
       referenceId: doc.referenceId,

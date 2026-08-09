@@ -4,7 +4,6 @@ import { getCustomerConfig } from '../utils/customerConfig.js';
 import { customerSchemas } from '../middleware/validateRequest.js';
 
 test('getCustomerConfig reads customer defaults from environment variables', () => {
-  process.env.DEFAULT_CUSTOMER_BRANCH = 'LAHORE';
   process.env.DEFAULT_CUSTOMER_CATEGORY = 'premium';
   process.env.DEFAULT_CUSTOMER_STATUS = 'lead';
   process.env.DEFAULT_CUSTOMER_LANGUAGE = 'ur';
@@ -13,7 +12,6 @@ test('getCustomerConfig reads customer defaults from environment variables', () 
 
   const config = getCustomerConfig();
 
-  assert.equal(config.defaultBranchKey, 'LAHORE');
   assert.equal(config.defaultCategory, 'premium');
   assert.equal(config.defaultStatus, 'lead');
   assert.equal(config.defaultLanguage, 'ur');
@@ -26,8 +24,7 @@ test('customerSchemas.createCustomer validates a complete customer payload', () 
     firstName: 'Aisha',
     lastName: 'Khan',
     primaryEmail: 'aisha@example.com',
-    primaryPhone: '+923001234567',
-    branchId: 'LAHORE'
+    primaryPhone: '+923001234567'
   });
 
   assert.equal(result.error, undefined);

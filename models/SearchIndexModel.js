@@ -6,11 +6,6 @@ const SearchIndexSchema = new mongoose.Schema({
     required: true,
     index: true
   },
-  branchId: {
-    type: String,
-    default: "default",
-    index: true
-  },
   entityType: {
     type: String,
     enum: [
@@ -94,7 +89,7 @@ const SearchIndexSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 SearchIndexSchema.index({ tenantId: 1, entityType: 1, entityId: 1 }, { unique: true });
-SearchIndexSchema.index({ tenantId: 1, branchId: 1, entityType: 1, status: 1, isSoftDeleted: 1 });
+SearchIndexSchema.index({ tenantId: 1, entityType: 1, status: 1, isSoftDeleted: 1 });
 SearchIndexSchema.index({ title: "text", description: "text", "keywords": "text" });
 
 const SearchIndexModel = mongoose.model("search_index", SearchIndexSchema);

@@ -2,7 +2,6 @@ import mongoose from "mongoose";
 
 const VisaAnalyticsSummarySchema = new mongoose.Schema({
   tenantId: { type: String, required: true, index: true },
-  branchId: { type: String, required: true, default: "main", index: true },
   summaryDate: { type: String, required: true, index: true },
   metrics: { type: mongoose.Schema.Types.Mixed, default: {} },
   kpis: { type: mongoose.Schema.Types.Mixed, default: {} },
@@ -17,6 +16,6 @@ const VisaAnalyticsSummarySchema = new mongoose.Schema({
   source: { type: String, default: "event-driven-kpi-engine" }
 }, { timestamps: true });
 
-VisaAnalyticsSummarySchema.index({ tenantId: 1, branchId: 1, summaryDate: 1 }, { unique: true });
+VisaAnalyticsSummarySchema.index({ tenantId: 1, summaryDate: 1 }, { unique: true });
 
 export default mongoose.model("visa_analytics_summary", VisaAnalyticsSummarySchema);

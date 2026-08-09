@@ -6,11 +6,6 @@ const EnterpriseVerificationSchema = new mongoose.Schema({
     required: true,
     index: true
   },
-  branchId: {
-    type: String,
-    default: "main",
-    index: true
-  },
   documentId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "enterprise_document",

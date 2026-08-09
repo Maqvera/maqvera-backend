@@ -150,7 +150,7 @@ class EnterpriseIncidentEngineService {
   /**
    * 1. CREATE INCIDENT
    */
-  static async createIncident(incidentData, tenantId, branchId, userId) {
+  static async createIncident(incidentData, tenantId, userId) {
     const {
       visaCaseId,
       travelPlanId,
@@ -179,22 +179,15 @@ class EnterpriseIncidentEngineService {
       throw new Error("Title (or type) and description are required for incident creation.");
     }
 
-    let resolvedBranchId = branchId || "main";
     let visaCase = incidentData.visaCase || null;
     let travelPlan = null;
 
     if (visaCaseId && !visaCase && mongoose.connection && mongoose.connection.readyState === 1) {
       visaCase = await VisaCaseModel.findOne({ _id: visaCaseId, tenantId, isSoftDeleted: { $ne: true } }).catch(() => null);
     }
-    if (visaCase) {
-      resolvedBranchId = visaCase.branchId || resolvedBranchId;
-    }
 
     if (travelPlanId && mongoose.connection && mongoose.connection.readyState === 1) {
       travelPlan = await TravelPlanModel.findOne({ _id: travelPlanId, tenantId, isSoftDeleted: { $ne: true } }).catch(() => null);
-      if (travelPlan) {
-        resolvedBranchId = travelPlan.branchId || resolvedBranchId;
-      }
     }
 
     const incidentNumber = await this.generateIncidentNumber(tenantId);
@@ -205,7 +198,6 @@ class EnterpriseIncidentEngineService {
 
     const newIncident = new TravelIncidentManagementModel({
       tenantId,
-      branchId: resolvedBranchId,
       incidentNumber,
       visaCaseId: visaCase ? visaCase._id : (visaCaseId || null),
       visaCaseNumber: visaCase ? visaCase.caseNumber : null,
@@ -470,7 +462,7 @@ class EnterpriseIncidentEngineService {
       performedBy: userId,
       metadata: changes
     });
-    if (mongoose.connection?.readyState === 1) await AuditLogModel.create({ tenantId, branchId: incident.branchId, userId: userId || "system", action: "UPDATE_INCIDENT", resource: "Incident", resourceId: incident._id.toString(), details: changes }).catch(() => null);
+    if (mongoose.connection?.readyState === 1) await AuditLogModel.create({ tenantId, userId: userId || "system", action: "UPDATE_INCIDENT", resource: "Incident", resourceId: incident._id.toString(), details: changes }).catch(() => null);
 
     if (escalated) {
       publishEvent("IncidentEscalated", { incidentId: incident._id, incidentNumber: incident.incidentNumber, tenantId });
@@ -540,7 +532,7 @@ class EnterpriseIncidentEngineService {
     // constructing the call's arguments). Every call to this endpoint
     // failed. The action string was also wrong ("RESOLVE_INCIDENT" inside
     // the assign handler).
-    if (mongoose.connection?.readyState === 1) await AuditLogModel.create({ tenantId, branchId: incident.branchId, userId: userId || "system", action: "ASSIGN_INCIDENT", resource: "Incident", resourceId: incident._id.toString(), details: { assigneeId, assigneeName: incident.assignedToName, team } }).catch(() => null);
+    if (mongoose.connection?.readyState === 1) await AuditLogModel.create({ tenantId, userId: userId || "system", action: "ASSIGN_INCIDENT", resource: "Incident", resourceId: incident._id.toString(), details: { assigneeId, assigneeName: incident.assignedToName, team } }).catch(() => null);
 
     publishEvent("IncidentAssigned", { incidentId: incident._id, assigneeId, team, tenantId });
     // Business Rule: "Notifications sent automatically."
@@ -598,7 +590,7 @@ class EnterpriseIncidentEngineService {
 
     publishEvent("InvestigationStarted", { incidentId: incident._id, incidentNumber: incident.incidentNumber, tenantId });
 
-    if (mongoose.connection?.readyState === 1) await AuditLogModel.create({ tenantId, branchId: incident.branchId, userId: userId || "system", action: "ADD_INCIDENT_EVIDENCE", resource: "Incident", resourceId: incident._id.toString(), details: { type: item.type, description: item.description } }).catch(() => null);
+    if (mongoose.connection?.readyState === 1) await AuditLogModel.create({ tenantId, userId: userId || "system", action: "ADD_INCIDENT_EVIDENCE", resource: "Incident", resourceId: incident._id.toString(), details: { type: item.type, description: item.description } }).catch(() => null);
 
     return item;
   }
@@ -717,7 +709,7 @@ class EnterpriseIncidentEngineService {
       performedBy: userId
     });
 
-    if (mongoose.connection?.readyState === 1) await AuditLogModel.create({ tenantId, branchId: incident.branchId, userId: userId || "system", action: "UPDATE_INCIDENT_INVESTIGATION", resource: "Incident", resourceId: incident._id.toString(), details: { changedParts } }).catch(() => null);
+    if (mongoose.connection?.readyState === 1) await AuditLogModel.create({ tenantId, userId: userId || "system", action: "UPDATE_INCIDENT_INVESTIGATION", resource: "Incident", resourceId: incident._id.toString(), details: { changedParts } }).catch(() => null);
 
     if (correctiveActionCreated) {
       publishEvent("CorrectiveActionCreated", { incidentId: incident._id, incidentNumber: incident.incidentNumber, action: correctiveActionCreated.action, assignedTo: correctiveActionCreated.assignedTo, tenantId });
@@ -811,7 +803,7 @@ class EnterpriseIncidentEngineService {
 
     publishEvent("IncidentResolved", { incidentId: incident._id, incidentNumber: incident.incidentNumber, tenantId });
 
-    if (mongoose.connection?.readyState === 1) await AuditLogModel.create({ tenantId, branchId: incident.branchId, userId: userId || "system", action: "RESOLVE_INCIDENT", resource: "Incident", resourceId: incident._id.toString(), details: { rootCause: rootCause || null, correctiveAction: correctiveAction || null } }).catch(() => null);
+    if (mongoose.connection?.readyState === 1) await AuditLogModel.create({ tenantId, userId: userId || "system", action: "RESOLVE_INCIDENT", resource: "Incident", resourceId: incident._id.toString(), details: { rootCause: rootCause || null, correctiveAction: correctiveAction || null } }).catch(() => null);
 
     return incident;
   }
@@ -845,7 +837,7 @@ class EnterpriseIncidentEngineService {
 
     publishEvent("IncidentVerified", { incidentId: incident._id, incidentNumber: incident.incidentNumber, tenantId });
 
-    if (mongoose.connection?.readyState === 1) await AuditLogModel.create({ tenantId, branchId: incident.branchId, userId: userId || "system", action: "VERIFY_INCIDENT", resource: "Incident", resourceId: incident._id.toString(), details: {} }).catch(() => null);
+    if (mongoose.connection?.readyState === 1) await AuditLogModel.create({ tenantId, userId: userId || "system", action: "VERIFY_INCIDENT", resource: "Incident", resourceId: incident._id.toString(), details: {} }).catch(() => null);
 
     return incident;
   }
@@ -887,7 +879,7 @@ class EnterpriseIncidentEngineService {
 
     publishEvent("IncidentClosed", { incidentId: incident._id, incidentNumber: incident.incidentNumber, tenantId });
 
-    if (mongoose.connection?.readyState === 1) await AuditLogModel.create({ tenantId, branchId: incident.branchId, userId: userId || "system", action: "CLOSE_INCIDENT", resource: "Incident", resourceId: incident._id.toString(), details: {} }).catch(() => null);
+    if (mongoose.connection?.readyState === 1) await AuditLogModel.create({ tenantId, userId: userId || "system", action: "CLOSE_INCIDENT", resource: "Incident", resourceId: incident._id.toString(), details: {} }).catch(() => null);
 
     return incident;
   }
@@ -928,7 +920,7 @@ class EnterpriseIncidentEngineService {
 
     publishEvent("IncidentReopened", { incidentId: incident._id, incidentNumber: incident.incidentNumber, tenantId });
 
-    if (mongoose.connection?.readyState === 1) await AuditLogModel.create({ tenantId, branchId: incident.branchId, userId: userId || "system", action: "REOPEN_INCIDENT", resource: "Incident", resourceId: incident._id.toString(), details: { reason: reason || null } }).catch(() => null);
+    if (mongoose.connection?.readyState === 1) await AuditLogModel.create({ tenantId, userId: userId || "system", action: "REOPEN_INCIDENT", resource: "Incident", resourceId: incident._id.toString(), details: { reason: reason || null } }).catch(() => null);
 
     return incident;
   }

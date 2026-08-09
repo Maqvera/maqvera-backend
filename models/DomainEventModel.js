@@ -7,7 +7,6 @@ const DomainEventSchema = new mongoose.Schema({
   eventId: { type: String, required: true, unique: true, index: true },
   eventType: { type: String, required: true, index: true },
   tenantId: { type: String, default: null, index: true },
-  branchId: { type: String, default: null, index: true },
   correlationId: { type: String, default: null, index: true },
   payload: { type: mongoose.Schema.Types.Mixed, default: {} },
   occurredAt: { type: Date, required: true, default: Date.now, index: true },

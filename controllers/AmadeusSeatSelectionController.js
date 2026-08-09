@@ -16,7 +16,6 @@ export const AssignAmadeusSeats = async (req, res) => {
     const tenantId = req.auth?.tenantId;
     const userId = req.auth?.userId || req.auth?.id;
     const userName = req.auth?.name || "User";
-    const branchId = req.auth?.branchId || "main";
     const permissions = req.auth?.permissions || [];
 
     if (!tenantId || !userId) {
@@ -29,7 +28,7 @@ export const AssignAmadeusSeats = async (req, res) => {
     const { flightOrderId, seatSelections, paymentApproved } = req.body;
 
     const result = await AmadeusSeatSelectionService.assignSeats({
-      tenantId, branchId, userId, userName, flightOrderId, seatSelections, paymentApproved: Boolean(paymentApproved), requestId
+      tenantId, userId, userName, flightOrderId, seatSelections, paymentApproved: Boolean(paymentApproved), requestId
     });
 
     return sendSuccess(res, 200, "Seats assigned successfully.", result, requestId);

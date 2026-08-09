@@ -18,7 +18,6 @@ export const publishEvent = (eventName, payload = {}) => {
             eventId,
             eventType: eventName,
             tenantId: eventPayload.tenantId || null,
-            branchId: eventPayload.branchId || null,
             correlationId: eventPayload.correlationId || null,
             payload: eventPayload,
             occurredAt,

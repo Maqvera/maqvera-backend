@@ -12,10 +12,6 @@ const TravelItinerarySchema = new mongoose.Schema({
     required: true,
     index: true
   },
-  branchId: {
-    type: String,
-    default: "default"
-  },
   day: {
     type: Number,
     required: true,

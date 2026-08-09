@@ -6,11 +6,6 @@ const BookingHeaderSchema = new mongoose.Schema({
     required: true,
     index: true
   },
-  branchId: {
-    type: String,
-    required: true,
-    index: true
-  },
   bookingReference: {
     type: String,
     required: true,
@@ -128,7 +123,7 @@ const BookingHeaderSchema = new mongoose.Schema({
   }
 }, { timestamps: true });
 
-BookingHeaderSchema.index({ tenantId: 1, branchId: 1, status: 1 });
+BookingHeaderSchema.index({ tenantId: 1, status: 1 });
 BookingHeaderSchema.index({ customerId: 1, tenantId: 1 });
 BookingHeaderSchema.index({ tenantId: 1, travelDate: 1 });
 BookingHeaderSchema.index({ tenantId: 1, createdAt: -1 });

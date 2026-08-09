@@ -4,7 +4,6 @@ import mongoose from "mongoose";
 // customer dashboard reads away from operational Visa and Appointment tables.
 const VisaCustomerAnalyticsSummarySchema = new mongoose.Schema({
   tenantId: { type: String, required: true, index: true },
-  branchId: { type: String, required: true, default: "main", index: true },
   customerId: { type: String, required: true, index: true },
   summaryDate: { type: String, required: true, index: true },
   metrics: { type: mongoose.Schema.Types.Mixed, default: {} },
@@ -14,7 +13,7 @@ const VisaCustomerAnalyticsSummarySchema = new mongoose.Schema({
 }, { timestamps: true });
 
 VisaCustomerAnalyticsSummarySchema.index(
-  { tenantId: 1, branchId: 1, customerId: 1, summaryDate: 1 },
+  { tenantId: 1, customerId: 1, summaryDate: 1 },
   { unique: true }
 );
 

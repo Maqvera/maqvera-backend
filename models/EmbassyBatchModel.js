@@ -6,11 +6,6 @@ const EmbassyBatchSchema = new mongoose.Schema({
     required: true,
     index: true
   },
-  branchId: {
-    type: String,
-    default: "main",
-    index: true
-  },
   batchNumber: {
     type: String,
     required: true,

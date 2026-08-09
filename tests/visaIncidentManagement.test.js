@@ -6,7 +6,6 @@ import VisaService from "../services/VisaService.js";
 const createMockVisaCase = () => ({
   _id: "507f1f77bcf86cd799439099",
   tenantId: "tenant_abc",
-  branchId: "branch_khi",
   status: "documents_pending",
   incidents: [],
   timeline: [],
@@ -28,7 +27,6 @@ test("VisaService adds incident and auto-locks case on Critical severity", async
       description: "TCS tracking shows missing package."
     },
     "tenant_abc",
-    "branch_khi",
     "user_admin"
   );
 

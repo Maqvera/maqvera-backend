@@ -6,11 +6,6 @@ const TravelPlanSchema = new mongoose.Schema({
     required: true,
     index: true
   },
-  branchId: {
-    type: String,
-    required: true,
-    index: true
-  },
   travelPlanNumber: {
     type: String,
     required: true,
@@ -155,7 +150,7 @@ const TravelPlanSchema = new mongoose.Schema({
   ]
 }, { timestamps: true });
 
-TravelPlanSchema.index({ tenantId: 1, branchId: 1, status: 1 });
+TravelPlanSchema.index({ tenantId: 1, status: 1 });
 TravelPlanSchema.index({ bookingId: 1, tenantId: 1 });
 TravelPlanSchema.index({ tenantId: 1, departureDate: 1 });
 // Part 2 business rule "Supports indexed filtering" — arrivalDateFrom/

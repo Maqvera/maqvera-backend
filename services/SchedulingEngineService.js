@@ -23,14 +23,12 @@ class SchedulingEngineService {
   /**
    * Schedule a New Appointment (with capacity & double-booking conflict check)
    */
-  static async scheduleAppointment(visaCaseId, { appointmentType = "Biometric", providerId, providerName, locationId, location, appointmentDate, appointmentTime = "09:30", durationMinutes = 30, assignedOfficer, remarks }, tenantId, branchId, userId) {
+  static async scheduleAppointment(visaCaseId, { appointmentType = "Biometric", providerId, providerName, locationId, location, appointmentDate, appointmentTime = "09:30", durationMinutes = 30, assignedOfficer, remarks }, tenantId, userId) {
     if (!visaCaseId || !appointmentDate || !providerId || !locationId) {
       throw new Error("visaCaseId, appointmentDate, providerId and locationId are required.");
     }
 
-    const caseFilter = { _id: visaCaseId, tenantId, isSoftDeleted: { $ne: true } };
-    if (branchId) caseFilter.branchId = branchId;
-    const visaCase = await VisaCaseModel.findOne(caseFilter);
+    const visaCase = await VisaCaseModel.findOne({ _id: visaCaseId, tenantId, isSoftDeleted: { $ne: true } });
     if (!visaCase) {
       throw new Error("Visa Case not found.");
     }
@@ -90,7 +88,6 @@ class SchedulingEngineService {
 
     const newAppt = new VisaAppointmentModel({
       tenantId,
-      branchId: branchId || visaCase.branchId || "main",
       appointmentNumber,
       visaCaseId,
       caseNumber: visaCase.caseNumber,
@@ -147,7 +144,7 @@ class SchedulingEngineService {
       details: { appointmentNumber, visaCaseId, appointmentType, appointmentDate: apptDate }
     }).catch(err => console.error("Audit error:", err));
 
-    publishEvent("AppointmentScheduled", { appointmentId: newAppt._id, visaCaseId, tenantId, branchId: newAppt.branchId });
+    publishEvent("AppointmentScheduled", { appointmentId: newAppt._id, visaCaseId, tenantId });
 
     return newAppt;
   }
@@ -155,14 +152,13 @@ class SchedulingEngineService {
   /**
    * Get all appointments for a Visa Case
    */
-  static async getAppointmentsForCase(visaCaseId, query, tenantId, branchId) {
+  static async getAppointmentsForCase(visaCaseId, query, tenantId) {
     const filter = {
       tenantId,
       visaCaseId,
       isSoftDeleted: { $ne: true }
     };
 
-    if (branchId) filter.branchId = branchId;
     if (query.status) filter.status = query.status;
     if (query.appointmentType) filter.appointmentType = new RegExp(`^${query.appointmentType}$`, "i");
     const page = Math.max(Number(query.page) || 1, 1);
@@ -288,7 +284,7 @@ class SchedulingEngineService {
       details: updateData
     }).catch(err => console.error("Audit error:", err));
 
-    publishEvent(isRescheduled ? "AppointmentRescheduled" : "AppointmentUpdated", { appointmentId: appt._id, visaCaseId: appt.visaCaseId, tenantId, branchId: appt.branchId });
+    publishEvent(isRescheduled ? "AppointmentRescheduled" : "AppointmentUpdated", { appointmentId: appt._id, visaCaseId: appt.visaCaseId, tenantId });
 
     return appt;
   }
@@ -339,15 +335,15 @@ class SchedulingEngineService {
       details: { status, checkInTime }
     }).catch(err => console.error("Audit error:", err));
 
-    publishEvent("AppointmentAttendanceRecorded", { appointmentId: appt._id, visaCaseId: appt.visaCaseId, status, tenantId, branchId: appt.branchId });
+    publishEvent("AppointmentAttendanceRecorded", { appointmentId: appt._id, visaCaseId: appt.visaCaseId, status, tenantId });
 
     // AppointmentAttendanceRecorded is generic across every attendance
     // status; AppointmentCheckedIn and AppointmentCancelled (named in the
     // Domain Event Map) were never published on their own.
     if (appt.status === "Checked In") {
-      publishEvent("AppointmentCheckedIn", { appointmentId: appt._id, visaCaseId: appt.visaCaseId, tenantId, branchId: appt.branchId });
+      publishEvent("AppointmentCheckedIn", { appointmentId: appt._id, visaCaseId: appt.visaCaseId, tenantId });
     } else if (appt.status === "Cancelled") {
-      publishEvent("AppointmentCancelled", { appointmentId: appt._id, visaCaseId: appt.visaCaseId, tenantId, branchId: appt.branchId });
+      publishEvent("AppointmentCancelled", { appointmentId: appt._id, visaCaseId: appt.visaCaseId, tenantId });
     }
 
     return appt;
@@ -406,8 +402,8 @@ class SchedulingEngineService {
       details: { outcome, notes }
     }).catch(err => console.error("Audit error:", err));
 
-    publishEvent("AppointmentResultRecorded", { appointmentId: appt._id, visaCaseId: appt.visaCaseId, outcome, tenantId, branchId: appt.branchId });
-    publishEvent("AppointmentCompleted", { appointmentId: appt._id, visaCaseId: appt.visaCaseId, outcome, tenantId, branchId: appt.branchId });
+    publishEvent("AppointmentResultRecorded", { appointmentId: appt._id, visaCaseId: appt.visaCaseId, outcome, tenantId });
+    publishEvent("AppointmentCompleted", { appointmentId: appt._id, visaCaseId: appt.visaCaseId, outcome, tenantId });
 
     // AppointmentCompleted is generic across all appointment types;
     // InterviewCompleted/MedicalCompleted (named in the Domain Event Map)
@@ -415,9 +411,9 @@ class SchedulingEngineService {
     // specifically to "an interview just finished" vs. any other appointment.
     const typeLower = String(appt.appointmentType || "").toLowerCase();
     if (isSuccess && typeLower.includes("interv")) {
-      publishEvent(VISA_DOMAIN_EVENTS.INTERVIEW_COMPLETED, { appointmentId: appt._id, visaCaseId: appt.visaCaseId, outcome, tenantId, branchId: appt.branchId });
+      publishEvent(VISA_DOMAIN_EVENTS.INTERVIEW_COMPLETED, { appointmentId: appt._id, visaCaseId: appt.visaCaseId, outcome, tenantId });
     } else if (isSuccess && typeLower.includes("medic")) {
-      publishEvent(VISA_DOMAIN_EVENTS.MEDICAL_COMPLETED, { appointmentId: appt._id, visaCaseId: appt.visaCaseId, outcome, tenantId, branchId: appt.branchId });
+      publishEvent(VISA_DOMAIN_EVENTS.MEDICAL_COMPLETED, { appointmentId: appt._id, visaCaseId: appt.visaCaseId, outcome, tenantId });
     }
 
     return appt;

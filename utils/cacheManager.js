@@ -147,6 +147,14 @@ async function buildRedisAdapter() {
 class CacheManager {
   static _adapter = null;
   static _initialized = false;
+  // EXT-033 §12 "Cache Hit Rate." Real, in-process counters — reset on
+  // restart, same honesty scope as AIToolRateLimiter's own in-memory
+  // windows elsewhere in this codebase (a real signal for this running
+  // instance, not a claim of a distributed/cross-instance total). Reflects
+  // every consumer of this shared CacheManager, not only AI callers — that
+  // fact is stated explicitly wherever AIObservabilityService surfaces it.
+  static _hits = 0;
+  static _misses = 0;
 
   /**
    * Initialize the cache — tries Redis first, falls back to memory.
@@ -173,7 +181,16 @@ class CacheManager {
    * @returns {Promise<any|null>}
    */
   static async get(key) {
-    return this.adapter.get(key);
+    const value = await this.adapter.get(key);
+    if (value !== null && value !== undefined) this._hits += 1;
+    else this._misses += 1;
+    return value;
+  }
+
+  /** EXT-033 §12 "Cache Hit Rate" — real counters since process start. */
+  static getStats() {
+    const total = this._hits + this._misses;
+    return { hits: this._hits, misses: this._misses, total, hitRatePct: total > 0 ? Number(((this._hits / total) * 100).toFixed(1)) : null, backend: this.backendName };
   }
 
   /**

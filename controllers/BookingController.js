@@ -9,7 +9,6 @@ import BookingTimelineModel from "../models/BookingTimelineModel.js";
 import BookingNoteModel from "../models/BookingNoteModel.js";
 import BookingWorkflowModel from "../models/BookingWorkflowModel.js";
 import CustomerModel from "../models/CustomerModel.js";
-import BranchModel from "../models/Branchmodel.js";
 import EmployeeProfileModel from "../models/EmployeeProfilemodel.js";
 import FlightCatalogModel from "../models/FlightCatalogModel.js";
 import HotelCatalogModel from "../models/HotelCatalogModel.js";
@@ -30,6 +29,7 @@ import {
   executeWorkflowTransition,
   getWorkflowDefinitionForEntity
 } from "../utils/WorkflowEngine.js";
+import { getAccessScope } from "../utils/accessScope.js";
 
 const bookingConfig = getBookingConfig();
 const storageConfig = getStorageConfig();
@@ -122,12 +122,13 @@ const findBookingIdsMatchingSupplierQuery = async (tenantId, query) => {
 export const ListBookings = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
 
-    if (!tenantId) {
+    if (!scope) {
       return sendError(res, 403, "Tenant context is required.", requestId);
     }
+    const tenantId = scope.tenantId;
 
     if (!permissions.includes("bookings.read") && !permissions.includes("booking.read")) {
       return sendError(res, 403, "Permission denied.", requestId);
@@ -142,7 +143,6 @@ export const ListBookings = async (req, res) => {
     const bookingStatus = req.query.bookingStatus || req.query.status || null;
     const paymentStatus = req.query.paymentStatus || null;
     const visaStatus = req.query.visaStatus || null;
-    const branchId = req.query.branchId || null;
     const consultantId = req.query.consultantId || req.query.assignedTo || null;
     
     const travelDateFrom = req.query.travelDateFrom ? new Date(req.query.travelDateFrom) : null;
@@ -153,9 +153,8 @@ export const ListBookings = async (req, res) => {
     const sortField = req.query.sort || "createdAt";
     const order = req.query.order === "asc" ? 1 : -1;
 
-    const filter = { tenantId, status: { $ne: "archived" } };
+    const filter = { ...scope, status: { $ne: "archived" } };
 
-    if (branchId) filter.branchId = branchId;
     if (customerId) filter.customerId = customerId;
     if (bookingType) filter.bookingType = bookingType.toLowerCase();
     if (bookingStatus) filter.status = bookingStatus.toLowerCase();
@@ -232,9 +231,10 @@ export const ListBookings = async (req, res) => {
 export const SearchBookings = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
-    if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    const tenantId = scope.tenantId;
     if (!permissions.includes("bookings.read") && !permissions.includes("booking.read")) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
@@ -250,7 +250,6 @@ export const SearchBookings = async (req, res) => {
     const bookingStatus = req.query.bookingStatus || req.query.status || req.query.workflowState || null;
     const paymentStatus = req.query.paymentStatus || null;
     const visaStatus = req.query.visaStatus || null;
-    const branchId = req.query.branchId || null;
     const consultantId = req.query.consultantId || req.query.assignedTo || null;
     const bookingType = req.query.bookingType || req.query.type || null;
     const packageId = req.query.packageId || null;
@@ -261,11 +260,10 @@ export const SearchBookings = async (req, res) => {
     const travelerCountMin = req.query.travelerCountMin ? parseInt(req.query.travelerCountMin, 10) : null;
     const travelerCountMax = req.query.travelerCountMax ? parseInt(req.query.travelerCountMax, 10) : null;
 
-    const filter = { tenantId, status: { $ne: "archived" } };
+    const filter = { ...scope, status: { $ne: "archived" } };
     if (bookingStatus) filter.status = bookingStatus.toLowerCase();
     if (paymentStatus) filter.paymentStatus = paymentStatus.toLowerCase();
     if (visaStatus) filter.visaStatus = visaStatus.toLowerCase();
-    if (branchId) filter.branchId = branchId;
     if (consultantId) filter.assignedConsultant = consultantId;
     if (bookingType) filter.bookingType = bookingType.toLowerCase();
     if (packageId) filter.packageId = packageId;
@@ -289,7 +287,7 @@ export const SearchBookings = async (req, res) => {
     }
 
     // Search Fields: Booking Number, Customer Name, Passport Number, Phone
-    // Number, Email, Assigned Consultant, Branch, Reference Number, Remarks.
+    // Number, Email, Assigned Consultant, Reference Number, Remarks.
     // Not implemented — no backing model/field exists anywhere in this
     // codebase (Finance/Package/Ticketing/Supplier-catalog modules aren't
     // built), flagged rather than faked: Invoice Number, Visa Number,
@@ -307,7 +305,6 @@ export const SearchBookings = async (req, res) => {
         { customerName: regex },
         { customerCode: regex },
         { assignedConsultant: regex },
-        { branchId: regex },
         { remarks: regex },
         ...(matchedBookingIds.length > 0 ? [{ _id: { $in: matchedBookingIds } }] : [])
       ];
@@ -359,10 +356,11 @@ export const SearchBookings = async (req, res) => {
 export const CreateBooking = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
 
-    if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    const tenantId = scope.tenantId;
 
     if (!permissions.includes("bookings.create") && !permissions.includes("booking.create")) {
       return sendError(res, 403, "Permission denied.", requestId);
@@ -372,7 +370,6 @@ export const CreateBooking = async (req, res) => {
       customerId,
       bookingType = bookingConfig.defaultBookingType,
       packageId = null,
-      branchId = req.auth?.branchId || bookingConfig.defaultBranchId,
       travelDate,
       returnDate,
       assignedConsultant = req.auth?.id || null,
@@ -389,11 +386,6 @@ export const CreateBooking = async (req, res) => {
     // Validation Rule: "Customer Exists"
     const customer = await CustomerModel.findOne({ _id: customerId, tenantId, status: { $ne: "archived" } });
     if (!customer) return sendError(res, 404, "Customer not found.", requestId);
-
-    // Validation Rule: "Branch Exists" — same branchKey/tenantKey lookup
-    // pattern already used by Customer/User Management.
-    const branch = await BranchModel.findOne({ branchKey: branchId, tenantKey: tenantId, status: "active" });
-    if (!branch) return sendError(res, 422, `Branch "${branchId}" does not exist or is inactive.`, requestId);
 
     // Validation Rule: "Currency Exists" — validated dynamically against the
     // config-driven supported currency list (utils/bookingConfig.js), not a
@@ -448,7 +440,6 @@ export const CreateBooking = async (req, res) => {
 
     const booking = await BookingHeaderModel.create({
       tenantId,
-      branchId,
       bookingReference: bookingNumber,
       bookingNumber,
       customerId: customer._id,
@@ -512,7 +503,6 @@ export const CreateBooking = async (req, res) => {
       reason: null,
       userId: req.auth?.id || null,
       tenantId,
-      branchId,
       requestId,
       metadata: { bookingId: booking._id, bookingNumber: booking.bookingNumber }
     });
@@ -539,17 +529,18 @@ export const CreateBooking = async (req, res) => {
 export const GetBooking = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
 
-    if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    const tenantId = scope.tenantId;
 
     if (!permissions.includes("bookings.read") && !permissions.includes("booking.read")) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
     const { bookingId } = req.params;
-    const booking = await BookingHeaderModel.findOne({ _id: bookingId, tenantId }).lean();
+    const booking = await BookingHeaderModel.findOne({ _id: bookingId, ...scope }).lean();
 
     if (!booking) return sendError(res, 404, "Booking not found.", requestId);
 
@@ -584,7 +575,6 @@ export const GetBooking = async (req, res) => {
         internalNotes: booking.internalNotes,
         preferredContactTime: booking.preferredContactTime,
         tenantId: booking.tenantId,
-        branchId: booking.branchId,
         createdAt: booking.createdAt,
         updatedAt: booking.updatedAt
       },
@@ -648,17 +638,18 @@ export const GetBooking = async (req, res) => {
 export const UpdateBooking = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
 
-    if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    const tenantId = scope.tenantId;
 
     if (!permissions.includes("bookings.update") && !permissions.includes("booking.update")) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
     const { bookingId } = req.params;
-    const booking = await BookingHeaderModel.findOne({ _id: bookingId, tenantId, status: { $ne: "archived" } });
+    const booking = await BookingHeaderModel.findOne({ _id: bookingId, ...scope, status: { $ne: "archived" } });
 
     if (!booking) return sendError(res, 404, "Booking not found.", requestId);
 
@@ -669,7 +660,7 @@ export const UpdateBooking = async (req, res) => {
     // endpoint exists for field-level edits (unlike workflow transitions),
     // so this is enforced as an elevated-permission gate, matching the same
     // convention already used for archived-record access.
-    const criticalFields = ["travelDate", "returnDate", "branchId", "assignedConsultant", "assignedTo"];
+    const criticalFields = ["travelDate", "returnDate", "assignedConsultant", "assignedTo"];
     const freelyEditableStatuses = ["draft", "reserved"];
     const touchesCriticalField = criticalFields.some((key) => req.body[key] !== undefined);
     if (touchesCriticalField && !freelyEditableStatuses.includes(booking.status)) {
@@ -680,10 +671,6 @@ export const UpdateBooking = async (req, res) => {
 
     // Editable-field validation — same rules as POST /bookings, since these
     // are equally real field changes.
-    if (req.body.branchId !== undefined) {
-      const branch = await BranchModel.findOne({ branchKey: req.body.branchId, tenantKey: tenantId, status: "active" });
-      if (!branch) return sendError(res, 422, `Branch "${req.body.branchId}" does not exist or is inactive.`, requestId);
-    }
     if (req.body.assignedConsultant !== undefined) {
       if (!mongoose.Types.ObjectId.isValid(req.body.assignedConsultant)) {
         return sendError(res, 422, `Consultant "${req.body.assignedConsultant}" does not exist.`, requestId);
@@ -709,7 +696,7 @@ export const UpdateBooking = async (req, res) => {
     // architecture, totals are derived from real BookingServiceModel line
     // items via recalculateBookingFinancials, never set by hand through a
     // generic PATCH.
-    const allowedFields = ["travelDate", "returnDate", "assignedConsultant", "assignedTo", "remarks", "priority", "internalNotes", "preferredContactTime", "branchId"];
+    const allowedFields = ["travelDate", "returnDate", "assignedConsultant", "assignedTo", "remarks", "priority", "internalNotes", "preferredContactTime"];
 
     allowedFields.forEach((key) => {
       if (req.body[key] !== undefined) {
@@ -750,7 +737,6 @@ export const UpdateBooking = async (req, res) => {
       reason: null,
       userId: req.auth?.id || null,
       tenantId,
-      branchId: booking.branchId,
       requestId,
       metadata: { bookingId: booking._id }
     });
@@ -767,17 +753,18 @@ export const UpdateBooking = async (req, res) => {
 export const ArchiveBooking = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
 
-    if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    const tenantId = scope.tenantId;
 
     if (!permissions.includes("bookings.delete") && !permissions.includes("booking.delete")) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
     const { bookingId } = req.params;
-    const booking = await BookingHeaderModel.findOne({ _id: bookingId, tenantId, status: { $ne: "archived" } });
+    const booking = await BookingHeaderModel.findOne({ _id: bookingId, ...scope, status: { $ne: "archived" } });
 
     if (!booking) return sendError(res, 404, "Booking not found.", requestId);
 
@@ -800,7 +787,6 @@ export const ArchiveBooking = async (req, res) => {
       reason: null,
       userId: req.auth?.id || null,
       tenantId,
-      branchId: booking.branchId,
       requestId,
       metadata: { bookingId: booking._id }
     });
@@ -817,15 +803,16 @@ export const ArchiveBooking = async (req, res) => {
 export const ConfirmBooking = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
-    if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    const tenantId = scope.tenantId;
     if (!permissions.includes("bookings.update") && !permissions.includes("booking.update")) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
     const { bookingId } = req.params;
-    const booking = await BookingHeaderModel.findOne({ _id: bookingId, tenantId, status: { $ne: "archived" } });
+    const booking = await BookingHeaderModel.findOne({ _id: bookingId, ...scope, status: { $ne: "archived" } });
 
     if (!booking) return sendError(res, 404, "Booking not found.", requestId);
 
@@ -861,7 +848,6 @@ export const ConfirmBooking = async (req, res) => {
       reason: null,
       userId: req.auth?.id || null,
       tenantId,
-      branchId: booking.branchId,
       requestId,
       metadata: { bookingId: booking._id }
     });
@@ -878,9 +864,10 @@ export const ConfirmBooking = async (req, res) => {
 export const CancelBooking = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
-    if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    const tenantId = scope.tenantId;
     if (!permissions.includes("bookings.update") && !permissions.includes("booking.update")) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
@@ -892,7 +879,7 @@ export const CancelBooking = async (req, res) => {
       return sendError(res, 422, "Cancellation reason is mandatory.", requestId);
     }
 
-    const booking = await BookingHeaderModel.findOne({ _id: bookingId, tenantId, status: { $ne: "archived" } });
+    const booking = await BookingHeaderModel.findOne({ _id: bookingId, ...scope, status: { $ne: "archived" } });
     if (!booking) return sendError(res, 404, "Booking not found.", requestId);
     if (booking.status === "cancelled") {
       return sendError(res, 422, "Booking is already cancelled.", requestId);
@@ -963,7 +950,6 @@ export const CancelBooking = async (req, res) => {
       reason: reason.trim(),
       userId: req.auth?.id || null,
       tenantId,
-      branchId: booking.branchId,
       requestId,
       metadata: { bookingId: booking._id, category }
     });
@@ -994,16 +980,17 @@ export const CancelBooking = async (req, res) => {
 export const ListBookingTravelers = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
 
-    if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    const tenantId = scope.tenantId;
     if (!permissions.includes("bookings.read") && !permissions.includes("booking.read")) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
     const { bookingId } = req.params;
-    const booking = await BookingHeaderModel.findOne({ _id: bookingId, tenantId }).lean();
+    const booking = await BookingHeaderModel.findOne({ _id: bookingId, ...scope }).lean();
     if (!booking) return sendError(res, 404, "Booking not found.", requestId);
 
     const page = Math.max(parseInt(req.query.page || "1", 10), 1);
@@ -1078,16 +1065,17 @@ export const ListBookingTravelers = async (req, res) => {
 export const AddBookingTravelers = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
 
-    if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    const tenantId = scope.tenantId;
     if (!permissions.includes("bookings.create") && !permissions.includes("bookings.update") && !permissions.includes("booking.update")) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
     const { bookingId } = req.params;
-    const booking = await BookingHeaderModel.findOne({ _id: bookingId, tenantId, status: { $ne: "archived" } });
+    const booking = await BookingHeaderModel.findOne({ _id: bookingId, ...scope, status: { $ne: "archived" } });
 
     if (!booking) return sendError(res, 404, "Booking not found.", requestId);
     if (booking.status === "completed" || booking.status === "cancelled") {
@@ -1233,7 +1221,6 @@ export const AddBookingTravelers = async (req, res) => {
       reason: null,
       userId: req.auth?.id || null,
       tenantId,
-      branchId: booking.branchId,
       requestId,
       metadata: { bookingId: booking._id, addedCount: createdTravelers.length }
     });
@@ -1259,10 +1246,11 @@ export const AddBookingTravelers = async (req, res) => {
 export const UpdateBookingTraveler = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
 
-    if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    const tenantId = scope.tenantId;
     if (!permissions.includes("bookings.update") && !permissions.includes("booking.update")) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
@@ -1338,10 +1326,11 @@ export const UpdateBookingTraveler = async (req, res) => {
 export const RemoveBookingTraveler = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
 
-    if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    const tenantId = scope.tenantId;
     if (!permissions.includes("bookings.update") && !permissions.includes("bookings.delete") && !permissions.includes("booking.update")) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
@@ -1462,16 +1451,17 @@ export const recalculateBookingFinancials = async (bookingId, tenantId) => {
 export const ListBookingServices = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
 
-    if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    const tenantId = scope.tenantId;
     if (!permissions.includes("bookings.read") && !permissions.includes("booking.read")) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
     const { bookingId } = req.params;
-    const booking = await BookingHeaderModel.findOne({ _id: bookingId, tenantId }).lean();
+    const booking = await BookingHeaderModel.findOne({ _id: bookingId, ...scope }).lean();
     if (!booking) return sendError(res, 404, "Booking not found.", requestId);
 
     const page = Math.max(parseInt(req.query.page || "1", 10), 1);
@@ -1561,16 +1551,17 @@ export const ListBookingServices = async (req, res) => {
 export const AddBookingServices = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
 
-    if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    const tenantId = scope.tenantId;
     if (!permissions.includes("bookings.create") && !permissions.includes("bookings.update") && !permissions.includes("booking.update")) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
     const { bookingId } = req.params;
-    const booking = await BookingHeaderModel.findOne({ _id: bookingId, tenantId, status: { $ne: "archived" } });
+    const booking = await BookingHeaderModel.findOne({ _id: bookingId, ...scope, status: { $ne: "archived" } });
 
     if (!booking) return sendError(res, 404, "Booking not found.", requestId);
     if (booking.status === "completed" || booking.status === "cancelled") {
@@ -1746,7 +1737,6 @@ export const AddBookingServices = async (req, res) => {
       reason: null,
       userId: req.auth?.id || null,
       tenantId,
-      branchId: booking.branchId,
       requestId,
       metadata: { bookingId: booking._id, count: createdServices.length }
     });
@@ -1772,10 +1762,11 @@ export const AddBookingServices = async (req, res) => {
 export const UpdateBookingService = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
 
-    if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    const tenantId = scope.tenantId;
     if (!permissions.includes("bookings.update") && !permissions.includes("booking.update")) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
@@ -1868,10 +1859,11 @@ export const UpdateBookingService = async (req, res) => {
 export const RemoveBookingService = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
 
-    if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    const tenantId = scope.tenantId;
     if (!permissions.includes("bookings.update") && !permissions.includes("bookings.delete") && !permissions.includes("booking.update")) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
@@ -1932,10 +1924,11 @@ export const RemoveBookingService = async (req, res) => {
 export const AssignTravelerServices = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
 
-    if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    const tenantId = scope.tenantId;
     if (!permissions.includes("bookings.update") && !permissions.includes("booking.update")) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
@@ -1989,16 +1982,17 @@ export const AssignTravelerServices = async (req, res) => {
 export const GetBookingWorkflow = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
 
-    if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    const tenantId = scope.tenantId;
     if (!permissions.includes("bookings.read") && !permissions.includes("booking.read")) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
     const { bookingId } = req.params;
-    const booking = await BookingHeaderModel.findOne({ _id: bookingId, tenantId }).lean();
+    const booking = await BookingHeaderModel.findOne({ _id: bookingId, ...scope }).lean();
     if (!booking) return sendError(res, 404, "Booking not found.", requestId);
 
     const instance = await getOrCreateWorkflowInstance({
@@ -2039,10 +2033,11 @@ export const GetBookingWorkflow = async (req, res) => {
 export const TransitionBookingWorkflow = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
 
-    if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    const tenantId = scope.tenantId;
     if (!permissions.includes("bookings.update") && !permissions.includes("booking.update")) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
@@ -2054,7 +2049,7 @@ export const TransitionBookingWorkflow = async (req, res) => {
       return sendError(res, 422, "Either 'action' or 'targetState' is required for workflow transition.", requestId);
     }
 
-    const booking = await BookingHeaderModel.findOne({ _id: bookingId, tenantId, status: { $ne: "archived" } });
+    const booking = await BookingHeaderModel.findOne({ _id: bookingId, ...scope, status: { $ne: "archived" } });
     if (!booking) return sendError(res, 404, "Booking not found.", requestId);
 
     // Validation Rules "Required documents uploaded" / "Required payment
@@ -2118,7 +2113,6 @@ export const TransitionBookingWorkflow = async (req, res) => {
       reason: null,
       userId: req.auth?.id || null,
       tenantId,
-      branchId: booking.branchId,
       requestId,
       metadata: {
         bookingId: booking._id,
@@ -2180,15 +2174,16 @@ export const TransitionBookingWorkflow = async (req, res) => {
 export const ListBookingDocuments = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
-    if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    const tenantId = scope.tenantId;
     if (!permissions.includes("bookings.read") && !permissions.includes("booking.read")) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
     const { bookingId } = req.params;
-    const booking = await BookingHeaderModel.findOne({ _id: bookingId, tenantId }).lean();
+    const booking = await BookingHeaderModel.findOne({ _id: bookingId, ...scope }).lean();
     if (!booking) return sendError(res, 404, "Booking not found.", requestId);
 
     const documents = await BookingDocumentModel.find({
@@ -2208,9 +2203,10 @@ export const ListBookingDocuments = async (req, res) => {
 export const AddBookingDocument = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
-    if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    const tenantId = scope.tenantId;
     if (!permissions.includes("bookings.create") && !permissions.includes("bookings.update") && !permissions.includes("booking.update")) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
@@ -2222,7 +2218,7 @@ export const AddBookingDocument = async (req, res) => {
       return sendError(res, 422, "fileName and (fileUrl or storageKey) are required.", requestId);
     }
 
-    const booking = await BookingHeaderModel.findOne({ _id: bookingId, tenantId, status: { $ne: "archived" } });
+    const booking = await BookingHeaderModel.findOne({ _id: bookingId, ...scope, status: { $ne: "archived" } });
     if (!booking) return sendError(res, 404, "Booking not found.", requestId);
 
     let resolvedStorageKey = storageKey || null;
@@ -2281,7 +2277,6 @@ export const AddBookingDocument = async (req, res) => {
       reason: null,
       userId: req.auth?.id || null,
       tenantId,
-      branchId: booking.branchId,
       requestId,
       metadata: { bookingId: booking._id, documentId: doc._id }
     });
@@ -2301,9 +2296,10 @@ export const AddBookingDocument = async (req, res) => {
 export const VerifyBookingDocument = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
-    if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    const tenantId = scope.tenantId;
     if (!permissions.includes("bookings.update") && !permissions.includes("booking.update")) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
@@ -2339,9 +2335,10 @@ export const VerifyBookingDocument = async (req, res) => {
 export const RejectBookingDocument = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
-    if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    const tenantId = scope.tenantId;
     if (!permissions.includes("bookings.update") && !permissions.includes("booking.update")) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
@@ -2381,15 +2378,16 @@ export const RejectBookingDocument = async (req, res) => {
 export const ListBookingNotes = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
-    if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    const tenantId = scope.tenantId;
     if (!permissions.includes("bookings.read") && !permissions.includes("booking.read")) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
     const { bookingId } = req.params;
-    const booking = await BookingHeaderModel.findOne({ _id: bookingId, tenantId }).lean();
+    const booking = await BookingHeaderModel.findOne({ _id: bookingId, ...scope }).lean();
     if (!booking) return sendError(res, 404, "Booking not found.", requestId);
 
     const notes = await BookingNoteModel.find({
@@ -2408,9 +2406,10 @@ export const ListBookingNotes = async (req, res) => {
 export const AddBookingNote = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
-    if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    const tenantId = scope.tenantId;
     if (!permissions.includes("bookings.create") && !permissions.includes("bookings.update") && !permissions.includes("booking.update")) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
@@ -2422,7 +2421,7 @@ export const AddBookingNote = async (req, res) => {
       return sendError(res, 422, "Note content is required.", requestId);
     }
 
-    const booking = await BookingHeaderModel.findOne({ _id: bookingId, tenantId, status: { $ne: "archived" } });
+    const booking = await BookingHeaderModel.findOne({ _id: bookingId, ...scope, status: { $ne: "archived" } });
     if (!booking) return sendError(res, 404, "Booking not found.", requestId);
 
     const note = await BookingNoteModel.create({
@@ -2456,7 +2455,6 @@ export const AddBookingNote = async (req, res) => {
       reason: null,
       userId: req.auth?.id || null,
       tenantId,
-      branchId: booking.branchId,
       requestId,
       metadata: { bookingId: booking._id, noteId: note._id, category }
     });
@@ -2474,15 +2472,16 @@ export const AddBookingNote = async (req, res) => {
 export const ListBookingTimeline = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
-    if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    const tenantId = scope.tenantId;
     if (!permissions.includes("bookings.read") && !permissions.includes("booking.read")) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
     const { bookingId } = req.params;
-    const booking = await BookingHeaderModel.findOne({ _id: bookingId, tenantId }).lean();
+    const booking = await BookingHeaderModel.findOne({ _id: bookingId, ...scope }).lean();
     if (!booking) return sendError(res, 404, "Booking not found.", requestId);
 
     const page = Math.max(parseInt(req.query.page || "1", 10), 1);
@@ -2545,15 +2544,16 @@ export const ListBookingTimeline = async (req, res) => {
 export const ListBookingTasks = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
-    if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    const tenantId = scope.tenantId;
     if (!permissions.includes("bookings.read") && !permissions.includes("booking.read")) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
     const { bookingId } = req.params;
-    const booking = await BookingHeaderModel.findOne({ _id: bookingId, tenantId }).lean();
+    const booking = await BookingHeaderModel.findOne({ _id: bookingId, ...scope }).lean();
     if (!booking) return sendError(res, 404, "Booking not found.", requestId);
 
     const tasks = await BookingTaskModel.find({
@@ -2572,9 +2572,10 @@ export const ListBookingTasks = async (req, res) => {
 export const AddBookingTask = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
-    if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    const tenantId = scope.tenantId;
     if (!permissions.includes("bookings.create") && !permissions.includes("bookings.update") && !permissions.includes("booking.update")) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
@@ -2586,7 +2587,7 @@ export const AddBookingTask = async (req, res) => {
       return sendError(res, 422, "Task title is required.", requestId);
     }
 
-    const booking = await BookingHeaderModel.findOne({ _id: bookingId, tenantId, status: { $ne: "archived" } });
+    const booking = await BookingHeaderModel.findOne({ _id: bookingId, ...scope, status: { $ne: "archived" } });
     if (!booking) return sendError(res, 404, "Booking not found.", requestId);
 
     const task = await BookingTaskModel.create({
@@ -2634,7 +2635,6 @@ export const AddBookingTask = async (req, res) => {
       reason: null,
       userId: req.auth?.id || null,
       tenantId,
-      branchId: booking.branchId,
       requestId,
       metadata: { bookingId: booking._id, taskId: task._id }
     });
@@ -2654,9 +2654,10 @@ export const AddBookingTask = async (req, res) => {
 export const UpdateBookingTask = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
-    if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    const tenantId = scope.tenantId;
     if (!permissions.includes("bookings.update") && !permissions.includes("booking.update")) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
@@ -2752,9 +2753,10 @@ export const UpdateBookingTask = async (req, res) => {
 export const GetBookingFinancialSummary = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
-    if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    const tenantId = scope.tenantId;
     if (!permissions.includes("bookings.read") && !permissions.includes("booking.read")) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
@@ -2770,7 +2772,7 @@ export const GetBookingFinancialSummary = async (req, res) => {
     // design, not a live source of truth.
     const cacheKey = `booking-financial-summary:${tenantId}:${bookingId}`;
     const { data: summary, fromCache } = await CacheManager.getOrCompute(cacheKey, async () => {
-      const booking = await BookingHeaderModel.findOne({ _id: bookingId, tenantId }).lean();
+      const booking = await BookingHeaderModel.findOne({ _id: bookingId, ...scope }).lean();
       if (!booking) return null;
 
       const snapshot = booking.financialSnapshot || {};
@@ -2824,9 +2826,10 @@ export const GetBookingFinancialSummary = async (req, res) => {
 export const GetBookingDashboard = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
-    if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    const tenantId = scope.tenantId;
     if (!permissions.includes("bookings.read") && !permissions.includes("booking.read")) {
       return sendError(res, 403, "Permission denied.", requestId);
     }

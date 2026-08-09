@@ -12,10 +12,6 @@ const TravelFlightAssignmentSchema = new mongoose.Schema({
     required: true,
     index: true
   },
-  branchId: {
-    type: String,
-    default: "default"
-  },
   flightCatalogId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "flight_catalog",

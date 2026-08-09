@@ -7,9 +7,12 @@ import {
   ValidateToolCall,
   CreatePlan,
   ExecutePlan,
+  CancelExecution,
+  ArchiveExecution,
   DecideApproval,
   ListExecutions,
   GetExecutionById,
+  GetWorkflowMetrics,
   GetOrchestrationProviderStatus
 } from "../controllers/AIOrchestrationController.js";
 
@@ -35,6 +38,9 @@ router.post("/tools/approval", DecideApproval);
 router.get("/tools/:toolId", GetToolById);
 router.get("/tools", ListTools);
 
+router.post("/executions/:executionId/cancel", CancelExecution);
+router.post("/executions/:executionId/archive", ArchiveExecution);
+router.get("/executions/metrics", GetWorkflowMetrics);
 router.get("/executions/:executionId", GetExecutionById);
 router.get("/executions", ListExecutions);
 

@@ -7,7 +7,6 @@ import { PASSPORT_STATUSES, PASSPORT_DOMAIN_EVENTS } from "../utils/visaConstant
 const createMockPassport = () => ({
   _id: "507f1f77bcf86cd799439011",
   tenantId: "tenant_abc",
-  branchId: "branch_khi",
   visaCaseId: "507f1f77bcf86cd799439099",
   passportNumber: "A12345678",
   nationality: "Pakistani",

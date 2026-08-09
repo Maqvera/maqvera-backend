@@ -16,7 +16,6 @@ export const IssueAmadeusFlightTicket = async (req, res) => {
     const tenantId = req.auth?.tenantId;
     const userId = req.auth?.userId || req.auth?.id;
     const userName = req.auth?.name || "User";
-    const branchId = req.auth?.branchId || "main";
     const permissions = req.auth?.permissions || [];
 
     if (!tenantId || !userId) {
@@ -29,7 +28,7 @@ export const IssueAmadeusFlightTicket = async (req, res) => {
     const { bookingId, pnr } = req.body;
 
     const result = await AmadeusFlightTicketingService.issueTicket({
-      tenantId, branchId, userId, userName, bookingId, pnr, requestId
+      tenantId, userId, userName, bookingId, pnr, requestId
     });
 
     return sendSuccess(res, 200, "Electronic tickets issued successfully.", result, requestId);

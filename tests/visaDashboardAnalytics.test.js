@@ -10,7 +10,6 @@ test("VisaAnalyticsEngine exposes all dashboard read methods", () => {
     "operationsDashboard",
     "officerDashboard",
     "embassyDashboard",
-    "branchDashboard",
     "financeDashboard",
     "customerDashboard",
     "complianceDashboard",
@@ -35,16 +34,15 @@ test("KPIEngine exposes visa refresh methods", () => {
 test("customer analytics has a dedicated read model", () => {
   assert.equal(VisaCustomerAnalyticsSummaryModel.modelName, "visa_customer_analytics_summary");
   const index = VisaCustomerAnalyticsSummaryModel.schema.indexes().find(([keys]) =>
-    keys.tenantId === 1 && keys.branchId === 1 && keys.customerId === 1 && keys.summaryDate === 1
+    keys.tenantId === 1 && keys.customerId === 1 && keys.summaryDate === 1
   );
-  assert.ok(index, "customer read model needs a tenant/branch/customer/date index");
+  assert.ok(index, "customer read model needs a tenant/customer/date index");
 });
 
 test("buildTrendSnapshot returns zeroed trend points when database is unavailable", async () => {
   if (process.env.RUN_DB_TESTS === "true") {
     const result = await VisaAnalyticsEngine.buildTrendSnapshot({
       tenantId: "__missing_tenant__",
-      branchId: "__missing_branch__",
       period: "7 Days",
     });
     assert.equal(result.period, "7 Days");
@@ -64,7 +62,6 @@ test("generateTrends exposes cache metadata shape when database is unavailable",
 
   const result = await VisaAnalyticsEngine.generateTrends({
     tenantId: "__missing_tenant__",
-    branchId: "__missing_branch__",
     period: "Today",
   });
 

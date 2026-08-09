@@ -18,14 +18,13 @@ export const CreateAmadeusHotelBooking = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
     const tenantId = req.auth?.tenantId;
-    const branchId = req.auth?.branchId;
     const userId = req.auth?.userId || req.auth?.id;
     const userName = req.auth?.name;
     if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasPermission(req.auth?.permissions || [])) return sendError(res, 403, "Permission denied.", requestId);
 
     const { travelPlanId, hotelOfferId, guests, contact, specialRequests, currency } = req.body;
-    const result = await AmadeusHotelBookingService.createBooking({ tenantId, branchId, userId, userName, travelPlanId, hotelOfferId, guests, contact, specialRequests, currency, requestId });
+    const result = await AmadeusHotelBookingService.createBooking({ tenantId, userId, userName, travelPlanId, hotelOfferId, guests, contact, specialRequests, currency, requestId });
 
     if (result.booked === false) {
       // Price changed since selection — a real, expected outcome, not a

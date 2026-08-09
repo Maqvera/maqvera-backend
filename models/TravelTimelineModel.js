@@ -25,12 +25,6 @@ const TravelTimelineSchema = new mongoose.Schema({
     required: true,
     index: true
   },
-  branchId: {
-    type: String,
-    required: true,
-    default: "main",
-    index: true
-  },
   sourceModule: {
     type: String,
     default: "VisaManagement",
@@ -122,7 +116,6 @@ const TravelTimelineSchema = new mongoose.Schema({
 }, { timestamps: true });
 
 TravelTimelineSchema.index({ visaCaseId: 1, tenantId: 1, createdAt: -1 });
-TravelTimelineSchema.index({ visaCaseId: 1, tenantId: 1, branchId: 1, createdAt: -1 });
 TravelTimelineSchema.index({ travelPlanId: 1, tenantId: 1, createdAt: -1 });
 TravelTimelineSchema.index({ tenantId: 1, eventType: 1, sourceModule: 1 });
 TravelTimelineSchema.index({ title: "text", description: "text" });
