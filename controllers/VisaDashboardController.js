@@ -3,29 +3,19 @@ import VisaAnalyticsEngine from "../services/VisaAnalyticsEngine.js";
 import AuditLogModel from "../models/AuditLogmodel.js";
 import { sendError, sendSuccess } from "../utils/apiResponse.js";
 import { createRequestId } from "../utils/authTokens.js";
+import { getAccessScope } from "../utils/accessScope.js";
 
-const MANAGEMENT_ROLES = new Set([
-  "administrator",
-  "admin",
-  "manager",
-  "management",
-  "director",
-  "executive",
-  "finance",
-  "compliance",
-]);
-
-const resolveRole = (req) => String(req.auth?.role || req.auth?.roles?.[0] || "").toLowerCase();
+// Dashboard access is governed entirely by RBAC permissions (admin-configurable
+// via /api/v1/roles), never by hardcoded role names — see
+// docs/06-external-integrations/03-final-architecture-no-branches-rbac.md.
+// Every user of the tenant sees the same company-wide dashboard data.
+const hasManagementAccess = (permissions) => permissions.includes("visa.dashboard.management") || permissions.includes("admin");
 
 const dashboardScope = (req) => {
-  const role = resolveRole(req);
-  const requestedBranch = req.query.branchId || req.auth?.branchId || "main";
-  if (requestedBranch === "all" && !MANAGEMENT_ROLES.has(role)) {
-    throw new Error("Branch-wide dashboard access requires a management role.");
-  }
+  const accessScope = getAccessScope(req);
+  const permissions = req.auth?.permissions || [];
   return {
-    tenantId: req.auth?.tenantId,
-    branchId: requestedBranch,
+    tenantId: accessScope?.tenantId || null,
     userId: req.auth?.userId || req.auth?.id || null,
     customerId: req.query.customerId || req.auth?.customerId || null,
     embassyId: req.query.embassyId || null,
@@ -33,15 +23,9 @@ const dashboardScope = (req) => {
     period: req.query.period || "7 Days",
     dateFrom: req.query.dateFrom || null,
     dateTo: req.query.dateTo || null,
-    isManagement: MANAGEMENT_ROLES.has(role),
-    role,
+    isManagement: hasManagementAccess(permissions),
+    permissions,
   };
-};
-
-const requireManagementRole = (role) => {
-  if (!MANAGEMENT_ROLES.has(role)) {
-    throw new Error("This dashboard requires a management role.");
-  }
 };
 
 const handle = (method, message, { managementOnly = false, dashboardType = "unknown" } = {}) => async (req, res) => {
@@ -49,7 +33,12 @@ const handle = (method, message, { managementOnly = false, dashboardType = "unkn
   try {
     const scope = dashboardScope(req);
     if (!scope.tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
-    if (managementOnly) requireManagementRole(scope.role);
+    if (!scope.permissions.includes("visa.read") && !scope.permissions.includes("admin")) {
+      return sendError(res, 403, "visa.read permission required.", requestId);
+    }
+    if (managementOnly && !scope.isManagement) {
+      return sendError(res, 403, "This dashboard requires the visa.dashboard.management permission.", requestId);
+    }
 
     const result = await method.call(VisaAnalyticsEngine, scope);
 
@@ -59,11 +48,10 @@ const handle = (method, message, { managementOnly = false, dashboardType = "unkn
     if (mongoose.connection?.readyState === 1) {
       AuditLogModel.create({
         tenantId: scope.tenantId,
-        branchId: scope.branchId,
         userId: scope.userId || "system",
         action: "VIEW_DASHBOARD",
         module: "VisaAnalytics",
-        details: { dashboardType, role: scope.role, fromCache: result.fromCache },
+        details: { dashboardType, isManagement: scope.isManagement, fromCache: result.fromCache },
       }).catch((err) => console.error("Dashboard audit log error:", err));
     }
 
@@ -75,15 +63,13 @@ const handle = (method, message, { managementOnly = false, dashboardType = "unkn
         ...result.data,
         meta: {
           fromCache: result.fromCache,
-          branchId: scope.branchId,
           generatedAt: result.data?.generatedAt || null,
         },
       },
       requestId
     );
   } catch (error) {
-    const statusCode = error.message.includes("management role") || error.message.includes("Branch-wide") ? 403 : 500;
-    return sendError(res, statusCode, error.message || "Dashboard unavailable.", requestId);
+    return sendError(res, 500, error.message || "Dashboard unavailable.", requestId);
   }
 };
 
@@ -109,12 +95,6 @@ export const getVisaEmbassyDashboard = handle(
   VisaAnalyticsEngine.embassyDashboard,
   "Embassy Visa dashboard retrieved successfully.",
   { dashboardType: "embassy" }
-);
-
-export const getVisaBranchDashboard = handle(
-  VisaAnalyticsEngine.branchDashboard,
-  "Branch Visa dashboard retrieved successfully.",
-  { dashboardType: "branch" }
 );
 
 export const getVisaFinanceDashboard = handle(

@@ -36,7 +36,7 @@ const PHONE_PATTERN = /^\+?[0-9][0-9\s-]{6,14}[0-9]$/;
  * Management").
  */
 class AmadeusHotelBookingService {
-  static async createBooking({ tenantId, branchId, userId, userName, travelPlanId, hotelOfferId, guests, contact, specialRequests, currency, requestId }) {
+  static async createBooking({ tenantId, userId, userName, travelPlanId, hotelOfferId, guests, contact, specialRequests, currency, requestId }) {
     // §10 "Hotel Offer Valid".
     if (!hotelOfferId) {
       throwStructured("hotelOfferId is required.", "INVALID_REQUEST", 400);
@@ -150,7 +150,7 @@ class AmadeusHotelBookingService {
     const reservationNumber = `HB-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`;
 
     const hotelBooking = await HotelBookingModel.create({
-      tenantId, branchId: branchId || "main",
+      tenantId,
       travelPlanId: travelPlanId || null,
       offerId: hotelOfferId,
       provider: gdsResult.provider || "Amadeus",
@@ -212,7 +212,7 @@ class AmadeusHotelBookingService {
     if (mongoose.connection?.readyState === 1) {
       AuditLogModel.create({
         tenantId, userId, action: "AMADEUS_HOTEL_BOOKING_CREATED", module: "ExternalIntegrations",
-        requestId, branchId, targetId: hotelBooking._id.toString(),
+        requestId, targetId: hotelBooking._id.toString(),
         details: { provider: gdsResult.provider, providerConfirmationNumber: gdsResult.providerConfirmationNumber, hotelOfferId, travelPlanId: travelPlanId || null }
       }).catch((err) => console.error("Hotel booking audit log error:", err));
     }

@@ -6,11 +6,6 @@ const TravelOperationsSummarySchema = new mongoose.Schema({
     required: true,
     index: true
   },
-  branchId: {
-    type: String,
-    default: "all",
-    index: true
-  },
   summaryDate: {
     type: String, // YYYY-MM-DD
     required: true,
@@ -84,7 +79,7 @@ const TravelOperationsSummarySchema = new mongoose.Schema({
   }
 }, { timestamps: true });
 
-TravelOperationsSummarySchema.index({ tenantId: 1, branchId: 1, summaryDate: 1 }, { unique: true });
+TravelOperationsSummarySchema.index({ tenantId: 1, summaryDate: 1 }, { unique: true });
 
 const TravelOperationsSummaryModel = mongoose.model("travel_operations_summary", TravelOperationsSummarySchema);
 

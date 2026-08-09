@@ -7,8 +7,8 @@ import { publishEvent, subscribeEvent } from "../utils/eventBus.js";
 const todayStr = () => new Date().toISOString().slice(0, 10);
 const startOfDay = (d = new Date()) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
 const endOfDay = (d = new Date()) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
-const cacheKey = (type, tenantId, branchId, suffix = "") =>
-  `visa-dashboard:${type}:${tenantId}:${branchId}${suffix ? `:${suffix}` : ""}`;
+const cacheKey = (type, tenantId, suffix = "") =>
+  `visa-dashboard:${type}:${tenantId}${suffix ? `:${suffix}` : ""}`;
 
 const PERIOD_DAYS = {
   Today: 1,
@@ -23,12 +23,6 @@ const PERIOD_DAYS = {
   Yearly: 365,
   "1 Year": 365,
 };
-
-// "Security... Sensitive KPI masking" — Branch Dashboard (unlike Executive/
-// Finance) is available to non-management branch staff too, but revenue is
-// still a management-tier figure and must not leak to them.
-const SENSITIVE_METRIC_KEYS = ["revenue"];
-const SENSITIVE_KPI_KEYS = ["revenue", "refundRatio"];
 
 class VisaAnalyticsEngine {
   static initialized = false;
@@ -57,30 +51,27 @@ class VisaAnalyticsEngine {
     ];
 
     refreshEvents.forEach((eventName) =>
-      subscribeEvent(eventName, ({ tenantId, branchId = "main" } = {}) => {
+      subscribeEvent(eventName, ({ tenantId } = {}) => {
         if (!tenantId) return;
         queueMicrotask(() =>
-          Promise.all([
-            KPIEngine.refreshVisaSummary({ tenantId, branchId }),
-            KPIEngine.refreshVisaSummary({ tenantId, branchId: "all" }),
-          ]).catch((error) => console.error("Visa analytics refresh failed:", error))
+          KPIEngine.refreshVisaSummary({ tenantId })
+            .catch((error) => console.error("Visa analytics refresh failed:", error))
         );
       })
     );
   }
 
-  static async ensureSummary({ tenantId, branchId = "main" }) {
+  static async ensureSummary({ tenantId }) {
     const date = todayStr();
-    let summary = await VisaAnalyticsSummaryModel.findOne({ tenantId, branchId, summaryDate: date }).lean();
+    let summary = await VisaAnalyticsSummaryModel.findOne({ tenantId, summaryDate: date }).lean();
     if (!summary) {
       // Dashboard requests must never aggregate transactional tables. An event
       // or scheduled worker creates the missing read model asynchronously.
-      queueMicrotask(() => KPIEngine.refreshVisaSummary({ tenantId, branchId })
+      queueMicrotask(() => KPIEngine.refreshVisaSummary({ tenantId })
         .catch((error) => console.error("Initial Visa analytics refresh failed:", error)));
     }
     return summary || {
       tenantId,
-      branchId,
       summaryDate: date,
       metrics: {},
       kpis: {},
@@ -94,17 +85,17 @@ class VisaAnalyticsEngine {
     };
   }
 
-  static async getSummary({ tenantId, branchId = "main" }) {
-    const key = cacheKey("summary", tenantId, branchId);
-    const { data, fromCache } = await CacheManager.getOrCompute(key, async () => this.ensureSummary({ tenantId, branchId }));
+  static async getSummary({ tenantId }) {
+    const key = cacheKey("summary", tenantId);
+    const { data, fromCache } = await CacheManager.getOrCompute(key, async () => this.ensureSummary({ tenantId }));
     return { summary: data, fromCache };
   }
 
-  static async executiveDashboard({ tenantId, branchId = "main" }) {
-    const key = cacheKey("executive", tenantId, branchId);
+  static async executiveDashboard({ tenantId }) {
+    const key = cacheKey("executive", tenantId);
     const { data, fromCache } = await CacheManager.getOrCompute(key, async () => {
-      const { summary } = await this.getSummary({ tenantId, branchId });
-      const trends = await this.buildTrendSnapshot({ tenantId, branchId, period: "7 Days" });
+      const { summary } = await this.getSummary({ tenantId });
+      const trends = await this.buildTrendSnapshot({ tenantId, period: "7 Days" });
       return {
         ...summary.metrics,
         topEmbassies: summary.embassyMetrics || [],
@@ -117,10 +108,10 @@ class VisaAnalyticsEngine {
     return { fromCache, data };
   }
 
-  static async operationsDashboard({ tenantId, branchId = "main" }) {
-    const key = cacheKey("operations", tenantId, branchId);
+  static async operationsDashboard({ tenantId }) {
+    const key = cacheKey("operations", tenantId);
     const { data, fromCache } = await CacheManager.getOrCompute(key, async () => {
-      const { summary } = await this.getSummary({ tenantId, branchId });
+      const { summary } = await this.getSummary({ tenantId });
       const m = summary.metrics || {};
       return {
         currentQueue: m.activeApplications || 0,
@@ -150,10 +141,10 @@ class VisaAnalyticsEngine {
     return { fromCache, data };
   }
 
-  static async officerDashboard({ tenantId, branchId = "main", userId = null }) {
-    const key = cacheKey("officer", tenantId, branchId, userId || "self");
+  static async officerDashboard({ tenantId, userId = null }) {
+    const key = cacheKey("officer", tenantId, userId || "self");
     const { data, fromCache } = await CacheManager.getOrCompute(key, async () => {
-      const { summary } = await this.getSummary({ tenantId, branchId });
+      const { summary } = await this.getSummary({ tenantId });
       const metrics =
         (summary.officerMetrics || []).find((item) => String(item._id || "") === String(userId || "")) ||
         { assignedCases: 0, completedCases: 0, pendingCases: 0, incidentCount: 0, avgResolutionTimeMs: 0 };
@@ -189,10 +180,10 @@ class VisaAnalyticsEngine {
     return { fromCache, data };
   }
 
-  static async embassyDashboard({ tenantId, branchId = "main", embassyId = null, embassyName = null }) {
-    const key = cacheKey("embassy", tenantId, branchId, embassyId || embassyName || "all");
+  static async embassyDashboard({ tenantId, embassyId = null, embassyName = null }) {
+    const key = cacheKey("embassy", tenantId, embassyId || embassyName || "all");
     const { data, fromCache } = await CacheManager.getOrCompute(key, async () => {
-      const { summary } = await this.getSummary({ tenantId, branchId });
+      const { summary } = await this.getSummary({ tenantId });
       let embassies = summary.embassyMetrics || [];
       if (embassyId) embassies = embassies.filter((item) => String(item.embassyId || "") === String(embassyId));
       if (embassyName) embassies = embassies.filter((item) => String(item._id || "") === String(embassyName));
@@ -212,31 +203,10 @@ class VisaAnalyticsEngine {
     return { fromCache, data };
   }
 
-  static async branchDashboard({ tenantId, branchId = "main", isManagement = false }) {
-    const key = cacheKey("branch", tenantId, branchId, isManagement ? "full" : "masked");
+  static async financeDashboard({ tenantId }) {
+    const key = cacheKey("finance", tenantId);
     const { data, fromCache } = await CacheManager.getOrCompute(key, async () => {
-      const { summary } = await this.getSummary({ tenantId, branchId });
-      const metrics = { ...(summary.metrics || {}) };
-      const kpis = { ...(summary.kpis || {}) };
-      if (!isManagement) {
-        SENSITIVE_METRIC_KEYS.forEach((k) => delete metrics[k]);
-        SENSITIVE_KPI_KEYS.forEach((k) => delete kpis[k]);
-      }
-      return {
-        branchId,
-        ...metrics,
-        kpis,
-        generatedAt: summary.generatedAt,
-        pendingRefresh: summary.pendingRefresh || false,
-      };
-    });
-    return { fromCache, data };
-  }
-
-  static async financeDashboard({ tenantId, branchId = "main" }) {
-    const key = cacheKey("finance", tenantId, branchId);
-    const { data, fromCache } = await CacheManager.getOrCompute(key, async () => {
-      const { summary } = await this.getSummary({ tenantId, branchId });
+      const { summary } = await this.getSummary({ tenantId });
       const finance = summary.financeMetrics || {};
       return {
         revenue: summary.metrics?.revenue || finance.totalRevenue || 0,
@@ -253,18 +223,17 @@ class VisaAnalyticsEngine {
     return { fromCache, data };
   }
 
-  static async customerDashboard({ tenantId, branchId = "main", customerId = null }) {
-    const key = cacheKey("customer", tenantId, branchId, customerId || "all");
+  static async customerDashboard({ tenantId, customerId = null }) {
+    const key = cacheKey("customer", tenantId, customerId || "all");
     const { data, fromCache } = await CacheManager.getOrCompute(key, async () => {
       if (customerId) {
         const customerSummary = await VisaCustomerAnalyticsSummaryModel.findOne({
           tenantId,
-          branchId,
           customerId: String(customerId),
           summaryDate: todayStr(),
         }).lean();
         if (!customerSummary) {
-          queueMicrotask(() => KPIEngine.refreshVisaSummary({ tenantId, branchId })
+          queueMicrotask(() => KPIEngine.refreshVisaSummary({ tenantId })
             .catch((error) => console.error("Customer analytics refresh failed:", error)));
         }
         const stats = customerSummary?.metrics || {};
@@ -280,7 +249,7 @@ class VisaAnalyticsEngine {
         };
       }
 
-      const { summary } = await this.getSummary({ tenantId, branchId });
+      const { summary } = await this.getSummary({ tenantId });
       return {
         customerId: null,
         activeApplications: summary.metrics?.activeApplications || 0,
@@ -295,10 +264,10 @@ class VisaAnalyticsEngine {
     return { fromCache, data };
   }
 
-  static async complianceDashboard({ tenantId, branchId = "main" }) {
-    const key = cacheKey("compliance", tenantId, branchId);
+  static async complianceDashboard({ tenantId }) {
+    const key = cacheKey("compliance", tenantId);
     const { data, fromCache } = await CacheManager.getOrCompute(key, async () => {
-      const { summary } = await this.getSummary({ tenantId, branchId });
+      const { summary } = await this.getSummary({ tenantId });
       return {
         ...(summary.complianceMetrics || {}),
         slaBreaches: summary.metrics?.slaBreaches || 0,
@@ -309,10 +278,10 @@ class VisaAnalyticsEngine {
     return { fromCache, data };
   }
 
-  static async aiInsightsDashboard({ tenantId, branchId = "main" }) {
-    const key = cacheKey("ai-insights", tenantId, branchId);
+  static async aiInsightsDashboard({ tenantId }) {
+    const key = cacheKey("ai-insights", tenantId);
     const { data, fromCache } = await CacheManager.getOrCompute(key, async () => {
-      const { summary } = await this.getSummary({ tenantId, branchId });
+      const { summary } = await this.getSummary({ tenantId });
       return {
         ...(summary.aiInsights || {}),
         generatedAt: summary.generatedAt,
@@ -322,10 +291,10 @@ class VisaAnalyticsEngine {
     return { fromCache, data };
   }
 
-  static async calculateKPIs({ tenantId, branchId = "main" }) {
-    const key = cacheKey("kpis", tenantId, branchId);
+  static async calculateKPIs({ tenantId }) {
+    const key = cacheKey("kpis", tenantId);
     const { data, fromCache } = await CacheManager.getOrCompute(key, async () => {
-      const { summary } = await this.getSummary({ tenantId, branchId });
+      const { summary } = await this.getSummary({ tenantId });
       return {
         ...(summary.kpis || {}),
         generatedAt: summary.generatedAt,
@@ -335,7 +304,7 @@ class VisaAnalyticsEngine {
     return { fromCache, data };
   }
 
-  static async buildTrendSnapshot({ tenantId, branchId = "main", period = "7 Days", dateFrom = null, dateTo = null }) {
+  static async buildTrendSnapshot({ tenantId, period = "7 Days", dateFrom = null, dateTo = null }) {
     let dateStrings = [];
     let resolvedPeriod = period;
 
@@ -368,7 +337,6 @@ class VisaAnalyticsEngine {
 
     const summaries = await VisaAnalyticsSummaryModel.find({
       tenantId,
-      branchId,
       summaryDate: { $in: dateStrings },
     }).lean();
 
@@ -392,7 +360,6 @@ class VisaAnalyticsEngine {
 
     return {
       period: resolvedPeriod,
-      branchId,
       dateFrom: dateFrom || null,
       dateTo: dateTo || null,
       dataPointsCount: trends.length,
@@ -401,13 +368,13 @@ class VisaAnalyticsEngine {
     };
   }
 
-  static async generateTrends({ tenantId, branchId = "main", period = "7 Days", dateFrom = null, dateTo = null }) {
+  static async generateTrends({ tenantId, period = "7 Days", dateFrom = null, dateTo = null }) {
     const keySuffix = dateFrom && dateTo
       ? `custom-${dateFrom}-${dateTo}`
       : period.replace(/\s+/g, "-").toLowerCase();
-    const key = cacheKey("trends", tenantId, branchId, keySuffix);
+    const key = cacheKey("trends", tenantId, keySuffix);
     const { data, fromCache } = await CacheManager.getOrCompute(key, async () =>
-      this.buildTrendSnapshot({ tenantId, branchId, period, dateFrom, dateTo })
+      this.buildTrendSnapshot({ tenantId, period, dateFrom, dateTo })
     );
     return { fromCache, data };
   }

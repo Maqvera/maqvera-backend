@@ -1,6 +1,7 @@
 import AnalyticsEngine from "../services/AnalyticsEngine.js";
 import { sendError, sendSuccess } from "../utils/apiResponse.js";
 import { createRequestId } from "../utils/authTokens.js";
+import { getAccessScope } from "../utils/accessScope.js";
 
 // Business Rule: "Supports role-based widgets... Widgets filtered
 // automatically." No explicit role-to-widget mapping is given anywhere in
@@ -19,19 +20,19 @@ const hasIncidentAccess = (permissions) => permissions.includes("incidents.read"
 export const GetPrimaryDashboard = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
-    const branchId = req.query.branchId || "all";
 
-    if (!tenantId) {
+    if (!scope) {
       return sendError(res, 403, "Tenant context is required.", requestId);
     }
+    const tenantId = scope.tenantId;
 
     if (!permissions.includes("travel.read") && !permissions.includes("travel_plans.read") && !permissions.includes("admin")) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
-    const { data, fromCache } = await AnalyticsEngine.buildPrimaryDashboard({ tenantId, branchId });
+    const { data, fromCache } = await AnalyticsEngine.buildPrimaryDashboard({ tenantId });
 
     let filteredData = { ...data };
     if (!hasIncidentAccess(permissions)) {
@@ -57,7 +58,7 @@ export const GetPrimaryDashboard = async (req, res) => {
 
     return sendSuccess(res, 200, "Primary dashboard retrieved successfully.", {
       data: filteredData,
-      meta: { fromCache, branchId, refreshedAt: new Date() }
+      meta: { fromCache, refreshedAt: new Date() }
     }, requestId);
   } catch (err) {
     console.error("GetPrimaryDashboard Error:", err);
@@ -72,19 +73,19 @@ export const GetPrimaryDashboard = async (req, res) => {
 export const GetDashboardKPIs = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
-    const branchId = req.query.branchId || "all";
 
-    if (!tenantId) {
+    if (!scope) {
       return sendError(res, 403, "Tenant context is required.", requestId);
     }
+    const tenantId = scope.tenantId;
 
     if (!permissions.includes("travel.read") && !permissions.includes("travel_plans.read") && !permissions.includes("admin")) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
-    const { data, fromCache } = await AnalyticsEngine.calculateKPIs({ tenantId, branchId });
+    const { data, fromCache } = await AnalyticsEngine.calculateKPIs({ tenantId });
 
     let filteredData = data;
     if (!hasIncidentAccess(permissions)) {
@@ -106,13 +107,14 @@ export const GetDashboardKPIs = async (req, res) => {
 export const GetDashboardTrends = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
     const period = req.query.period || "7 Days";
 
-    if (!tenantId) {
+    if (!scope) {
       return sendError(res, 403, "Tenant context is required.", requestId);
     }
+    const tenantId = scope.tenantId;
 
     if (!permissions.includes("travel.read") && !permissions.includes("travel_plans.read") && !permissions.includes("admin")) {
       return sendError(res, 403, "Permission denied.", requestId);
@@ -134,12 +136,13 @@ export const GetDashboardTrends = async (req, res) => {
 export const GetDashboardMap = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
 
-    if (!tenantId) {
+    if (!scope) {
       return sendError(res, 403, "Tenant context is required.", requestId);
     }
+    const tenantId = scope.tenantId;
 
     if (!permissions.includes("travel.read") && !permissions.includes("travel_plans.read") && !permissions.includes("admin")) {
       return sendError(res, 403, "Permission denied.", requestId);
@@ -167,12 +170,13 @@ export const GetDashboardMap = async (req, res) => {
 export const GetDashboardWorkload = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
 
-    if (!tenantId) {
+    if (!scope) {
       return sendError(res, 403, "Tenant context is required.", requestId);
     }
+    const tenantId = scope.tenantId;
 
     if (!permissions.includes("travel.read") && !permissions.includes("travel_plans.read") && !permissions.includes("admin")) {
       return sendError(res, 403, "Permission denied.", requestId);
@@ -200,12 +204,13 @@ export const GetDashboardWorkload = async (req, res) => {
 export const GetDashboardAlerts = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
 
-    if (!tenantId) {
+    if (!scope) {
       return sendError(res, 403, "Tenant context is required.", requestId);
     }
+    const tenantId = scope.tenantId;
 
     if (!permissions.includes("travel.read") && !permissions.includes("travel_plans.read") && !permissions.includes("admin")) {
       return sendError(res, 403, "Permission denied.", requestId);

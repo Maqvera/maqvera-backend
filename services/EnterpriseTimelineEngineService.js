@@ -20,7 +20,6 @@ class EnterpriseTimelineEngineService {
    */
   static async recordEvent({
     tenantId,
-    branchId = "main",
     visaCaseId = null,
     travelPlanId = null,
     sourceModule = "VisaManagement",
@@ -51,7 +50,6 @@ class EnterpriseTimelineEngineService {
         visaCaseId: resolvedVisaCase ? resolvedVisaCase._id : (visaCaseId || null),
         travelPlanId,
         tenantId,
-        branchId,
         sourceModule,
         aggregateType,
         aggregateId: aggregateId || (resolvedVisaCase ? resolvedVisaCase._id.toString() : (visaCaseId ? visaCaseId.toString() : null)),
@@ -79,7 +77,6 @@ class EnterpriseTimelineEngineService {
         // Mirror to Unified Activity Stream
         await UnifiedActivityStreamModel.create({
           tenantId,
-          branchId,
           module: sourceModule.includes("Visa") ? "Visa" : sourceModule,
           referenceId: resolvedVisaCase ? resolvedVisaCase._id : (visaCaseId || travelPlanId || null),
           eventType,
@@ -119,7 +116,6 @@ class EnterpriseTimelineEngineService {
       if (mongoose.connection?.readyState === 1) {
         await SearchEngineService.indexEntity({
           tenantId,
-          branchId,
           entityType: "TimelineEvent",
           entityId: eventId,
           title: timelineEvent.title,
@@ -133,7 +129,7 @@ class EnterpriseTimelineEngineService {
           module: "Timeline",
           navigationUrl: visaCaseId ? `/visa-cases/${visaCaseId}/timeline/${eventId}` : `/timeline/${eventId}`
         });
-        publishEvent("TimelineIndexed", { eventId, tenantId, branchId });
+        publishEvent("TimelineIndexed", { eventId, tenantId });
       }
 
       return timelineEvent;
@@ -155,7 +151,6 @@ class EnterpriseTimelineEngineService {
     attachments = [],
     isPrivate = false,
     tenantId,
-    branchId = "main",
     userId,
     userName = "Staff",
     userRole = "Staff",
@@ -205,7 +200,6 @@ class EnterpriseTimelineEngineService {
     // Record Immutable Timeline Event
     const timelineEvent = await this.recordEvent({
       tenantId,
-      branchId,
       visaCaseId: resolvedVisaCase ? resolvedVisaCase._id : visaCaseId,
       sourceModule: "NotesManagement",
       aggregateType: "Note",
@@ -228,7 +222,6 @@ class EnterpriseTimelineEngineService {
         action: "CREATE_MANUAL_NOTE",
         outcome: "success",
         requestId: requestContext.requestId || `timeline-${noteId}`,
-        branchId,
         ipAddress: requestContext.ipAddress || null,
         metadata: { visaCaseId: resolvedVisaCase ? resolvedVisaCase._id : visaCaseId, noteId, noteType, visibility: effectiveVisibility }
       }).catch(err => console.error("AuditLog error:", err));
@@ -264,7 +257,6 @@ class EnterpriseTimelineEngineService {
 
       if (query.visaCaseId) filter.visaCaseId = query.visaCaseId;
       if (query.travelPlanId) filter.travelPlanId = query.travelPlanId;
-      if (query.branchId) filter.branchId = query.branchId;
       if (query.eventType) filter.eventType = query.eventType;
       if (query.module || query.sourceModule) filter.sourceModule = query.module || query.sourceModule;
       if (query.performedBy) filter["actor.userId"] = query.performedBy;

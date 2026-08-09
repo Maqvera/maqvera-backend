@@ -6,11 +6,6 @@ const EnterpriseDocumentSchema = new mongoose.Schema({
     required: true,
     index: true
   },
-  branchId: {
-    type: String,
-    default: "main",
-    index: true
-  },
   module: {
     type: String,
     enum: ["Visa", "Customer", "Booking", "Finance", "HR", "Compliance", "AI"],

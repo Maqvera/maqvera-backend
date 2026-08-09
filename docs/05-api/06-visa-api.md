@@ -254,30 +254,6 @@ No cross-tenant access.
 
 ---
 
-# Multi-Branch Strategy
-
-Operational ownership uses:
-
-branch_id
-
-Examples
-
-Visa Case
-
-Document Collection
-
-Embassy Submission
-
-Appointments
-
-Incidents
-
-Dashboard
-
-Each branch operates independently.
-
----
-
 # Country Support
 
 Supported through master tables.
@@ -387,8 +363,6 @@ Travel Ready
 ✓ Event Driven
 
 ✓ Multi-Tenant
-
-✓ Multi-Branch
 
 ✓ Workflow Driven
 
@@ -587,7 +561,6 @@ Returns Visa Cases visible to the authenticated tenant.
 - `status`
 - `countryId` (or `destinationCountry`)
 - `visaTypeId` (or `visaType`)
-- `branchId`
 - `travelerId`
 - `assignedTo`
 - `createdFrom`
@@ -607,7 +580,6 @@ Returns Visa Cases visible to the authenticated tenant.
 
 ## Business Rules
 - Tenant Isolation
-- Branch Isolation
 - Pagination
 - Filtering
 - Sorting
@@ -663,7 +635,6 @@ Return Success
 - Visa Type Exists
 - No Duplicate Active Case
 - Tenant Match
-- Branch Match
 
 ## Business Rules
 - One traveler may have multiple historical cases.
@@ -757,7 +728,7 @@ Format configurable.
 
 # Assignment Rules & Work Queue
 
-Automatic Assignment | Manual Assignment | Branch Assignment | Workload Based Assignment | Country Specialist Assignment
+Automatic Assignment | Manual Assignment | Workload Based Assignment | Country Specialist Assignment
 
 ## Work Queue Architecture
 ```
@@ -1751,7 +1722,6 @@ Return Success
 - Transition Exists
 - Role Allowed
 - Tenant Match
-- Branch Match
 - Workflow Active
 - No Pending Blocking Tasks
 - All Required Documents Verified
@@ -1888,7 +1858,6 @@ New cases use latest active version.
 ✓ Timeline
 ✓ Audit Logging
 ✓ Tenant Isolation
-✓ Branch Isolation
 
 ---
 
@@ -2150,7 +2119,6 @@ Validate Visa Case → Validate Passport → Receive Passport → Generate Track
 - Passport Exists
 - Passport Not Already Received
 - Tenant Match
-- Branch Match
 
 ---
 
@@ -2297,7 +2265,6 @@ Workflow configurable.
 ✓ Timeline
 ✓ Audit Logging
 ✓ Tenant Isolation
-✓ Branch Isolation
 ✓ Digital Signature Ready
 ✓ Courier Integration Ready
 
@@ -2678,7 +2645,6 @@ Incidents can reference multiple business entities.
 ✓ Configurable Categories
 ✓ Configurable Severity
 ✓ Tenant Isolation
-✓ Branch Isolation
 
 ---
 
@@ -2865,7 +2831,6 @@ Returns the newest-first, paginated activity history of a Visa Case.
 
 - Requires `visa.timeline.read` (or `visa.read`/`admin`).
 - `Private`-visibility entries are hidden from every requester except the original author or an admin.
-- Missing `branchId` defaults to `"main"` (not an unscoped cross-branch read).
 
 ---
 
@@ -2887,7 +2852,7 @@ Creates a manual operational note and its corresponding immutable timeline event
 
 ## Business Workflow
 
-Validate Permission (`visa.notes.write`) → Validate Visa Case Exists/Branch Match → Validate Note Type & Visibility against the tenant's active `TimelinePolicyModel` → Create Note → Create Timeline Event → Audit → Publish `ManualNoteCreated` → Return Success
+Validate Permission (`visa.notes.write`) → Validate Visa Case Exists → Validate Note Type & Visibility against the tenant's active `TimelinePolicyModel` → Create Note → Create Timeline Event → Audit → Publish `ManualNoteCreated` → Return Success
 
 ## Note Types (tenant-configurable via `TimelinePolicyModel`, seeded by `scripts/seedTimelinePolicy.js`)
 
@@ -2928,7 +2893,6 @@ Builds a read-only AI prompt context (case summary, chronological history, pendi
 ✓ Full Text Search (indexed into the Enterprise Search Platform)
 ✓ Audit Logging
 ✓ Tenant Isolation
-✓ Branch Isolation
 ✓ Correlation IDs
 ✓ Timeline Generated Automatically
 
@@ -2970,22 +2934,21 @@ Already implemented as the centralized engine the doc's own "Senior Enterprise I
 
 Dashboards never query transactional Visa collections directly. `KPIEngine.computeVisaMetrics` aggregates real data into a materialized `VisaAnalyticsSummaryModel` (and a per-customer `VisaCustomerAnalyticsSummaryModel`), refreshed two ways: event-driven (16 domain events trigger an async `refreshVisaSummary`) and by `analyticsScheduler.js` (incremental cron every few minutes, full nightly rebuild). `VisaAnalyticsEngine` serves dashboards from that summary table through `CacheManager` (Redis if configured, in-memory fallback otherwise).
 
-## Endpoint Contract: GET /api/v1/dashboard/{executive|operations|officer|embassy|branch|finance|customer|compliance|ai-insights}
+## Endpoint Contract: GET /api/v1/dashboard/{executive|operations|officer|embassy|finance|customer|compliance|ai-insights}
 
 ## Business Purpose
 
-Returns one of 9 role-scoped dashboards, each reading only from the cached summary table.
+Returns one of 8 dashboards, each reading only from the cached summary table. Access is governed entirely by RBAC permissions (admin-configurable via `/api/v1/roles`), never by role name — see `docs/06-external-integrations/03-final-architecture-no-branches-rbac.md`.
 
 ## Business Rules
 
-- `executive`, `finance`, `compliance`, and `ai-insights` require a management role (`administrator`, `manager`, `director`, `executive`, `finance`, `compliance`).
-- `branchId=all` (branch-wide visibility) also requires a management role.
-- **Sensitive KPI masking**: `branch` dashboard (available to non-management branch staff) strips `revenue`/`refundRatio` unless the requester holds a management role.
+- Every endpoint requires the `visa.read` permission.
+- `executive`, `finance`, `compliance`, and `ai-insights` additionally require the `visa.dashboard.management` permission (or `admin`).
 - Every dashboard view is written to `AuditLogModel` (`VIEW_DASHBOARD`) — Search/Dashboard Audit Access.
 
 ## Endpoint Contract: GET /api/v1/dashboard/kpis
 
-Returns the tenant/branch KPI set: approval rate, rejection rate, average processing time, embassy SLA compliance, revenue, refund ratio, officer productivity.
+Returns the tenant KPI set: approval rate, rejection rate, average processing time, embassy SLA compliance, revenue, refund ratio, officer productivity.
 
 ## Endpoint Contract: GET /api/v1/dashboard/trends
 
@@ -3005,7 +2968,7 @@ Deterministic, threshold-based day-over-day comparisons against yesterday's pers
 # AI Coding Rules
 
 ✓ Read Optimized ✓ Summary Tables ✓ Materialized Views ✓ Redis Cache
-✓ Event Driven ✓ Background Workers ✓ Tenant Isolation ✓ Branch Isolation
+✓ Event Driven ✓ Background Workers ✓ Tenant Isolation
 ✓ No Direct Aggregation (dashboards read `VisaAnalyticsSummaryModel` only)
 
 ---
@@ -3033,7 +2996,7 @@ Deterministic, threshold-based day-over-day comparisons against yesterday's pers
 
 ## Query Parameters
 
-`q`, `entityType`, `country`, `embassy`, `visaType`, `status`, `officer`, `nationality`, `priority`, `severity`, `branchId`, `dateFrom`, `dateTo`, `page`, `pageSize`, `sort`, `order`
+`q`, `entityType`, `country`, `embassy`, `visaType`, `status`, `officer`, `nationality`, `priority`, `severity`, `dateFrom`, `dateTo`, `page`, `pageSize`, `sort`, `order`
 
 ## Response Includes
 
@@ -3041,7 +3004,7 @@ Entity Type, Entity ID, Title, Description, Matched Field, **Matched Text / High
 
 ## Business Rules
 
-- Role-based visibility via `permissionsRequired` on each indexed document; tenant and branch isolation on every query.
+- Role-based visibility via `permissionsRequired` on each indexed document; tenant isolation on every query.
 - Redis-cached (`SEARCH_CACHE_TTL_SECONDS`) — cache key includes the requester's permission set so results never leak across differently-permissioned users; invalidated on every index write.
 - **Advanced Search**: default AND across space-separated terms, explicit `OR` groups, `NOT`/`-term` exclusion, a fully-quoted query as an exact phrase.
 - **Fuzzy Search**: bounded Levenshtein-distance fallback (`SEARCH_FUZZY_MAX_DISTANCE`, `SEARCH_FUZZY_CANDIDATE_LIMIT`), only triggered when the exact/boolean pass returns zero hits — honestly labeled `isFuzzyMatch`, not a real phonetic/typo-tolerant search index.
@@ -3066,7 +3029,7 @@ Admin-only (`search.rebuild` or `admin`). Full, batched reindex of Visa Cases, T
 
 ✓ Dedicated Search Engine ✓ Asynchronous Indexing ✓ Event Driven ✓ Full Text Search
 ✓ Faceted Search ✓ Fuzzy Matching ✓ Role Based Access ✓ Tenant Isolation
-✓ Branch Isolation ✓ No Direct Database Search
+✓ No Direct Database Search
 
 ---
 
@@ -3099,7 +3062,7 @@ The Visa module is organized as Domain-Driven Design bounded contexts communicat
 | --- | --- | --- |
 | Application | Node.js / Express 5, ESM | Modular monolith, not microservices |
 | Primary database | **MongoDB via Mongoose** | Not PostgreSQL — every model in `models/*.js` is a Mongoose schema |
-| Multi-tenancy | `tenantId`/`branchId` on every document, enforced at the query boundary | No separate database per tenant |
+| Multi-tenancy | `tenantId` on every document, enforced at the query boundary | No separate database per tenant |
 | Cache | `CacheManager` — Redis when `REDIS_URL` is set and reachable, in-memory `Map` fallback otherwise | One API either way; services never call Redis directly |
 | Search | `SearchIndexModel` (MongoDB) + `SearchEngineService` | Not OpenSearch/Elasticsearch yet — see Part 13's Honest Limitation |
 | Background jobs | `node-cron` (`analyticsScheduler.js`, `incidentSlaScheduler.js`, `appointmentReminderScheduler.js`, `documentExpiryScheduler.js`) | Not Hangfire/Quartz/Celery — those are .NET/Java/Python schedulers, not applicable to this Node stack |
@@ -3132,7 +3095,7 @@ Implemented: document verification confidence/risk scoring (Part 5), incident pa
 
 ## Security (real)
 
-JWT access/refresh tokens, bcrypt password hashing, TOTP/email/SMS MFA scaffolding, RBAC via permission-string checks (`permissions.includes(...)`) on every mutating endpoint audited this session, tenant/branch isolation at the query boundary, `AuditLogModel` entries for dashboard views, search queries, and every incident/investigation/note mutation, and per-route `express-rate-limit`. Encryption at rest/in transit and a secrets manager are infrastructure/deployment concerns (TLS termination, disk encryption, a vault) outside this application's code, same as the "Provider configurable" framing in the Database Strategy section above.
+JWT access/refresh tokens, bcrypt password hashing, TOTP/email/SMS MFA scaffolding, RBAC via permission-string checks (`permissions.includes(...)`) on every mutating endpoint audited this session, tenant isolation at the query boundary, `AuditLogModel` entries for dashboard views, search queries, and every incident/investigation/note mutation, and per-route `express-rate-limit`. Encryption at rest/in transit and a secrets manager are infrastructure/deployment concerns (TLS termination, disk encryption, a vault) outside this application's code, same as the "Provider configurable" framing in the Database Strategy section above.
 
 ## Scalability Strategy (real vs. deferred)
 
@@ -3140,11 +3103,11 @@ Real today: stateless Express processes, `CacheManager` (Redis-capable), backgro
 
 ## Coding Agent Guidelines (reconciled to this codebase's real conventions)
 
-- Layering: `routes → controllers → services → models`. Controllers stay thin (pull tenant/branch/user context, call one service method, map errors to status codes). Services own all business logic and are the only layer that touches Mongoose models.
+- Layering: `routes → controllers → services → models`. Controllers stay thin (pull tenant/user context, call one service method, map errors to status codes). Services own all business logic and are the only layer that touches Mongoose models.
 - No hardcoded enums: status lists, workflow transitions, visibility levels, note types, and thresholds come from `utils/*Config.js` functions with env-var JSON overrides, or from tenant-scoped policy collections (`TimelinePolicyModel`, `IncidentPolicyModel`) — never a literal array in a controller.
 - Every mutating endpoint checks `req.auth.permissions` against a specific + domain-wide + `admin` fallback chain.
 - Every entity with a documented Domain Event list actually publishes every event on that list under its literal doc name — verified and fixed as a recurring bug class in Parts 9–13.
-- Soft deletes (`isSoftDeleted`) and tenant/branch fields are present on every domain collection; there are no hard deletes of business records.
+- Soft deletes (`isSoftDeleted`) and a `tenantId` field are present on every domain collection; there are no hard deletes of business records.
 - `ObjectId`s are this codebase's primary keys — do not introduce UUID PKs inconsistently with the rest of the schema.
 - AI assists (verification scoring, dashboard insights, AI context) but never finalizes a business decision — every AI signal feeds a human/workflow-engine approval step.
 

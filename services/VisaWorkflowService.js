@@ -290,7 +290,6 @@ class VisaWorkflowService {
     publishEvent(VISA_DOMAIN_EVENTS.WORKFLOW_TRANSITION_REQUESTED, {
       visaCaseId: visaCase._id?.toString?.() || visaCase.caseNumber,
       tenantId: visaCase.tenantId,
-      branchId: visaCase.branchId,
       currentState: visaCase.workflow?.currentStep || visaCase.status || "inquiry",
       targetState,
       performedBy
@@ -302,7 +301,6 @@ class VisaWorkflowService {
       publishEvent(VISA_DOMAIN_EVENTS.WORKFLOW_TRANSITION_REJECTED, {
         visaCaseId: visaCase._id?.toString?.() || visaCase.caseNumber,
         tenantId: visaCase.tenantId,
-        branchId: visaCase.branchId,
         targetState,
         reasons: evaluation.reasons,
         performedBy
@@ -333,7 +331,6 @@ class VisaWorkflowService {
     publishEvent(VISA_DOMAIN_EVENTS.WORKFLOW_TRANSITION_COMPLETED, {
       visaCaseId: visaCase._id?.toString?.() || visaCase.caseNumber,
       tenantId: visaCase.tenantId,
-      branchId: visaCase.branchId,
       previousState,
       currentState: nextState,
       performedBy,
@@ -344,7 +341,6 @@ class VisaWorkflowService {
       publishEvent(VISA_DOMAIN_EVENTS.WORKFLOW_COMPLETED, {
         visaCaseId: visaCase._id?.toString?.() || visaCase.caseNumber,
         tenantId: visaCase.tenantId,
-        branchId: visaCase.branchId,
         performedBy
       });
       // Named milestone event distinct from the generic WorkflowCompleted —
@@ -353,7 +349,6 @@ class VisaWorkflowService {
         visaCaseId: visaCase._id?.toString?.() || visaCase.caseNumber,
         caseNumber: visaCase.caseNumber,
         tenantId: visaCase.tenantId,
-        branchId: visaCase.branchId,
         performedBy
       });
     }
@@ -364,14 +359,12 @@ class VisaWorkflowService {
       publishEvent(VISA_DOMAIN_EVENTS.WORKFLOW_REOPENED, {
         visaCaseId: visaCase._id?.toString?.() || visaCase.caseNumber,
         tenantId: visaCase.tenantId,
-        branchId: visaCase.branchId,
         performedBy
       });
     } else if (nextState === VISA_CASE_STATUSES.CANCELLED) {
       publishEvent(VISA_DOMAIN_EVENTS.WORKFLOW_CANCELLED, {
         visaCaseId: visaCase._id?.toString?.() || visaCase.caseNumber,
         tenantId: visaCase.tenantId,
-        branchId: visaCase.branchId,
         performedBy
       });
     }
@@ -385,7 +378,6 @@ class VisaWorkflowService {
       publishEvent(VISA_DOMAIN_EVENTS.APPROVAL_COMPLETED, {
         visaCaseId: visaCase._id?.toString?.() || visaCase.caseNumber,
         tenantId: visaCase.tenantId,
-        branchId: visaCase.branchId,
         approvalRole: evaluation.transition.requiredRole,
         action: evaluation.transition.action,
         targetState: nextState,

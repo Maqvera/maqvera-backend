@@ -51,7 +51,7 @@ class EnterpriseDocumentService {
   // check at all, since it created false confidence. Both are now always
   // computed/set server-side: the document is honestly labeled "skipped"
   // (a real value in the model's own enum) rather than a false "clean".
-  static async uploadVisaCaseDocument({ visaCaseId, requirementId, documentType, uploadedFile, expiryDate = null, remarks = null, category = "Identity", visibility = "internal", tags = [] }, tenantId, branchId, userId) {
+  static async uploadVisaCaseDocument({ visaCaseId, requirementId, documentType, uploadedFile, expiryDate = null, remarks = null, category = "Identity", visibility = "internal", tags = [] }, tenantId, userId) {
     if (!visaCaseId || !documentType) {
       throw new Error("visaCaseId and documentType are required.");
     }
@@ -60,9 +60,7 @@ class EnterpriseDocumentService {
     }
 
     // 1. Validate Visa Case
-    const caseFilter = { _id: visaCaseId, tenantId, isSoftDeleted: { $ne: true } };
-    if (branchId) caseFilter.branchId = branchId;
-    const visaCase = await VisaCaseModel.findOne(caseFilter);
+    const visaCase = await VisaCaseModel.findOne({ _id: visaCaseId, tenantId, isSoftDeleted: { $ne: true } });
     if (!visaCase) {
       throw new Error("Visa Case not found.");
     }
@@ -118,7 +116,6 @@ class EnterpriseDocumentService {
       isNew = true;
       doc = new EnterpriseDocumentModel({
         tenantId,
-        branchId: branchId || visaCase.branchId || "main",
         module: "Visa",
         referenceId: visaCaseId,
         requirementId: requirementId || null,
@@ -222,21 +219,17 @@ class EnterpriseDocumentService {
    * Business Rules "Supports filtering" / "Supports pagination" — neither
    * had any query-param support at all before.
    */
-  static async getVisaCaseDocuments(visaCaseId, tenantId, branchId, query = {}) {
-    const caseFilter = { _id: visaCaseId, tenantId, isSoftDeleted: { $ne: true } };
-    if (branchId) caseFilter.branchId = branchId;
-    const visaCase = await VisaCaseModel.findOne(caseFilter);
+  static async getVisaCaseDocuments(visaCaseId, tenantId, query = {}) {
+    const visaCase = await VisaCaseModel.findOne({ _id: visaCaseId, tenantId, isSoftDeleted: { $ne: true } });
     if (!visaCase) {
       throw new Error("Visa Case not found.");
     }
 
-    const documentFilter = {
+    const uploadedDocs = await EnterpriseDocumentModel.find({
       tenantId,
       referenceId: visaCaseId,
       isSoftDeleted: { $ne: true }
-    };
-    if (branchId) documentFilter.branchId = branchId;
-    const uploadedDocs = await EnterpriseDocumentModel.find(documentFilter).lean();
+    }).lean();
 
     let mergedDocuments = visaCase.requiredDocuments.map(req => {
       const uploaded = uploadedDocs.find(d => d.documentType.toLowerCase() === req.documentType.toLowerCase());
@@ -285,12 +278,8 @@ class EnterpriseDocumentService {
    * History, Verification History, Embassy Usage, Timeline, and Audit
    * Summary (all named in the Response Includes list) were entirely absent.
    */
-  static async getDocumentById(documentId, tenantId, branchId) {
-    // Security Rule "Branch Isolation" — was missing entirely; any caller
-    // could fetch a document from a branch other than their own.
-    const filter = { _id: documentId, tenantId, isSoftDeleted: { $ne: true } };
-    if (branchId) filter.branchId = branchId;
-    const doc = await EnterpriseDocumentModel.findOne(filter);
+  static async getDocumentById(documentId, tenantId) {
+    const doc = await EnterpriseDocumentModel.findOne({ _id: documentId, tenantId, isSoftDeleted: { $ne: true } });
     if (!doc) {
       throw new Error("Document not found.");
     }

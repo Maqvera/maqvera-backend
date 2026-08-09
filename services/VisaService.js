@@ -63,7 +63,7 @@ class VisaService {
    * Work Queue & Assignment Engine
    * Assigns case to Work Queue or Officer based on country team, priority, workload.
    */
-  static evaluateAssignment({ destinationCountry, priority, assignedTo = null, branchId }) {
+  static evaluateAssignment({ destinationCountry, priority, assignedTo = null }) {
     if (assignedTo) {
       return {
         assignedTo,
@@ -82,12 +82,6 @@ class VisaService {
 
     if (priority === "high" || priority === "vip") {
       queueType = "priority_queue";
-    }
-
-    // Branch Assignment: destinationCountry/branchId used to be accepted
-    // params that the queue logic silently ignored.
-    if (branchId) {
-      queueType = `${queueType}:branch_${branchId}`;
     }
 
     return {
@@ -122,7 +116,7 @@ class VisaService {
   /**
    * Create Visa Case
    */
-  static async createVisaCase({ travelerId, countryId, destinationCountry, visaTypeId, visaType, travelPurpose, plannedTravelDate, priority = "normal", assignedTo = null, notes }, tenantId, branchId, userId) {
+  static async createVisaCase({ travelerId, countryId, destinationCountry, visaTypeId, visaType, travelPurpose, plannedTravelDate, priority = "normal", assignedTo = null, notes }, tenantId, userId) {
     if (!travelerId) {
       throw new Error("Traveler ID (travelerId) is required.");
     }
@@ -162,7 +156,7 @@ class VisaService {
     const caseNumber = await this.generateCaseNumber(tenantId);
 
     // 4. Work Queue / Assignment Engine
-    const assignment = this.evaluateAssignment({ destinationCountry: destCountry, priority, assignedTo, branchId });
+    const assignment = this.evaluateAssignment({ destinationCountry: destCountry, priority, assignedTo });
 
     // 5. Generate Dynamic Requirements
     const requirementResolution = await VisaRequirementService.getRequirementProfilesForCountry(destCountry, {
@@ -212,7 +206,6 @@ class VisaService {
     // 8. Create Visa Case Record
     const newVisaCase = new VisaCaseModel({
       tenantId,
-      branchId: branchId || traveler.branchId || "main",
       caseNumber,
       travelerId,
       travelerSnapshot,
@@ -281,25 +274,22 @@ class VisaService {
       visaCaseId: newVisaCase._id,
       caseNumber,
       tenantId,
-      branchId: newVisaCase.branchId,
       travelerId
     });
     publishEvent(VISA_DOMAIN_EVENTS.VISA_APPLICATION_CREATED, {
       visaCaseId: newVisaCase._id,
       applicationNumber: `${caseNumber}-APP-1`,
       tenantId,
-      branchId: newVisaCase.branchId
     });
     publishEvent("VisaApplicationInitialized", {
       visaCaseId: newVisaCase._id,
       applicationNumber: `${caseNumber}-APP-1`,
       tenantId,
-      branchId: newVisaCase.branchId
     });
-    publishEvent("RequirementsGenerated", { visaCaseId: newVisaCase._id, tenantId, branchId: newVisaCase.branchId });
+    publishEvent("RequirementsGenerated", { visaCaseId: newVisaCase._id, tenantId });
     // Named Domain Event, never published anywhere — this is the exact
     // moment the case's workflow genuinely starts.
-    publishEvent(VISA_DOMAIN_EVENTS.WORKFLOW_STARTED, { visaCaseId: newVisaCase._id, tenantId, branchId: newVisaCase.branchId, initialState: initialWorkflowState });
+    publishEvent(VISA_DOMAIN_EVENTS.WORKFLOW_STARTED, { visaCaseId: newVisaCase._id, tenantId, initialState: initialWorkflowState });
 
     return newVisaCase;
   }
@@ -307,7 +297,7 @@ class VisaService {
   /**
    * Get Visa Cases with pagination, filtering & multi-tenancy
    */
-  static async getVisaCases(query, tenantId, branchId) {
+  static async getVisaCases(query, tenantId) {
     const {
       page = 1,
       pageSize = 20,
@@ -316,7 +306,6 @@ class VisaService {
       destinationCountry,
       visaTypeId,
       visaType,
-      filterBranchId,
       travelerId,
       assignedTo,
       createdFrom,
@@ -333,10 +322,6 @@ class VisaService {
       tenantId,
       isSoftDeleted: { $ne: true }
     };
-
-    if (branchId || filterBranchId || query.branchId) {
-      filter.branchId = filterBranchId || query.branchId || branchId;
-    }
 
     if (status) filter.status = status;
     if (countryId) filter.countryId = countryId;
@@ -391,9 +376,8 @@ class VisaService {
   /**
    * Get single Visa Case by ID
    */
-  static async getVisaCaseById(visaCaseId, tenantId, branchId) {
+  static async getVisaCaseById(visaCaseId, tenantId) {
     const filter = { _id: visaCaseId, tenantId, isSoftDeleted: { $ne: true } };
-    if (branchId) filter.branchId = branchId;
 
     const visaCase = await VisaCaseModel.findOne(filter);
     if (!visaCase) {
@@ -412,8 +396,8 @@ class VisaService {
    * method is used internally elsewhere as a mutable Mongoose document to
    * call .save() on.
    */
-  static async getVisaCaseAggregate(visaCaseId, tenantId, branchId) {
-    const visaCase = await this.getVisaCaseById(visaCaseId, tenantId, branchId);
+  static async getVisaCaseAggregate(visaCaseId, tenantId) {
+    const visaCase = await this.getVisaCaseById(visaCaseId, tenantId);
 
     const [uploadedDocuments, auditSummary] = await Promise.all([
       EnterpriseDocumentModel.find({ tenantId, referenceId: visaCaseId, isSoftDeleted: { $ne: true } })
@@ -441,8 +425,8 @@ class VisaService {
   /**
    * Update Visa Case
    */
-  static async updateVisaCase(visaCaseId, updateData, tenantId, branchId, userId) {
-    const visaCase = await this.getVisaCaseById(visaCaseId, tenantId, branchId);
+  static async updateVisaCase(visaCaseId, updateData, tenantId, userId) {
+    const visaCase = await this.getVisaCaseById(visaCaseId, tenantId);
 
     // Lock completed cases
     const isCompleted = [VISA_CASE_STATUSES.TRAVEL_READY, VISA_CASE_STATUSES.VISA_PRINTED].includes(visaCase.status);
@@ -467,7 +451,7 @@ class VisaService {
       // VisaPriorityChanged (named in the Domain Event Map) was previously
       // only ever pushed into the case's own embedded timeline array, never
       // published on the real event bus.
-      domainEventsToPublish.push(["VisaPriorityChanged", { visaCaseId, tenantId, branchId: visaCase.branchId, previousPriority: visaCase.priority, newPriority: updateData.priority, performedBy: userId }]);
+      domainEventsToPublish.push(["VisaPriorityChanged", { visaCaseId, tenantId, previousPriority: visaCase.priority, newPriority: updateData.priority, performedBy: userId }]);
       visaCase.priority = updateData.priority;
     }
 
@@ -478,7 +462,7 @@ class VisaService {
         performedBy: userId || "system",
         timestamp: new Date()
       });
-      domainEventsToPublish.push(["VisaOfficerAssigned", { visaCaseId, tenantId, branchId: visaCase.branchId, assignedTo: updateData.assignedTo, performedBy: userId }]);
+      domainEventsToPublish.push(["VisaOfficerAssigned", { visaCaseId, tenantId, assignedTo: updateData.assignedTo, performedBy: userId }]);
       visaCase.assignedTo = updateData.assignedTo;
       if (updateData.assignedConsultantName) {
         visaCase.assignedConsultantName = updateData.assignedConsultantName;
@@ -514,7 +498,7 @@ class VisaService {
       details: updateData
     }).catch(err => console.error("AuditLog error:", err));
 
-    publishEvent("VisaCaseUpdated", { visaCaseId, tenantId, branchId: visaCase.branchId, updatedBy: userId });
+    publishEvent("VisaCaseUpdated", { visaCaseId, tenantId, updatedBy: userId });
     for (const [eventName, payload] of domainEventsToPublish) {
       publishEvent(eventName, payload);
     }
@@ -525,8 +509,8 @@ class VisaService {
   /**
    * Soft Delete / Archive Visa Case
    */
-  static async deleteVisaCase(visaCaseId, tenantId, branchId, userId) {
-    const visaCase = await this.getVisaCaseById(visaCaseId, tenantId, branchId);
+  static async deleteVisaCase(visaCaseId, tenantId, userId) {
+    const visaCase = await this.getVisaCaseById(visaCaseId, tenantId);
 
     if ([VISA_CASE_STATUSES.TRAVEL_READY, VISA_CASE_STATUSES.VISA_PRINTED].includes(visaCase.status)) {
       throw new Error("Completed visa cases cannot be deleted.");
@@ -552,7 +536,7 @@ class VisaService {
       details: { caseNumber: visaCase.caseNumber, archivedAt: visaCase.deletedAt }
     }).catch(err => console.error("AuditLog error:", err));
 
-    publishEvent("VisaCaseArchived", { visaCaseId, caseNumber: visaCase.caseNumber, tenantId, branchId: visaCase.branchId });
+    publishEvent("VisaCaseArchived", { visaCaseId, caseNumber: visaCase.caseNumber, tenantId });
 
     return { message: `Visa Case ${visaCase.caseNumber} archived successfully.` };
   }
@@ -560,11 +544,11 @@ class VisaService {
   /**
    * Adds an incident to a Visa Case via EnterpriseIncidentEngineService
    */
-  static async addVisaCaseIncident(visaCaseId, incidentData, tenantId, branchId, userId) {
+  static async addVisaCaseIncident(visaCaseId, incidentData, tenantId, userId) {
     // "Validate Visa Case" / "Visa Case Exists" — was silently swallowed via
     // .catch(() => null), letting an incident be created against a
-    // non-existent (or wrong-branch) Visa Case ID with no error at all.
-    const visaCase = await this.getVisaCaseById(visaCaseId, tenantId, branchId);
+    // non-existent Visa Case ID with no error at all.
+    const visaCase = await this.getVisaCaseById(visaCaseId, tenantId);
 
     const createdIncident = await EnterpriseIncidentEngineService.createIncident(
       {
@@ -573,7 +557,6 @@ class VisaService {
         ...incidentData
       },
       tenantId,
-      branchId,
       userId
     );
 
@@ -592,7 +575,7 @@ class VisaService {
    * a caller sent even though EnterpriseIncidentEngineService.getIncidents
    * already supports all of them.
    */
-  static async getVisaCaseIncidents(visaCaseId, query, tenantId, branchId) {
+  static async getVisaCaseIncidents(visaCaseId, query, tenantId) {
     const result = await EnterpriseIncidentEngineService.getIncidents({ ...query, visaCaseId }, tenantId);
     if (result && Array.isArray(result.items) && result.items.length > 0) {
       // Response Includes: Incident ID, Incident Number, Category, Severity,
@@ -616,7 +599,7 @@ class VisaService {
       }));
       return { items, pagination: result.pagination };
     }
-    const visaCase = await this.getVisaCaseById(visaCaseId, tenantId, branchId);
+    const visaCase = await this.getVisaCaseById(visaCaseId, tenantId);
     const items = Array.isArray(visaCase.incidents) ? visaCase.incidents : [];
     return { items, pagination: { page: 1, pageSize: items.length, totalItems: items.length, totalPages: 1 } };
   }
@@ -624,16 +607,16 @@ class VisaService {
   /**
    * Returns complete activity timeline for a Visa Case
    */
-  static async getVisaCaseTimeline(visaCaseId, query, tenantId, branchId, requester = {}) {
-    await this.getVisaCaseById(visaCaseId, tenantId, branchId);
-    return EnterpriseTimelineEngineService.getTimeline({ visaCaseId, branchId, ...query }, tenantId, requester);
+  static async getVisaCaseTimeline(visaCaseId, query, tenantId, requester = {}) {
+    await this.getVisaCaseById(visaCaseId, tenantId);
+    return EnterpriseTimelineEngineService.getTimeline({ visaCaseId, ...query }, tenantId, requester);
   }
 
   /**
    * Adds a manual operational note to a Visa Case
    */
-  static async addVisaCaseNote(visaCaseId, noteData, tenantId, branchId, userId, requestContext = {}, userName = "Staff", userRole = "Staff") {
-    const visaCase = await this.getVisaCaseById(visaCaseId, tenantId, branchId);
+  static async addVisaCaseNote(visaCaseId, noteData, tenantId, userId, requestContext = {}, userName = "Staff", userRole = "Staff") {
+    const visaCase = await this.getVisaCaseById(visaCaseId, tenantId);
     const note = await EnterpriseTimelineEngineService.recordManualNote({
       visaCaseId,
       visaCase,
@@ -644,7 +627,6 @@ class VisaService {
       attachments: noteData.attachments || [],
       isPrivate: noteData.isPrivate || false,
       tenantId,
-      branchId,
       userId,
       userName,
       userRole,
@@ -657,8 +639,8 @@ class VisaService {
   /**
    * Builds AI Context summary for a Visa Case
    */
-  static async getVisaCaseAIContext(visaCaseId, tenantId, branchId) {
-    await this.getVisaCaseById(visaCaseId, tenantId, branchId);
+  static async getVisaCaseAIContext(visaCaseId, tenantId) {
+    await this.getVisaCaseById(visaCaseId, tenantId);
     return await EnterpriseTimelineEngineService.buildAIContext(visaCaseId, tenantId);
   }
 }

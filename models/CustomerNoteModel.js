@@ -12,10 +12,6 @@ const CustomerNoteSchema = new mongoose.Schema({
     required: true,
     index: true
   },
-  branchId: {
-    type: String,
-    default: null
-  },
   authorId: {
     type: String,
     default: null

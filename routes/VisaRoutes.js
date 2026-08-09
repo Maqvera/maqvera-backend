@@ -59,17 +59,20 @@ const limiter = rateLimit({
   message: 'Too many requests, please try again later.'
 });
 
-// Security note (per CLAUDE.md): only "visa-case reads" are documented as
-// intentionally public, alongside closely-analogous tenant-agnostic catalog
-// reads (visa types, country requirement rules, the static workflow
-// definition). Every write and every other nested-resource read below was
-// previously missing authenticateAccessToken entirely — this file had no
-// router.use(authenticateAccessToken) and most routes had no inline auth,
-// meaning documents (passport scans), embassy decisions, passport custody
-// transfers, and the case CRUD writes themselves were reachable by anyone
-// who could reach the API, tenant-scoped only by a client-supplied
-// x-tenant-id header. Each route below is now explicit about its own
-// auth requirement rather than relying on file-level defaults.
+// Security note: only genuinely tenant-agnostic catalog/reference reads stay
+// public — visa types, country requirement rules, and the static/default
+// workflow definition (none of these touch a specific tenant's customer
+// data). Visa CASE reads were previously also public and are NOT anymore:
+// visa cases carry customer PII (passport numbers, traveler details) and are
+// tenant-owned, so a public "visa-case reads" contract was itself a bug, not
+// an intentional exception — see getVisaCases/getVisaCaseById below. Every
+// write and every other nested-resource read requires authenticateAccessToken;
+// this file previously had no router.use(authenticateAccessToken) and most
+// routes had no inline auth either, meaning documents (passport scans),
+// embassy decisions, passport custody transfers, and the case CRUD writes
+// themselves were reachable by anyone who could reach the API, tenant-scoped
+// only by a client-supplied x-tenant-id header. Each route below is explicit
+// about its own auth requirement rather than relying on file-level defaults.
 
 // Visa Types Catalog endpoint (public — static, tenant-agnostic catalog)
 router.get("/visa-types", limiter, getVisaTypes);
@@ -132,11 +135,16 @@ router.post("/visa-cases/:visaCaseId/notes", authenticateAccessToken, limiter, a
 router.get("/visa-cases/:visaCaseId/ai-context", authenticateAccessToken, limiter, getVisaCaseAIContext);
 router.get("/timeline/:eventId", authenticateAccessToken, limiter, getTimelineEventById);
 
-// Visa Case CRUD endpoints — GET (list/detail) are the documented public
-// "visa-case reads"; the writes are not reads and now require auth.
-router.get("/visa-cases", limiter, getVisaCases);
+// Visa Case CRUD endpoints. GET (list/detail) were previously public — but
+// visa cases carry customer PII (passport numbers, traveler details) and are
+// tenant-owned, and the "public" implementation trusted a client-supplied
+// x-tenant-id header for tenant identity: anyone could read any tenant's
+// complete visa case list/detail with zero authentication just by setting
+// that header. Both now require auth, same as every other tenant-owned read
+// in this file.
+router.get("/visa-cases", authenticateAccessToken, limiter, getVisaCases);
 router.post("/visa-cases", authenticateAccessToken, limiter, createVisaCase);
-router.get("/visa-cases/:visaCaseId", limiter, getVisaCaseById);
+router.get("/visa-cases/:visaCaseId", authenticateAccessToken, limiter, getVisaCaseById);
 router.patch("/visa-cases/:visaCaseId", authenticateAccessToken, limiter, updateVisaCase);
 router.delete("/visa-cases/:visaCaseId", authenticateAccessToken, limiter, deleteVisaCase);
 

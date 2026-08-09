@@ -12,10 +12,15 @@ const authConfig = getAuthConfig();
 // from their role here — same source (Role.permissions) that
 // resolveDomainContext() in Auth.js uses for GET /auth/me. Cached briefly
 // since roles rarely change and this now runs on every authenticated request.
-const resolveRolePermissions = async (roleName) => {
-    if (!roleName) return [];
-    const { data } = await CacheManager.getOrCompute(`role:permissions:${roleName}`, async () => {
-        const roleRecord = await RoleModel.findOne({ name: roleName, status: "active" }).lean();
+//
+// Role.name is unique per tenant, not globally (models/Rolemodel.js), so the
+// lookup must be tenant-scoped too — otherwise two different tenants' same-
+// named roles (e.g. both called "Administrator") would collide and this
+// could resolve to the wrong tenant's permission set entirely.
+const resolveRolePermissions = async (tenantId, roleName) => {
+    if (!roleName || !tenantId) return [];
+    const { data } = await CacheManager.getOrCompute(`role:permissions:${tenantId}:${roleName}`, async () => {
+        const roleRecord = await RoleModel.findOne({ tenantId, name: roleName, status: "active" }).lean();
         return roleRecord?.permissions || [];
     });
     return data;
@@ -49,7 +54,7 @@ const authenticateAccessToken = async (req, res, next) => {
     req.accessToken = token;
 
     try {
-        req.auth.permissions = await resolveRolePermissions(payload.role);
+        req.auth.permissions = await resolveRolePermissions(payload.tenantId, payload.role);
     } catch (error) {
         return sendError(res, 500, "Unable to resolve permissions", requestId);
     }

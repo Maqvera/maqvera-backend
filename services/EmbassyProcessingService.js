@@ -78,14 +78,12 @@ class EmbassyProcessingService {
   /**
    * Create Embassy Submission
    */
-  static async createEmbassySubmission(visaCaseId, { embassyId, embassyName, submissionMethod = "Online_Portal", submissionDate = new Date(), expectedProcessingDays = 7, trackingNumber, courierCompany, remarks }, tenantId, branchId, userId) {
+  static async createEmbassySubmission(visaCaseId, { embassyId, embassyName, submissionMethod = "Online_Portal", submissionDate = new Date(), expectedProcessingDays = 7, trackingNumber, courierCompany, remarks }, tenantId, userId) {
     if (!visaCaseId || !embassyId) {
       throw new Error("visaCaseId and embassyId are required.");
     }
 
-    const caseFilter = { _id: visaCaseId, tenantId, isSoftDeleted: { $ne: true } };
-    if (branchId) caseFilter.branchId = branchId;
-    const visaCase = await VisaCaseModel.findOne(caseFilter);
+    const visaCase = await VisaCaseModel.findOne({ _id: visaCaseId, tenantId, isSoftDeleted: { $ne: true } });
     if (!visaCase) {
       throw new Error("Visa Case not found.");
     }
@@ -97,7 +95,7 @@ class EmbassyProcessingService {
     if (visaCase.status !== VISA_CASE_STATUSES.READY_FOR_SUBMISSION) throw new Error("Visa Case workflow is not ready for embassy submission.");
     const mandatoryRequirements = visaCase.requiredDocuments.filter((document) => document.isMandatory);
     if (mandatoryRequirements.some((document) => document.status !== "verified" || document.verificationStatus !== "verified")) throw new Error("All mandatory documents must be approved before embassy submission.");
-    const passport = await PassportTrackingModel.findOne({ tenantId, visaCaseId, branchId: visaCase.branchId, isLost: false, isDamaged: false });
+    const passport = await PassportTrackingModel.findOne({ tenantId, visaCaseId, isLost: false, isDamaged: false });
     if (!passport) throw new Error("A valid passport must be available before embassy submission.");
 
     // Check if an active submission already exists
@@ -117,7 +115,6 @@ class EmbassyProcessingService {
 
     const newSub = new EmbassySubmissionModel({
       tenantId,
-      branchId: branchId || visaCase.branchId || "main",
       submissionNumber,
       visaCaseId,
       caseNumber: visaCase.caseNumber,
@@ -182,7 +179,7 @@ class EmbassyProcessingService {
       details: { submissionNumber, visaCaseId, embassyName }
     }).catch(err => console.error("Audit error:", err));
 
-    publishEvent("EmbassySubmissionCreated", { submissionId: newSub._id, visaCaseId, tenantId, branchId: newSub.branchId });
+    publishEvent("EmbassySubmissionCreated", { submissionId: newSub._id, visaCaseId, tenantId });
 
     return newSub;
   }
@@ -295,7 +292,7 @@ class EmbassyProcessingService {
       details: updateData
     }).catch(err => console.error("Audit error:", err));
 
-    publishEvent("EmbassySubmissionUpdated", { submissionId: sub._id, visaCaseId: sub.visaCaseId, status, tenantId, branchId: sub.branchId });
+    publishEvent("EmbassySubmissionUpdated", { submissionId: sub._id, visaCaseId: sub.visaCaseId, status, tenantId });
 
     // EmbassySubmissionUpdated is generic; the doc names several
     // status-specific events that were never published at all —
@@ -309,7 +306,7 @@ class EmbassyProcessingService {
       Closed: "EmbassySubmissionClosed"
     };
     if (status && specificEventByStatus[status]) {
-      publishEvent(specificEventByStatus[status], { submissionId: sub._id, visaCaseId: sub.visaCaseId, tenantId, branchId: sub.branchId });
+      publishEvent(specificEventByStatus[status], { submissionId: sub._id, visaCaseId: sub.visaCaseId, tenantId });
     }
 
     return sub;
@@ -371,7 +368,7 @@ class EmbassyProcessingService {
       details: { documentType, dueDate: due }
     }).catch(err => console.error("Audit error:", err));
 
-    publishEvent("AdditionalDocumentRequested", { submissionId: sub._id, visaCaseId: sub.visaCaseId, documentType, tenantId, branchId: sub.branchId });
+    publishEvent("AdditionalDocumentRequested", { submissionId: sub._id, visaCaseId: sub.visaCaseId, documentType, tenantId });
 
     // Business Workflow's "Notify Officer" / "Notify Traveler" steps — no
     // real email/SMS provider exists anywhere in this codebase, so this
@@ -379,10 +376,10 @@ class EmbassyProcessingService {
     // for other modules (Travel Operations) rather than claiming a
     // notification was actually sent.
     if (sub.assignedOfficer) {
-      publishEvent("NotificationRequested", { tenantId, branchId: sub.branchId, event: "EmbassyAdditionalDocumentRequested", priority: "high", recipientId: sub.assignedOfficer, submissionId: sub._id, visaCaseId: sub.visaCaseId, documentType, dueDate: due });
+      publishEvent("NotificationRequested", { tenantId, event: "EmbassyAdditionalDocumentRequested", priority: "high", recipientId: sub.assignedOfficer, submissionId: sub._id, visaCaseId: sub.visaCaseId, documentType, dueDate: due });
     }
     if (visaCase?.travelerId) {
-      publishEvent("NotificationRequested", { tenantId, branchId: sub.branchId, event: "EmbassyAdditionalDocumentRequested", priority: "high", recipientId: visaCase.travelerId.toString(), submissionId: sub._id, visaCaseId: sub.visaCaseId, documentType, dueDate: due });
+      publishEvent("NotificationRequested", { tenantId, event: "EmbassyAdditionalDocumentRequested", priority: "high", recipientId: visaCase.travelerId.toString(), submissionId: sub._id, visaCaseId: sub.visaCaseId, documentType, dueDate: due });
     }
 
     return sub;
@@ -421,7 +418,7 @@ class EmbassyProcessingService {
     if (sub.expectedCompletionDate && now > sub.expectedCompletionDate) {
       sub.slaTracking.isSlaBreached = true;
       sub.slaTracking.delayDays = Math.ceil((now - sub.expectedCompletionDate) / (1000 * 60 * 60 * 24));
-      publishEvent("SLABreached", { submissionId: sub._id, delayDays: sub.slaTracking.delayDays, tenantId, branchId: sub.branchId });
+      publishEvent("SLABreached", { submissionId: sub._id, delayDays: sub.slaTracking.delayDays, tenantId });
     }
 
     await sub.save();
@@ -464,16 +461,16 @@ class EmbassyProcessingService {
       details: { decision, visaNumber, rejectionReason }
     }).catch(err => console.error("Audit error:", err));
 
-    publishEvent("VisaDecisionReceived", { submissionId: sub._id, visaCaseId: sub.visaCaseId, decision, tenantId, branchId: sub.branchId });
+    publishEvent("VisaDecisionReceived", { submissionId: sub._id, visaCaseId: sub.visaCaseId, decision, tenantId });
 
     // VisaDecisionReceived is the generic event; VisaApproved/VisaRejected
     // (named in the Domain Event Map) were previously only pushed into the
     // Visa Case's own embedded timeline array, never on the real event bus —
     // meaning no subscriber could react specifically to an approval/rejection.
     if (decision === "Approved") {
-      publishEvent(VISA_DOMAIN_EVENTS.VISA_APPROVED, { submissionId: sub._id, visaCaseId: sub.visaCaseId, visaNumber: visaNumber || null, tenantId, branchId: sub.branchId });
+      publishEvent(VISA_DOMAIN_EVENTS.VISA_APPROVED, { submissionId: sub._id, visaCaseId: sub.visaCaseId, visaNumber: visaNumber || null, tenantId });
     } else if (decision === "Rejected") {
-      publishEvent(VISA_DOMAIN_EVENTS.VISA_REJECTED, { submissionId: sub._id, visaCaseId: sub.visaCaseId, rejectionReason: rejectionReason || null, tenantId, branchId: sub.branchId });
+      publishEvent(VISA_DOMAIN_EVENTS.VISA_REJECTED, { submissionId: sub._id, visaCaseId: sub.visaCaseId, rejectionReason: rejectionReason || null, tenantId });
     }
 
     return sub;
@@ -482,7 +479,7 @@ class EmbassyProcessingService {
   /**
    * Create Submission Batch (Submission Queue)
    */
-  static async createSubmissionBatch({ embassyId, embassyName, destinationCountry, submissionMethod = "Courier", submissionIds = [], notes }, tenantId, branchId, userId) {
+  static async createSubmissionBatch({ embassyId, embassyName, destinationCountry, submissionMethod = "Courier", submissionIds = [], notes }, tenantId, userId) {
     if (!embassyName || !destinationCountry || !Array.isArray(submissionIds) || submissionIds.length === 0) {
       throw new Error("embassyName, destinationCountry, and a non-empty array of submissionIds are required.");
     }
@@ -498,7 +495,6 @@ class EmbassyProcessingService {
 
     const batch = new EmbassyBatchModel({
       tenantId,
-      branchId: branchId || "main",
       batchNumber,
       embassyId: embassyId || null,
       embassyName,

@@ -1,6 +1,6 @@
 import express from "express";
 import {
-  Signup, Login, Forgetpassword, Changepassword, Logout, Refresh, Me, Resetpassword,
+  Signup, SetupTenant, Login, Forgetpassword, Changepassword, Logout, Refresh, Me, Resetpassword,
   SendEmailVerification, VerifyEmail, ListSessions, RevokeSession, LogoutAll,
   SetupMfa, VerifyMfaSetup, CompleteMfaLogin, DisableMfa, MfaStatus, GetSecurityCenter,
   UpdatePreferences, GetPreferences, GetLoginHistory, GetSecurityEvents,
@@ -27,6 +27,7 @@ const limiter = rateLimit({
 // AUTH
 // =====================
 route.post("/signup", limiter, validate(authSchemas.signup), Signup);
+route.post("/setup", limiter, validate(authSchemas.setupTenant), SetupTenant);
 route.post("/login", limiter, validate(authSchemas.login), Login);
 route.post("/logout", authenticateAccessToken, validate(authSchemas.logout), Logout);
 route.post("/refresh", limiter, validate(authSchemas.refresh), Refresh);

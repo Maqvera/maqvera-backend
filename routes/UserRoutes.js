@@ -10,7 +10,6 @@ import {
   DeleteUser,
   ArchiveUser,
   UpdateUserRole,
-  UpdateUserBranch,
   UpdateUserDepartment,
   UpdateUserStatus,
   GetUserPermissions,
@@ -61,7 +60,6 @@ router.post("/:userId/archive", limiter, ArchiveUser);
 // Organizational Assignments
 router.patch("/:userId/role", limiter, validate(userSchemas.roleAssignment), UpdateUserRole);
 router.patch("/:userId/roles", limiter, validate(userSchemas.roleAssignment), UpdateUserRole);
-router.patch("/:userId/branch", limiter, validate(userSchemas.branchAssignment), UpdateUserBranch);
 router.patch("/:userId/department", limiter, validate(userSchemas.departmentAssignment), UpdateUserDepartment);
 router.patch("/:userId/status", limiter, validate(userSchemas.updateStatus), UpdateUserStatus);
 

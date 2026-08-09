@@ -16,6 +16,7 @@ import { createRequestId } from "../utils/authTokens.js";
 import { getTravelConfig } from "../utils/travelConfig.js";
 import { getAllowedNextActions, executeWorkflowTransition } from "../utils/WorkflowEngine.js";
 import SearchEngineService from "../services/SearchEngineService.js";
+import { getAccessScope } from "../utils/accessScope.js";
 
 const travelConfig = getTravelConfig();
 
@@ -65,12 +66,13 @@ const buildTravelPlanDTO = (tp) => {
 export const ListTravelPlans = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
 
-    if (!tenantId) {
+    if (!scope) {
       return sendError(res, 403, "Tenant context is required.", requestId);
     }
+    const tenantId = scope.tenantId;
 
     if (!permissions.includes("travel.read") && !permissions.includes("travel_plans.read") && !permissions.includes("admin")) {
       return sendError(res, 403, "Permission denied.", requestId);
@@ -79,15 +81,11 @@ export const ListTravelPlans = async (req, res) => {
     const page = Math.max(parseInt(req.query.page || "1", 10), 1);
     const pageSize = Math.min(Math.max(parseInt(req.query.pageSize || "20", 10), 1), 100);
 
-    const filter = { tenantId };
+    const filter = { ...scope };
 
     // Default to excluding archived plans unless explicitly requested
     if (req.query.isArchived !== "true") {
       filter.isArchived = false;
-    }
-
-    if (req.query.branchId) {
-      filter.branchId = req.query.branchId;
     }
 
     if (req.query.travelStatus || req.query.status) {
@@ -168,13 +166,14 @@ export const ListTravelPlans = async (req, res) => {
 export const CreateTravelPlan = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const userId = req.auth?.userId || req.auth?.id;
     const permissions = req.auth?.permissions || [];
 
-    if (!tenantId) {
+    if (!scope) {
       return sendError(res, 403, "Tenant context is required.", requestId);
     }
+    const tenantId = scope.tenantId;
 
     if (!permissions.includes("travel.write") && !permissions.includes("travel_plans.write") && !permissions.includes("admin")) {
       return sendError(res, 403, "Permission denied.", requestId);
@@ -211,8 +210,9 @@ export const CreateTravelPlan = async (req, res) => {
       return sendError(res, 400, "arrivalDate must be after departureDate.", requestId);
     }
 
-    // 1. Fetch & Validate Booking
-    const booking = await BookingHeaderModel.findOne({ _id: bookingId, tenantId });
+    // 1. Fetch & Validate Booking — tenant-scoped, so a travel plan can
+    // never be created off a booking belonging to another tenant.
+    const booking = await BookingHeaderModel.findOne({ _id: bookingId, ...scope });
     if (!booking) {
       return sendError(res, 404, "Booking not found or does not belong to tenant.", requestId);
     }
@@ -294,7 +294,6 @@ export const CreateTravelPlan = async (req, res) => {
     // 6. Create Travel Plan
     const newTravelPlan = await TravelPlanModel.create({
       tenantId,
-      branchId: booking.branchId || req.auth?.branchId || "default",
       travelPlanNumber,
       bookingId: booking._id,
       bookingNumber: booking.bookingNumber || booking.bookingReference,
@@ -414,19 +413,20 @@ export const CreateTravelPlan = async (req, res) => {
 export const GetTravelPlan = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
     const { travelPlanId } = req.params;
 
-    if (!tenantId) {
+    if (!scope) {
       return sendError(res, 403, "Tenant context is required.", requestId);
     }
+    const tenantId = scope.tenantId;
 
     if (!permissions.includes("travel.read") && !permissions.includes("travel_plans.read") && !permissions.includes("admin")) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
-    const travelPlan = await TravelPlanModel.findOne({ _id: travelPlanId, tenantId });
+    const travelPlan = await TravelPlanModel.findOne({ _id: travelPlanId, ...scope });
     if (!travelPlan) {
       return sendError(res, 404, "Travel plan not found.", requestId);
     }
@@ -466,7 +466,6 @@ export const GetTravelPlan = async (req, res) => {
         travelPlanId: travelPlan._id,
         travelPlanNumber: travelPlan.travelPlanNumber,
         tenantId: travelPlan.tenantId,
-        branchId: travelPlan.branchId,
         travelType: travelPlan.travelType,
         status: travelPlan.status,
         priority: travelPlan.priority,
@@ -542,20 +541,21 @@ export const GetTravelPlan = async (req, res) => {
 export const UpdateTravelPlan = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const userId = req.auth?.userId || req.auth?.id;
     const permissions = req.auth?.permissions || [];
     const { travelPlanId } = req.params;
 
-    if (!tenantId) {
+    if (!scope) {
       return sendError(res, 403, "Tenant context is required.", requestId);
     }
+    const tenantId = scope.tenantId;
 
     if (!permissions.includes("travel.write") && !permissions.includes("travel_plans.write") && !permissions.includes("admin")) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
-    const travelPlan = await TravelPlanModel.findOne({ _id: travelPlanId, tenantId });
+    const travelPlan = await TravelPlanModel.findOne({ _id: travelPlanId, ...scope });
     if (!travelPlan) {
       return sendError(res, 404, "Travel plan not found.", requestId);
     }
@@ -806,20 +806,21 @@ export const UpdateTravelPlan = async (req, res) => {
 export const ArchiveTravelPlan = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const userId = req.auth?.userId || req.auth?.id;
     const permissions = req.auth?.permissions || [];
     const { travelPlanId } = req.params;
 
-    if (!tenantId) {
+    if (!scope) {
       return sendError(res, 403, "Tenant context is required.", requestId);
     }
+    const tenantId = scope.tenantId;
 
     if (!permissions.includes("travel.write") && !permissions.includes("travel_plans.write") && !permissions.includes("admin")) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
-    const travelPlan = await TravelPlanModel.findOne({ _id: travelPlanId, tenantId });
+    const travelPlan = await TravelPlanModel.findOne({ _id: travelPlanId, ...scope });
     if (!travelPlan) {
       return sendError(res, 404, "Travel plan not found.", requestId);
     }
@@ -893,20 +894,21 @@ export const ArchiveTravelPlan = async (req, res) => {
 export const AddTravelPlanTravelers = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const userId = req.auth?.userId || req.auth?.id;
     const permissions = req.auth?.permissions || [];
     const { travelPlanId } = req.params;
 
-    if (!tenantId) {
+    if (!scope) {
       return sendError(res, 403, "Tenant context is required.", requestId);
     }
+    const tenantId = scope.tenantId;
 
     if (!permissions.includes("travel.write") && !permissions.includes("travel_plans.write") && !permissions.includes("admin")) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
-    const travelPlan = await TravelPlanModel.findOne({ _id: travelPlanId, tenantId });
+    const travelPlan = await TravelPlanModel.findOne({ _id: travelPlanId, ...scope });
     if (!travelPlan) {
       return sendError(res, 404, "Travel plan not found.", requestId);
     }
@@ -1020,10 +1022,10 @@ export const AddTravelPlanTravelers = async (req, res) => {
 export const SearchTravelPlans = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
-    const tenantId = req.auth?.tenantId;
+    const scope = getAccessScope(req);
     const permissions = req.auth?.permissions || [];
 
-    if (!tenantId) {
+    if (!scope) {
       return sendError(res, 403, "Tenant context is required.", requestId);
     }
 
@@ -1036,10 +1038,9 @@ export const SearchTravelPlans = async (req, res) => {
     const pageSize = Math.min(Math.max(parseInt(req.query.pageSize || String(travelConfig.defaultPageSize), 10), 1), travelConfig.maxPageSize);
 
     const { results, meta } = await SearchEngineService.globalSearch({
-      tenantId,
+      tenantId: scope.tenantId,
       query,
       entityType: "TravelPlan",
-      branchId: req.query.branchId || null,
       permissions,
       page,
       pageSize

@@ -37,7 +37,6 @@ const parseList = (value, fallback = []) => {
 
 export const getCustomerConfig = () => ({
   customerCodePrefix: process.env.CUSTOMER_CODE_PREFIX || 'CUS',
-  defaultBranchKey: process.env.DEFAULT_CUSTOMER_BRANCH || process.env.DEFAULT_BRANCH_KEY || 'KARACHI',
   defaultCategory: process.env.DEFAULT_CUSTOMER_CATEGORY || 'regular',
   defaultStatus: process.env.DEFAULT_CUSTOMER_STATUS || 'active',
   defaultLanguage: process.env.DEFAULT_CUSTOMER_LANGUAGE || 'en',

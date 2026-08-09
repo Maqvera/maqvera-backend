@@ -12,11 +12,6 @@ const DepartmentSchema = new mongoose.Schema({
     required: true,
     index: true
   },
-  branchId: {
-    type: String,
-    required: true,
-    index: true
-  },
   name: {
     type: String,
     required: true
@@ -33,7 +28,7 @@ const DepartmentSchema = new mongoose.Schema({
   }
 }, { timestamps: true });
 
-DepartmentSchema.index({ tenantId: 1, branchId: 1, departmentKey: 1 });
+DepartmentSchema.index({ tenantId: 1, departmentKey: 1 });
 
 const DepartmentModel = mongoose.model("department", DepartmentSchema);
 

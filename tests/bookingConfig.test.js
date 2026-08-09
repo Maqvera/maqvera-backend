@@ -4,7 +4,6 @@ import { getBookingConfig } from '../utils/bookingConfig.js';
 
 test('getBookingConfig returns environment-driven booking defaults', () => {
   const previous = {
-    DEFAULT_BRANCH_ID: process.env.DEFAULT_BRANCH_ID,
     DEFAULT_CURRENCY: process.env.DEFAULT_CURRENCY,
     DEFAULT_BOOKING_TYPE: process.env.DEFAULT_BOOKING_TYPE,
     DEFAULT_BOOKING_STATUS: process.env.DEFAULT_BOOKING_STATUS,
@@ -14,7 +13,6 @@ test('getBookingConfig returns environment-driven booking defaults', () => {
   };
 
   try {
-    process.env.DEFAULT_BRANCH_ID = 'DUBAI';
     process.env.DEFAULT_CURRENCY = 'AED';
     process.env.DEFAULT_BOOKING_TYPE = 'custom_package';
     process.env.DEFAULT_BOOKING_STATUS = 'quotation';
@@ -23,7 +21,6 @@ test('getBookingConfig returns environment-driven booking defaults', () => {
     process.env.DEFAULT_VISA_STATUS = 'submitted';
 
     const config = getBookingConfig();
-    assert.equal(config.defaultBranchId, 'DUBAI');
     assert.equal(config.defaultCurrency, 'AED');
     assert.equal(config.defaultBookingType, 'custom_package');
     assert.equal(config.defaultBookingStatus, 'quotation');

@@ -17,11 +17,6 @@ const SessionSchema = new mongoose.Schema({
         default: null,
         index: true
     },
-    branchId: {
-        type: String,
-        default: null,
-        index: true
-    },
     refreshTokenHash: {
         type: String,
         required: true

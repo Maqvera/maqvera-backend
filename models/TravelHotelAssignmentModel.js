@@ -12,10 +12,6 @@ const TravelHotelAssignmentSchema = new mongoose.Schema({
     required: true,
     index: true
   },
-  branchId: {
-    type: String,
-    default: "default"
-  },
   hotelCatalogId: {
     type: mongoose.Schema.Types.ObjectId,
     ref: "hotel_catalog",

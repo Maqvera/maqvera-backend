@@ -10,24 +10,97 @@ import AmadeusHotelOfferService from "../AmadeusHotelOfferService.js";
 import AmadeusHotelPricingService from "../AmadeusHotelPricingService.js";
 import AmadeusHotelBookingRetrievalService from "../AmadeusHotelBookingRetrievalService.js";
 import AIToolRateLimiter from "./AIToolRateLimiter.js";
+import AIGuardrailService from "./AIGuardrailService.js";
 import VisaRequirementService from "../VisaRequirementService.js";
 import EnterpriseIncidentEngineService from "../EnterpriseIncidentEngineService.js";
 import VisaAnalyticsEngine from "../VisaAnalyticsEngine.js";
 import SearchEngineService from "../SearchEngineService.js";
+import AIKnowledgeService from "../AIKnowledgeService.js";
 import BookingHeaderModel from "../../models/BookingHeaderModel.js";
 import TravelPlanModel from "../../models/TravelPlanModel.js";
+import TravelTransportAssignmentModel from "../../models/TravelTransportAssignmentModel.js";
+import TravelAttendanceModel from "../../models/TravelAttendanceModel.js";
 import AIApprovalRequestModel from "../../models/AIApprovalRequestModel.js";
 import { publishEvent } from "../../utils/eventBus.js";
 import { getAIConfig } from "../../utils/aiConfig.js";
 
-const MANAGEMENT_ROLES = new Set(["administrator", "admin", "manager", "management", "director", "executive", "finance", "compliance"]);
-
 const hasPermission = (permissions, required) => required.some((p) => permissions.includes(p)) || permissions.includes("admin");
+
+/**
+ * EXT-032 §10 "Tool Restrictions ... Maximum Execution Time." Previously
+ * only enforced by AIOrchestrationService's own outer withTimeout wrap
+ * around runStep() — meaning a tool called directly from
+ * AIAssistantService.chat() (the conversational path, not a formal plan)
+ * had NO execution-time ceiling at all. Wrapping it here, at the single
+ * choke point both entry paths already share, closes that gap uniformly;
+ * the orchestration engine's own outer wrap becomes a harmless redundant
+ * race against this identical duration, not a behavior change.
+ */
+const withTimeout = (promise, ms, label) => {
+  let timer;
+  const timeoutPromise = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${label} timed out after ${ms}ms.`)), ms);
+  });
+  return Promise.race([promise, timeoutPromise]).finally(() => clearTimeout(timer));
+};
 
 const defaultRetryPolicy = () => {
   const { toolDefaultMaxRetries } = getAIConfig();
   return { retryable: true, maxRetries: toolDefaultMaxRetries };
 };
+
+/**
+ * EXT-036 §23 "Idempotency ... Duplicate executions ignored safely." Shared
+ * by every propose_* tool (the only handlers in this registry that create
+ * state). `context.idempotencyKey` is set per-step by
+ * AIOrchestrationService.executePlan from the plan step's own
+ * idempotencyKey; it's null for a propose_* call made outside a formal plan
+ * (a direct conversational turn has no stepNumber to key off of), in which
+ * case this simply always creates a new request — there is nothing to
+ * dedupe against.
+ *
+ * The findOne check below is a fast path for the common case; the real,
+ * atomic guard is AIApprovalRequestModel's partial unique index on
+ * (tenantId, idempotencyKey) — a concurrent duplicate call that races past
+ * the findOne check still can't create a second row, it hits the index and
+ * this function falls back to the exact same "already exists" response.
+ */
+async function createIdempotentApprovalRequest({ context, toolName, arguments: args, riskLevel, proposedAction, requiredRole }) {
+  const idempotencyKey = context.idempotencyKey || null;
+
+  if (idempotencyKey) {
+    const existing = await AIApprovalRequestModel.findOne({ tenantId: context.tenantId, idempotencyKey }).lean();
+    if (existing) {
+      return { approvalRequestId: existing._id, status: existing.status, message: "An approval request for this exact step already exists — no duplicate was created.", replay: true };
+    }
+  }
+
+  let approvalRequest;
+  try {
+    approvalRequest = await AIApprovalRequestModel.create({
+      tenantId: context.tenantId,
+      executionId: context.executionId || null,
+      toolName,
+      arguments: args,
+      riskLevel,
+      proposedAction,
+      requestedBy: context.userId,
+      requestedByName: context.userName || "User",
+      requiredRole,
+      status: "pending",
+      idempotencyKey
+    });
+  } catch (err) {
+    if (err.code === 11000 && idempotencyKey) {
+      const existing = await AIApprovalRequestModel.findOne({ tenantId: context.tenantId, idempotencyKey }).lean();
+      if (existing) return { approvalRequestId: existing._id, status: existing.status, message: "An approval request for this exact step already exists — no duplicate was created.", replay: true };
+    }
+    throw err;
+  }
+
+  publishEvent("AIApprovalRequested", { approvalRequestId: approvalRequest._id, tenantId: context.tenantId, toolName });
+  return { approvalRequestId: approvalRequest._id, status: "pending", message: "Proposal created. Awaiting human approval before any action is taken." };
+}
 
 /**
  * AI Tool Registry — "Read Models Only", "Tool Calling", "Human Approval
@@ -547,6 +620,67 @@ const TOOLS = [
     }
   },
   {
+    // EXT-035 §5 "Transport Agent." Real backing:
+    // models/TravelTransportAssignmentModel.js (vehicle/driver/route/status
+    // lifecycle already used by TravelTransportController) — this tool is
+    // the first AI-facing read of that data, deliberately read-only (no
+    // vehicle/driver assignment or status-change tool exists here — those
+    // remain a human/dispatcher action through the existing REST endpoints).
+    name: "get_travel_plan_transport",
+    description: "Look up ground transport arrangements (vehicle, driver, route, schedule, status) for a travel plan by its travel plan number — airport transfers, hotel transfers, intercity transfers, Ziyarat tours.",
+    parameters: {
+      type: "object",
+      properties: { travelPlanNumber: { type: "string" } },
+      required: ["travelPlanNumber"]
+    },
+    outputSchema: { type: "object", description: "{ found, count, transports: [{ transportType, journeySegment, vehicleNumber, vehicleType, capacity, driverName, driverPhone, routeName, pickupLocation, dropoffLocation, plannedDeparture, plannedArrival, actualDeparture, actualArrival, status, priority }] }" },
+    requiredPermissions: ["travel.read", "travel_plans.read"],
+    requiredRoles: [],
+    executionType: "Synchronous",
+    riskLevel: "read",
+    requiresApproval: false,
+    version: "1.0.0",
+    ownerModule: "TravelOperations",
+    handler: async (args, context) => {
+      const plan = await TravelPlanModel.findOne({ travelPlanNumber: args.travelPlanNumber, tenantId: context.tenantId }).select("_id").lean();
+      if (!plan) return { found: false, message: "No travel plan found with that number for this tenant." };
+      const transports = await TravelTransportAssignmentModel.find({ travelPlanId: plan._id, tenantId: context.tenantId })
+        .select("transportType journeySegment vehicleNumber vehicleType capacity driverName driverPhone routeName pickupLocation dropoffLocation plannedDeparture plannedArrival actualDeparture actualArrival status priority")
+        .lean();
+      return { found: transports.length > 0, count: transports.length, transports };
+    }
+  },
+  {
+    // EXT-035 §5 "Attendance Agent." Real backing:
+    // models/TravelAttendanceModel.js — read-only; check-in/check-out
+    // recording remains a human/on-ground-staff action through the
+    // existing REST endpoints, never something the AI performs.
+    name: "get_travel_plan_attendance",
+    description: "Look up traveler attendance/check-in status for a travel plan by its travel plan number — who's present, checked in, late, absent, or missing for the trip's activities.",
+    parameters: {
+      type: "object",
+      properties: { travelPlanNumber: { type: "string" } },
+      required: ["travelPlanNumber"]
+    },
+    outputSchema: { type: "object", description: "{ found, count, summary: { <status>: count, ... }, records: [{ travelerName, status, checkInTime, checkOutTime, absenceReason }] }" },
+    requiredPermissions: ["travel.read", "travel_plans.read"],
+    requiredRoles: [],
+    executionType: "Synchronous",
+    riskLevel: "read",
+    requiresApproval: false,
+    version: "1.0.0",
+    ownerModule: "TravelOperations",
+    handler: async (args, context) => {
+      const plan = await TravelPlanModel.findOne({ travelPlanNumber: args.travelPlanNumber, tenantId: context.tenantId }).select("_id").lean();
+      if (!plan) return { found: false, message: "No travel plan found with that number for this tenant." };
+      const records = await TravelAttendanceModel.find({ travelPlanId: plan._id, tenantId: context.tenantId })
+        .select("travelerName status checkInTime checkOutTime absenceReason")
+        .lean();
+      const summary = records.reduce((acc, r) => { acc[r.status] = (acc[r.status] || 0) + 1; return acc; }, {});
+      return { found: records.length > 0, count: records.length, summary, records: records.slice(0, 50) };
+    }
+  },
+  {
     name: "get_operations_dashboard",
     description: "Get today's operational Visa dashboard summary (queue, pending documents, appointments, open incidents).",
     parameters: { type: "object", properties: {} },
@@ -559,28 +693,28 @@ const TOOLS = [
     version: "1.0.0",
     ownerModule: "Analytics",
     handler: async (args, context) => {
-      const result = await VisaAnalyticsEngine.operationsDashboard({ tenantId: context.tenantId, branchId: context.branchId || "main" });
+      const result = await VisaAnalyticsEngine.operationsDashboard({ tenantId: context.tenantId });
       return result.data;
     }
   },
   {
     name: "get_revenue_dashboard",
-    description: "Get revenue/finance KPIs. Only available to management-tier roles (executive, finance, director, manager, admin).",
+    description: "Get revenue/finance KPIs. Only available to callers whose role grants the visa.dashboard.management permission (admin-configurable via /api/v1/roles).",
     parameters: { type: "object", properties: {} },
-    outputSchema: { type: "object", description: "Finance dashboard summary object, or { denied: true } if the caller's role isn't management-tier." },
+    outputSchema: { type: "object", description: "Finance dashboard summary object, or { denied: true } if the caller lacks the visa.dashboard.management permission." },
     requiredPermissions: ["visa.read"],
-    requiredRoles: [...MANAGEMENT_ROLES],
+    requiredRoles: [],
     executionType: "Synchronous",
     riskLevel: "read",
     requiresApproval: false,
     version: "1.0.0",
     ownerModule: "Analytics",
     handler: async (args, context) => {
-      const role = (context.role || "").toLowerCase();
-      if (!MANAGEMENT_ROLES.has(role) && !context.permissions.includes("admin")) {
-        return { denied: true, message: "This user's role does not have access to financial dashboards." };
+      const permissions = context.permissions || [];
+      if (!permissions.includes("visa.dashboard.management") && !permissions.includes("admin")) {
+        return { denied: true, message: "This user's permissions do not include visa.dashboard.management." };
       }
-      const result = await VisaAnalyticsEngine.financeDashboard({ tenantId: context.tenantId, branchId: context.branchId || "main" });
+      const result = await VisaAnalyticsEngine.financeDashboard({ tenantId: context.tenantId });
       return result.data;
     }
   },
@@ -624,9 +758,36 @@ const TOOLS = [
       // SearchEngineService already filters results by the caller's real
       // permissions internally — no additional gate needed here.
       const result = await SearchEngineService.globalSearch({
-        tenantId: context.tenantId, query: args.query, branchId: context.branchId, permissions: context.permissions, pageSize: 10
+        tenantId: context.tenantId, query: args.query, permissions: context.permissions, pageSize: 10
       });
       return { totalItems: result.meta.totalItems, results: result.results };
+    }
+  },
+  {
+    name: "search_knowledge_base",
+    description: "EXT-030 'Retrieval Before Generation' — search the company's own knowledge base (SOPs, travel/visa/refund/cancellation policies, package descriptions, FAQs, internal procedures). MUST be called before answering any question about company policy, procedures, package inclusions, or anything that isn't a live Amadeus search/booking fact — never guess this kind of answer from general knowledge. Returns real, permission-filtered, ranked passages with source citations (document title, section, version, confidence) so the answer can be grounded and attributed; an empty result means nothing relevant is in the knowledge base, which must be stated honestly rather than filled in with a guess.",
+    parameters: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "The user's question, or a concise restatement of what to look up" },
+        topK: { type: "integer", minimum: 1, maximum: 20, description: "Optional — how many top-ranked passages to return, defaults to the configured default" }
+      },
+      required: ["query"]
+    },
+    outputSchema: { type: "object", description: "{ contextText, citations: [{ documentId, title, section, version, category, confidence }] }. `contextText` is null when nothing relevant/authorized was found — never fabricated." },
+    requiredPermissions: [],
+    requiredRoles: [],
+    executionType: "Synchronous",
+    riskLevel: "read",
+    requiresApproval: false,
+    version: "1.0.0",
+    ownerModule: "Knowledge",
+    handler: async (args, context) => {
+      const result = await AIKnowledgeService.retrieveKnowledge({
+        tenantId: context.tenantId, role: context.role, permissions: context.permissions,
+        query: args.query, topK: args.topK
+      });
+      return { contextText: result.contextText, citations: result.citations };
     }
   },
   {
@@ -655,34 +816,25 @@ const TOOLS = [
     retryPolicyOverride: { retryable: false, maxRetries: 0 },
     version: "1.0.0",
     ownerModule: "GDSIntegration",
-    handler: async (args, context) => {
-      const approvalRequest = await AIApprovalRequestModel.create({
-        tenantId: context.tenantId,
-        branchId: context.branchId,
-        executionId: context.executionId || null,
-        toolName: "propose_flight_booking",
-        arguments: args,
-        riskLevel: "high",
-        // "Not Responsible For: Database Updates" — the proposal carries the
-        // exact real endpoint call a human approver hands off to; the AI
-        // layer never invokes it itself, even after approval.
-        proposedAction: {
-          method: "POST",
-          endpoint: "/api/v1/flight-bookings",
-          body: {
-            offerId: args.offerId,
-            provider: args.provider || "Amadeus",
-            travelers: [{ firstName: args.travelerFirstName, lastName: args.travelerLastName, passportNumber: args.passportNumber }]
-          }
-        },
-        requestedBy: context.userId,
-        requestedByName: context.userName || "User",
-        requiredRole: "admin",
-        status: "pending"
-      });
-      publishEvent("AIApprovalRequested", { approvalRequestId: approvalRequest._id, tenantId: context.tenantId, toolName: "propose_flight_booking" });
-      return { approvalRequestId: approvalRequest._id, status: "pending", message: "Booking proposal created. Awaiting human approval before any reservation is made." };
-    }
+    handler: async (args, context) => createIdempotentApprovalRequest({
+      context,
+      toolName: "propose_flight_booking",
+      arguments: args,
+      riskLevel: "high",
+      // "Not Responsible For: Database Updates" — the proposal carries the
+      // exact real endpoint call a human approver hands off to; the AI
+      // layer never invokes it itself, even after approval.
+      proposedAction: {
+        method: "POST",
+        endpoint: "/api/v1/flight-bookings",
+        body: {
+          offerId: args.offerId,
+          provider: args.provider || "Amadeus",
+          travelers: [{ firstName: args.travelerFirstName, lastName: args.travelerLastName, passportNumber: args.passportNumber }]
+        }
+      },
+      requiredRole: "admin"
+    })
   },
   {
     name: "propose_hotel_booking",
@@ -710,31 +862,22 @@ const TOOLS = [
     retryPolicyOverride: { retryable: false, maxRetries: 0 },
     version: "1.0.0",
     ownerModule: "GDSIntegration",
-    handler: async (args, context) => {
-      const approvalRequest = await AIApprovalRequestModel.create({
-        tenantId: context.tenantId,
-        branchId: context.branchId,
-        executionId: context.executionId || null,
-        toolName: "propose_hotel_booking",
-        arguments: args,
-        riskLevel: "high",
-        proposedAction: {
-          method: "POST",
-          endpoint: "/api/v1/integrations/amadeus/hotels/book",
-          body: {
-            hotelOfferId: args.hotelOfferId,
-            guests: [{ firstName: args.guestFirstName, lastName: args.guestLastName }],
-            contact: { email: args.contactEmail || undefined, phone: args.contactPhone || undefined }
-          }
-        },
-        requestedBy: context.userId,
-        requestedByName: context.userName || "User",
-        requiredRole: "admin",
-        status: "pending"
-      });
-      publishEvent("AIApprovalRequested", { approvalRequestId: approvalRequest._id, tenantId: context.tenantId, toolName: "propose_hotel_booking" });
-      return { approvalRequestId: approvalRequest._id, status: "pending", message: "Hotel booking proposal created. Awaiting human approval before any reservation is made." };
-    }
+    handler: async (args, context) => createIdempotentApprovalRequest({
+      context,
+      toolName: "propose_hotel_booking",
+      arguments: args,
+      riskLevel: "high",
+      proposedAction: {
+        method: "POST",
+        endpoint: "/api/v1/integrations/amadeus/hotels/book",
+        body: {
+          hotelOfferId: args.hotelOfferId,
+          guests: [{ firstName: args.guestFirstName, lastName: args.guestLastName }],
+          contact: { email: args.contactEmail || undefined, phone: args.contactPhone || undefined }
+        }
+      },
+      requiredRole: "admin"
+    })
   },
   {
     name: "propose_hotel_cancellation",
@@ -757,27 +900,18 @@ const TOOLS = [
     retryPolicyOverride: { retryable: false, maxRetries: 0 },
     version: "1.0.0",
     ownerModule: "GDSIntegration",
-    handler: async (args, context) => {
-      const approvalRequest = await AIApprovalRequestModel.create({
-        tenantId: context.tenantId,
-        branchId: context.branchId,
-        executionId: context.executionId || null,
-        toolName: "propose_hotel_cancellation",
-        arguments: args,
-        riskLevel: "high",
-        proposedAction: {
-          method: "POST",
-          endpoint: `/api/v1/integrations/amadeus/hotels/bookings/${args.providerBookingId}/cancel`,
-          body: { reason: args.reason }
-        },
-        requestedBy: context.userId,
-        requestedByName: context.userName || "User",
-        requiredRole: "admin",
-        status: "pending"
-      });
-      publishEvent("AIApprovalRequested", { approvalRequestId: approvalRequest._id, tenantId: context.tenantId, toolName: "propose_hotel_cancellation" });
-      return { approvalRequestId: approvalRequest._id, status: "pending", message: "Hotel cancellation proposal created. Awaiting human approval before the reservation is cancelled." };
-    }
+    handler: async (args, context) => createIdempotentApprovalRequest({
+      context,
+      toolName: "propose_hotel_cancellation",
+      arguments: args,
+      riskLevel: "high",
+      proposedAction: {
+        method: "POST",
+        endpoint: `/api/v1/integrations/amadeus/hotels/bookings/${args.providerBookingId}/cancel`,
+        body: { reason: args.reason }
+      },
+      requiredRole: "admin"
+    })
   }
 ];
 
@@ -843,18 +977,43 @@ class AIToolRegistry {
       return { error: `Unknown tool '${name}'.` };
     }
     if (tool.requiredPermissions.length > 0 && !hasPermission(context.permissions || [], tool.requiredPermissions)) {
+      // EXT-033 §23 "Security Monitoring — Unauthorized Access." A real
+      // event so a permission-denied tool call is actually counted (see
+      // AIObservabilityService.getSecurityMetrics), not silently dropped.
+      publishEvent("AIUnauthorizedToolAccess", { tenantId: context.tenantId, userId: context.userId, toolName: name, requiredPermissions: tool.requiredPermissions });
       return { error: `Permission denied: this action requires one of [${tool.requiredPermissions.join(", ")}].`, denied: true };
     }
-    // EXT-026 §13 "Rate Limiting" — checked after permission (no point
-    // spending a rate-limit slot on a request that was going to be denied
-    // anyway) but before the handler runs.
+
+    // EXT-032 "AI Safety, Guardrails & Policy Enforcement" — Policy Engine
+    // + Risk Analyzer + prompt-injection defense-in-depth, checked after
+    // permission but before rate-limit/execution. Scoped to non-read tools
+    // only (§6's own "AI may Search/Explain/Recommend..." vs "AI may NOT
+    // Book/Cancel/Refund...") so ordinary read/search calls never pay for
+    // the guardrail's policy-DB lookup — they have nothing meaningful to be
+    // evaluated against.
+    if (tool.riskLevel !== "read") {
+      const guardrailResult = await AIGuardrailService.evaluate({
+        tenantId: context.tenantId, userId: context.userId,
+        role: context.role, permissions: context.permissions || [],
+        toolName: name, toolRiskLevel: tool.riskLevel, args: args || {},
+        promptInjectionFlagged: Boolean(context.promptInjectionFlagged),
+        correlationId: context.conversationId || context.executionId || null
+      });
+      if (!guardrailResult.allowed) {
+        return { error: guardrailResult.reason || "Blocked by AI safety policy.", blocked: true, riskLevel: guardrailResult.riskLevel };
+      }
+    }
+
+    // EXT-026 §13 "Rate Limiting" — checked after permission/guardrail (no
+    // point spending a rate-limit slot on a request that was going to be
+    // denied anyway) but before the handler runs.
     const rateLimitResult = AIToolRateLimiter.check({ tenantId: context.tenantId, userId: context.userId, toolName: name });
     if (!rateLimitResult.allowed) {
       publishEvent("AIToolRateLimited", { tenantId: context.tenantId, userId: context.userId, toolName: name, scope: rateLimitResult.scope });
       return { error: `Rate limit exceeded for this action (${rateLimitResult.scope} limit). Please try again in a moment.`, rateLimited: true, retryAfterMs: rateLimitResult.retryAfterMs };
     }
     try {
-      const result = await tool.handler(args || {}, context);
+      const result = await withTimeout(tool.handler(args || {}, context), getAIConfig().toolDefaultTimeoutMs, name);
       return { result };
     } catch (err) {
       return { error: err.message || "Tool execution failed." };

@@ -6,10 +6,6 @@ const UnifiedActivityStreamSchema = new mongoose.Schema({
     required: true,
     index: true
   },
-  branchId: {
-    type: String,
-    default: "default"
-  },
   module: {
     type: String,
     enum: ["Booking", "TravelOperations", "FlightOperations", "HotelOperations", "TransportManagement", "ItineraryManagement", "AttendanceManagement", "IncidentManagement", "Customer", "Finance", "Visa"],

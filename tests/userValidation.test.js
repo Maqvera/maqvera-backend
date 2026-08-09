@@ -7,7 +7,6 @@ test('userSchemas.createUser validates a complete payload', () => {
     firstName: 'Jane',
     lastName: 'Doe',
     email: 'jane@example.com',
-    branchId: 'KARACHI',
     departmentId: 'dept-1',
     roleIds: ['role-1'],
     designation: 'Manager'
@@ -18,15 +17,15 @@ test('userSchemas.createUser validates a complete payload', () => {
   assert.equal(result.value.email, 'jane@example.com');
 });
 
-test('userSchemas.createUser rejects invalid email and missing branch', () => {
+test('userSchemas.createUser rejects invalid email and missing department', () => {
   const result = userSchemas.createUser.validate({
     firstName: 'Jane',
     lastName: 'Doe',
     email: 'not-an-email',
-    departmentId: 'dept-1'
+    roleIds: ['role-1']
   }, { abortEarly: false });
 
   assert.ok(result.error);
-  assert.match(result.error.message, /branchId/);
+  assert.match(result.error.message, /departmentId/);
   assert.match(result.error.message, /email/);
 });

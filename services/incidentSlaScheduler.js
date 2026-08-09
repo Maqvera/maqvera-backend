@@ -41,7 +41,6 @@ async function sweepFirstResponseBreaches() {
 
     publishEvent("NotificationRequested", {
       tenantId: inc.tenantId,
-      branchId: inc.branchId,
       event: "IncidentFirstResponseSlaBreached",
       priority: "high",
       recipientTeam: inc.assignedTeam,
@@ -106,14 +105,12 @@ async function sweepResolutionBreachesAndEscalate() {
       incidentId: inc._id,
       incidentNumber: inc.incidentNumber,
       tenantId: inc.tenantId,
-      branchId: inc.branchId,
       escalationTier: tier,
       escalationLevel: nextLevel
     });
 
     publishEvent("NotificationRequested", {
       tenantId: inc.tenantId,
-      branchId: inc.branchId,
       event: "IncidentEscalated",
       priority: "immediate",
       recipientTier: tier,

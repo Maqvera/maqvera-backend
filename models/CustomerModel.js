@@ -6,11 +6,6 @@ const CustomerSchema = new mongoose.Schema({
     required: true,
     index: true
   },
-  branchId: {
-    type: String,
-    required: true,
-    index: true
-  },
   customerCode: {
     type: String,
     required: true,
@@ -209,7 +204,7 @@ const CustomerSchema = new mongoose.Schema({
 CustomerSchema.index({ tenantId: 1, email: 1 });
 CustomerSchema.index({ tenantId: 1, phone: 1 });
 CustomerSchema.index({ tenantId: 1, nationalId: 1 });
-CustomerSchema.index({ tenantId: 1, status: 1, branchId: 1 });
+CustomerSchema.index({ tenantId: 1, status: 1 });
 CustomerSchema.index({ tenantId: 1, createdAt: -1 });
 CustomerSchema.index({ tenantId: 1, "phones.number": 1 });
 CustomerSchema.index({ tenantId: 1, "emails.address": 1 });

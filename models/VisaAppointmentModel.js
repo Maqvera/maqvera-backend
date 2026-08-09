@@ -6,11 +6,6 @@ const VisaAppointmentSchema = new mongoose.Schema({
     required: true,
     index: true
   },
-  branchId: {
-    type: String,
-    default: "main",
-    index: true
-  },
   appointmentNumber: {
     type: String,
     required: true,

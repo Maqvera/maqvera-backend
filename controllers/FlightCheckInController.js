@@ -17,7 +17,6 @@ export const PerformFlightCheckIn = async (req, res) => {
     const tenantId = req.auth?.tenantId;
     const userId = req.auth?.userId || req.auth?.id;
     const userName = req.auth?.name || "User";
-    const branchId = req.auth?.branchId || "main";
     const permissions = req.auth?.permissions || [];
 
     if (!tenantId || !userId) {
@@ -29,7 +28,7 @@ export const PerformFlightCheckIn = async (req, res) => {
 
     const { bookingId, travelerIds } = req.body;
 
-    const result = await FlightCheckInService.checkIn({ tenantId, branchId, userId, userName, bookingId, travelerIds, requestId });
+    const result = await FlightCheckInService.checkIn({ tenantId, userId, userName, bookingId, travelerIds, requestId });
 
     return sendSuccess(res, 200, result.supported === false ? "Online check-in is not available through this platform for this airline." : "Check-in completed successfully.", result, requestId);
   } catch (err) {

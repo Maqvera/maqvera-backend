@@ -6,11 +6,6 @@ const EmbassySubmissionSchema = new mongoose.Schema({
     required: true,
     index: true
   },
-  branchId: {
-    type: String,
-    default: "main",
-    index: true
-  },
   submissionNumber: {
     type: String,
     required: true,

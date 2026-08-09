@@ -58,7 +58,6 @@ export const handleBookingCreatedSaga = async ({ booking, tenantId, requestId, a
       reason: null,
       userId: authUser?.id || null,
       tenantId,
-      branchId: booking.branchId,
       requestId,
       metadata: { bookingId: booking._id, saga: "BookingCreatedSaga" }
     });
