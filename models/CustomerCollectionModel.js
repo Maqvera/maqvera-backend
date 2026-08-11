@@ -1,0 +1,154 @@
+import mongoose from "mongoose";
+
+// Enterprise Customer Payments — Finance Module Part 18. "The Customer
+// Collection Platform manages the collection strategy. The Payment Engine
+// performs the actual payment." This model is the real collection/decision
+// record — which customer, which invoices, when reminders go out, whether
+// installments apply — it never stores money-movement logic itself, only
+// what to collect, from whom, and how; the actual movement always happens
+// through Part 7's own PaymentModel (`installments[].paymentId`/
+// `payments[].paymentId` below) and Part 5's own AccountsReceivableModel
+// allocations. Tenant-scoped only — no branchId (see
+// docs/06-external-integrations/03-final-architecture-no-branches-rbac.md;
+// the spec's own "Branch Match"/"Branch Isolation" language is dropped per
+// the standing master instructions — see docs/05-api/07-finance-api.md
+// Part 18). The mirror-opposite of Part 17's VendorPaymentModel on the AR
+// side.
+const CollectionLineItemSchema = new mongoose.Schema({
+  receivableId: { type: mongoose.Schema.Types.ObjectId, ref: "accounts_receivable", required: true },
+  invoiceNumber: { type: String, required: true },
+  amount: { type: Number, required: true, min: 0.01 },
+  // Tracked per-line so "Partial Payments" can apply a collected amount
+  // across multiple invoices proportionally/FIFO without re-deriving it
+  // from the payments[] history on every read.
+  collectedAmount: { type: Number, default: 0 }
+}, { _id: false });
+
+const InstallmentSchema = new mongoose.Schema({
+  installmentNumber: { type: Number, required: true },
+  dueDate: { type: Date, required: true },
+  amount: { type: Number, required: true, min: 0.01 },
+  paidAmount: { type: Number, default: 0 },
+  // Draft | Pending | Paid | Overdue | Cancelled — a small, fixed, real
+  // state set for the embedded schedule line, distinct from the parent
+  // collection's own config-driven `status`.
+  status: { type: String, default: "Pending" },
+  paymentId: { type: mongoose.Schema.Types.ObjectId, ref: "payment", default: null },
+  paidAt: { type: Date, default: null }
+}, { _id: false });
+
+// A single collection may collect payment across multiple calls (partial
+// payments) — each real Payment Engine capture this collection has gone
+// through is recorded here, distinct from an installment's own paymentId
+// (an installment plan payment always lands here too).
+const CollectionPaymentSchema = new mongoose.Schema({
+  paymentId: { type: mongoose.Schema.Types.ObjectId, ref: "payment", required: true },
+  amount: { type: Number, required: true },
+  collectedAt: { type: Date, default: Date.now },
+  installmentNumber: { type: Number, default: null }
+}, { _id: false });
+
+const CustomerCollectionSchema = new mongoose.Schema({
+  tenantId: {
+    type: String,
+    required: true,
+    index: true
+  },
+  collectionNumber: {
+    type: String,
+    required: true,
+    immutable: true
+  },
+  customerId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "customer",
+    required: true,
+    index: true
+  },
+  // Denormalized snapshot — Customer is not Finance-owned (Part 1), same
+  // convention as AccountsReceivableModel.customerName.
+  customerName: { type: String, required: true },
+  lineItems: {
+    type: [CollectionLineItemSchema],
+    validate: {
+      validator: (lines) => Array.isArray(lines) && lines.length >= 1,
+      message: "A collection request requires at least one outstanding invoice."
+    }
+  },
+  totalAmount: { type: Number, required: true },
+  collectedAmount: { type: Number, default: 0 },
+  currency: { type: String, required: true },
+  paymentDueDate: { type: Date, required: true, index: true },
+  preferredMethod: { type: String, default: null },
+  // Config-driven (customerCollectionStatuses) — Requested, Partially
+  // Collected, Collected, Overdue, Payment Failed, Disputed, Written Off,
+  // Cancelled, Closed. "Payment Requested"/"Reminder Sent" from the spec's
+  // Lifecycle diagram collapse into "Requested" — see
+  // utils/financeConfig.js's own doc comment.
+  status: {
+    type: String,
+    required: true,
+    index: true
+  },
+  // Reuses AR's own collectionStages (Part 5) — same escalation ladder the
+  // whole ERP already walks, not a second parallel list.
+  collectionStage: { type: String, default: null },
+  isInstallmentPlan: { type: Boolean, default: false },
+  installmentFrequency: { type: String, default: null },
+  installments: { type: [InstallmentSchema], default: [] },
+  payments: { type: [CollectionPaymentSchema], default: [] },
+  paymentLink: {
+    token: { type: String, default: null },
+    url: { type: String, default: null },
+    qrCodeUrl: { type: String, default: null },
+    generatedAt: { type: Date, default: null },
+    expiresAt: { type: Date, default: null },
+    viewCount: { type: Number, default: 0 }
+  },
+  lateFee: {
+    applied: { type: Boolean, default: false },
+    amount: { type: Number, default: 0 },
+    appliedAt: { type: Date, default: null }
+  },
+  disputeReason: { type: String, default: null },
+  disputedBy: { type: String, default: null },
+  disputedAt: { type: Date, default: null },
+  writeOff: {
+    isWrittenOff: { type: Boolean, default: false },
+    reason: { type: String, default: null },
+    approvedBy: { type: String, default: null },
+    approvedAt: { type: Date, default: null }
+  },
+  cancellationReason: { type: String, default: null },
+  cancelledBy: { type: String, default: null },
+  cancelledAt: { type: Date, default: null },
+  requestedBy: { type: String, default: null },
+  requestedAt: { type: Date, default: null },
+  collectedAt: { type: Date, default: null },
+  closedBy: { type: String, default: null },
+  closedAt: { type: Date, default: null },
+  timeline: [{
+    event: { type: String, required: true },
+    description: { type: String, default: null },
+    performedBy: { type: String, default: null },
+    performedAt: { type: Date, default: Date.now }
+  }],
+  createdBy: { type: String, default: null },
+  updatedBy: { type: String, default: null }
+}, { timestamps: true });
+
+CustomerCollectionSchema.index({ tenantId: 1, collectionNumber: 1 }, { unique: true });
+CustomerCollectionSchema.index({ tenantId: 1, customerId: 1, status: 1 });
+CustomerCollectionSchema.index({ tenantId: 1, status: 1, paymentDueDate: 1 });
+CustomerCollectionSchema.index({ "paymentLink.token": 1 });
+
+CustomerCollectionSchema.set("toJSON", {
+  transform: (_, ret) => {
+    delete ret.__v;
+    return ret;
+  }
+});
+
+const CustomerCollectionModel = mongoose.model("customer_collection", CustomerCollectionSchema);
+
+export default CustomerCollectionModel;
