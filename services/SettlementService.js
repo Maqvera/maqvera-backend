@@ -462,6 +462,10 @@ class SettlementService {
         await settlement.save();
         matchedCount += 1;
         publishEvent("SettlementReconciled", { tenantId, settlementId: settlement._id.toString(), bankTransactionId: best.bankTxn._id.toString(), score: best.score, performedBy: userId || "system" });
+        // "PaymentReconciled" (Part 18 Part 5) — the payment-level view of
+        // the same real match; SettlementReconciled is the settlement-
+        // level record of it.
+        publishEvent("PaymentReconciled", { tenantId, paymentId: settlement.paymentId.toString(), settlementId: settlement._id.toString(), bankTransactionId: best.bankTxn._id.toString(), performedBy: userId || "system" });
       }
     }
 

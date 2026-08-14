@@ -121,3 +121,144 @@ export const deactivateAccount = async (req, res) => {
     return sendError(res, statusFromError(error), error.message || "Failed to deactivate account.", requestId);
   }
 };
+
+/**
+ * POST /api/v1/accounts/:accountId/reactivate (Part 36)
+ */
+export const reactivateAccount = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "finance.account.update")) return sendError(res, 403, "Permission denied.", requestId);
+    const userId = req.auth?.userId || req.auth?.id || null;
+
+    const account = await ChartOfAccountService.reactivateAccount(req.params.accountId, scope.tenantId, userId);
+    return sendSuccess(res, 200, "Account reactivated successfully.", account, requestId);
+  } catch (error) {
+    console.error("reactivateAccount error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to reactivate account.", requestId);
+  }
+};
+
+/**
+ * POST /api/v1/accounts/:accountId/suspend (Part 36)
+ */
+export const suspendAccount = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "finance.account.update")) return sendError(res, 403, "Permission denied.", requestId);
+    const userId = req.auth?.userId || req.auth?.id || null;
+
+    const account = await ChartOfAccountService.suspendAccount(req.params.accountId, req.body, scope.tenantId, userId);
+    return sendSuccess(res, 200, "Account suspended successfully.", account, requestId);
+  } catch (error) {
+    console.error("suspendAccount error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to suspend account.", requestId);
+  }
+};
+
+/**
+ * POST /api/v1/accounts/:accountId/archive (Part 36)
+ */
+export const archiveAccount = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "finance.account.update")) return sendError(res, 403, "Permission denied.", requestId);
+    const userId = req.auth?.userId || req.auth?.id || null;
+
+    const account = await ChartOfAccountService.archiveAccount(req.params.accountId, scope.tenantId, userId);
+    return sendSuccess(res, 200, "Account archived successfully.", account, requestId);
+  } catch (error) {
+    console.error("archiveAccount error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to archive account.", requestId);
+  }
+};
+
+/**
+ * POST /api/v1/accounts/:accountId/merge (Part 36) — bulk/structural,
+ * gated on finance.account.manage rather than the narrower .update.
+ */
+export const mergeAccounts = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "finance.account.manage")) return sendError(res, 403, "Permission denied.", requestId);
+    const userId = req.auth?.userId || req.auth?.id || null;
+
+    const account = await ChartOfAccountService.mergeAccounts(req.params.accountId, req.body, scope.tenantId, userId);
+    return sendSuccess(res, 200, "Accounts merged successfully.", account, requestId);
+  } catch (error) {
+    console.error("mergeAccounts error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to merge accounts.", requestId);
+  }
+};
+
+// ---- Chart of Account Templates (Part 36) ----
+
+export const listAccountTemplates = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "finance.account.read", "finance.read")) return sendError(res, 403, "Permission denied.", requestId);
+
+    const templates = await ChartOfAccountService.listTemplates(req.query, scope.tenantId);
+    return sendSuccess(res, 200, "Chart templates retrieved successfully.", templates, requestId);
+  } catch (error) {
+    console.error("listAccountTemplates error:", error);
+    return sendError(res, 500, error.message || "Failed to retrieve chart templates.", requestId);
+  }
+};
+
+export const getAccountTemplate = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "finance.account.read", "finance.read")) return sendError(res, 403, "Permission denied.", requestId);
+
+    const template = await ChartOfAccountService.getTemplateById(req.params.templateId, scope.tenantId);
+    return sendSuccess(res, 200, "Chart template retrieved successfully.", template, requestId);
+  } catch (error) {
+    console.error("getAccountTemplate error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to retrieve chart template.", requestId);
+  }
+};
+
+export const createAccountTemplate = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "finance.account.manage")) return sendError(res, 403, "Permission denied.", requestId);
+    const userId = req.auth?.userId || req.auth?.id || null;
+
+    const template = await ChartOfAccountService.createTemplate(req.body, scope.tenantId, userId);
+    return sendSuccess(res, 201, "Chart template created successfully.", template, requestId);
+  } catch (error) {
+    console.error("createAccountTemplate error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to create chart template.", requestId);
+  }
+};
+
+export const applyAccountTemplate = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "finance.account.manage")) return sendError(res, 403, "Permission denied.", requestId);
+    const userId = req.auth?.userId || req.auth?.id || null;
+
+    const result = await ChartOfAccountService.applyTemplate(req.params.templateId, scope.tenantId, userId);
+    return sendSuccess(res, 200, "Chart template applied successfully.", result, requestId);
+  } catch (error) {
+    console.error("applyAccountTemplate error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to apply chart template.", requestId);
+  }
+};

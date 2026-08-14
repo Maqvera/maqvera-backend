@@ -25,8 +25,13 @@ export const createCollectionRequest = async (req, res) => {
     if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasPermission(req, "finance.customercollection.create")) return sendError(res, 403, "Permission denied.", requestId);
     const userId = req.auth?.userId || req.auth?.id || null;
+    // "Correlation-ID... Supports safe retries." Purely a caller-supplied
+    // trace id, distinct from the Idempotency-Key (handled generically by
+    // middleware/idempotency.js on the route) — never used for tenant
+    // identity or access control.
+    const correlationId = req.header("Correlation-ID") || null;
 
-    const collection = await CustomerCollectionService.createCollectionRequest(req.body, scope.tenantId, userId);
+    const collection = await CustomerCollectionService.createCollectionRequest(req.body, scope.tenantId, userId, correlationId);
     return sendSuccess(res, 201, "Customer collection request created successfully.", collection, requestId);
   } catch (error) {
     console.error("createCollectionRequest error:", error);
@@ -86,12 +91,35 @@ export const collectPayment = async (req, res) => {
     if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasPermission(req, "finance.customercollection.manage")) return sendError(res, 403, "Permission denied.", requestId);
     const userId = req.auth?.userId || req.auth?.id || null;
+    const correlationId = req.header("Correlation-ID") || null;
 
-    const collection = await CustomerCollectionService.collectPayment(req.params.collectionId, req.body, scope.tenantId, userId);
-    return sendSuccess(res, 200, "Payment collection processed.", collection, requestId);
+    const collection = await CustomerCollectionService.collectPayment(req.params.collectionId, req.body, scope.tenantId, userId, correlationId);
+    return sendSuccess(res, collection.paymentStatus === "Failed" ? 402 : 200, "Payment collection processed.", collection, requestId);
   } catch (error) {
     console.error("collectPayment error:", error);
     return sendError(res, statusFromError(error), error.message || "Failed to process payment collection.", requestId);
+  }
+};
+
+/**
+ * POST /api/v1/customer-payments/{collectionId}/capture — Part 18 Part 3.
+ * Completes a payment a prior `collect` call left "Authorized" under a
+ * Manual/Authorize Only/Delayed Capture mode.
+ */
+export const captureCollectionPayment = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "finance.customercollection.manage")) return sendError(res, 403, "Permission denied.", requestId);
+    const userId = req.auth?.userId || req.auth?.id || null;
+    const correlationId = req.header("Correlation-ID") || null;
+
+    const collection = await CustomerCollectionService.captureAuthorizedPayment(req.params.collectionId, req.body, scope.tenantId, userId, correlationId);
+    return sendSuccess(res, collection.paymentStatus === "Failed" ? 402 : 200, "Payment capture processed.", collection, requestId);
+  } catch (error) {
+    console.error("captureCollectionPayment error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to process payment capture.", requestId);
   }
 };
 
@@ -174,6 +202,54 @@ export const createInstallmentPlan = async (req, res) => {
   } catch (error) {
     console.error("createInstallmentPlan error:", error);
     return sendError(res, statusFromError(error), error.message || "Failed to create installment plan.", requestId);
+  }
+};
+
+export const rescheduleInstallment = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "finance.customercollection.manage")) return sendError(res, 403, "Permission denied.", requestId);
+    const userId = req.auth?.userId || req.auth?.id || null;
+
+    const collection = await CustomerCollectionService.rescheduleInstallment(req.params.collectionId, parseInt(req.params.installmentNumber, 10), req.body, scope.tenantId, userId);
+    return sendSuccess(res, 200, "Installment rescheduled successfully.", collection, requestId);
+  } catch (error) {
+    console.error("rescheduleInstallment error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to reschedule installment.", requestId);
+  }
+};
+
+export const cancelInstallmentPlan = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "finance.customercollection.manage")) return sendError(res, 403, "Permission denied.", requestId);
+    const userId = req.auth?.userId || req.auth?.id || null;
+
+    const collection = await CustomerCollectionService.cancelInstallmentPlan(req.params.collectionId, req.body, scope.tenantId, userId);
+    return sendSuccess(res, 200, "Installment plan cancelled successfully.", collection, requestId);
+  } catch (error) {
+    console.error("cancelInstallmentPlan error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to cancel installment plan.", requestId);
+  }
+};
+
+export const settleInstallmentPlanEarly = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "finance.customercollection.manage")) return sendError(res, 403, "Permission denied.", requestId);
+    const userId = req.auth?.userId || req.auth?.id || null;
+
+    const result = await CustomerCollectionService.settleInstallmentPlanEarly(req.params.collectionId, scope.tenantId, userId);
+    return sendSuccess(res, 200, "Installment plan settled early.", result, requestId);
+  } catch (error) {
+    console.error("settleInstallmentPlanEarly error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to settle installment plan early.", requestId);
   }
 };
 

@@ -60,6 +60,23 @@ class BaseGatewayAdapter {
   async checkHealth() {
     return { gateway: this.gatewayName, status: "UP" };
   }
+
+  /**
+   * "Payment Intent -> Payment Provider Selection -> ... -> Payment
+   * Execution" (Finance Module Part 18 Part 2). Creates a hosted/
+   * client-confirmable session BEFORE any funds move — the real
+   * pre-authorization step some gateways (Stripe) expose as their own
+   * "PaymentIntent" concept. Default: not applicable — a gateway that
+   * settles directly (Manual: Cash/Cheque/Bank Transfer) genuinely has no
+   * session to create, so this returns `{ applicable: false }` rather than
+   * throwing (unlike authorize/capture/void/refund, which are hard
+   * requirements once a gateway is selected, a session is optional
+   * per-gateway).
+   * Returns `{ applicable, sessionId, url, clientSecret, status, rawResponse }`.
+   */
+  async createSession(paymentParams) {
+    return { applicable: false, sessionId: null, url: null, clientSecret: null, status: null, rawResponse: null };
+  }
 }
 
 export default BaseGatewayAdapter;

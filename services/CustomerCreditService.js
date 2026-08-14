@@ -2,6 +2,7 @@ import mongoose from "mongoose";
 import CustomerCreditModel from "../models/CustomerCreditModel.js";
 import AuditLogModel from "../models/AuditLogmodel.js";
 import { publishEvent } from "../utils/eventBus.js";
+import { getFinanceConfig } from "../utils/financeConfig.js";
 
 const roundCurrency = (value) => Math.round((Number(value) || 0) * 100) / 100;
 
@@ -78,7 +79,20 @@ class CustomerCreditService {
     if (credit.remainingAmount <= 0) credit.status = "Consumed";
     await credit.save();
 
+    await CustomerCreditService._publishConsumptionEvents(tenantId, credit, roundedAmount);
+
     return credit.toJSON();
+  }
+
+  /** Real, deterministic — "CustomerCreditConsumed"/"DepositApplied" (Part 18 Part 5's own Domain Events list). DepositApplied fires only when the consumed credit's own `source` is one of the configured deposit source types, never guessed. */
+  static async _publishConsumptionEvents(tenantId, credit, amountConsumed) {
+    const config = getFinanceConfig();
+    publishEvent("CustomerCreditConsumed", { tenantId, creditId: credit._id.toString(), customerId: credit.customerId.toString(), amount: amountConsumed, remainingAmount: credit.remainingAmount, source: credit.source, performedBy: "system" });
+    if (config.customerDepositSourceTypes.includes(credit.source)) {
+      publishEvent("DepositApplied", { tenantId, creditId: credit._id.toString(), customerId: credit.customerId.toString(), amount: amountConsumed, source: credit.source, performedBy: "system" });
+    }
+    const availableCredit = await CustomerCreditService.getAvailableCredit(credit.customerId, tenantId);
+    publishEvent("CustomerBalanceUpdated", { tenantId, customerId: credit.customerId.toString(), availableCredit, currency: credit.currency, performedBy: "system" });
   }
 
   /**
@@ -106,6 +120,7 @@ class CustomerCreditService {
       await credit.save();
       remaining = roundCurrency(remaining - take);
       consumedCreditIds.push(credit._id);
+      await CustomerCreditService._publishConsumptionEvents(tenantId, credit, take);
     }
 
     return { consumedAmount: roundCurrency(maxAmount - remaining), consumedCreditIds };

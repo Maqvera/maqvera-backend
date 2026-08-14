@@ -32,6 +32,22 @@ export const runAnalysis = async (req, res) => {
   }
 };
 
+export const refreshAnalytics = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "finance.analytics.run", "finance.analytics.manage")) return sendError(res, 403, "Permission denied.", requestId);
+    const userId = req.auth?.userId || req.auth?.id || null;
+
+    const result = await FinancialAnalyticsService.refreshAnalytics(req.body, scope.tenantId, userId);
+    return sendSuccess(res, 200, "Financial analytics refreshed successfully.", result, requestId);
+  } catch (error) {
+    console.error("refreshAnalytics error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to refresh financial analytics.", requestId);
+  }
+};
+
 export const listAnalytics = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
@@ -39,11 +55,16 @@ export const listAnalytics = async (req, res) => {
     if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasPermission(req, "finance.analytics.read")) return sendError(res, 403, "Permission denied.", requestId);
 
-    const result = await FinancialAnalyticsService.listAnalytics(req.query, scope.tenantId);
-    return sendSuccess(res, 200, "Financial analytics retrieved successfully.", result, requestId);
+    if (req.query.format === "list" || req.query.page || req.query.pageSize || req.query.analysisType) {
+      const result = await FinancialAnalyticsService.listAnalytics(req.query, scope.tenantId);
+      return sendSuccess(res, 200, "Financial analytics retrieved successfully.", result, requestId);
+    }
+
+    const dashboard = await FinancialAnalyticsService.getFinancialAnalyticsDashboard(req.query, scope.tenantId);
+    return sendSuccess(res, 200, "Financial analytics dashboard retrieved successfully.", dashboard, requestId);
   } catch (error) {
     console.error("listAnalytics error:", error);
-    return sendError(res, 500, error.message || "Failed to retrieve financial analytics.", requestId);
+    return sendError(res, statusFromError(error), error.message || "Failed to retrieve financial analytics.", requestId);
   }
 };
 

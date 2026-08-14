@@ -14,9 +14,21 @@ const statusFromError = (error) => {
   const message = error.message || "";
   if (message.includes("already exists")) return 409;
   if (message.includes("not found")) return 404;
-  if (message.includes("required") || message.includes("cannot") || message.includes("Cannot") || message.includes("Invalid") || message.includes("exceeds") || message.includes("must be") || message.includes("violation")) return 400;
+  if (message.includes("required") || message.includes("cannot") || message.includes("Cannot") || message.includes("Invalid") || message.includes("exceeds") || message.includes("must") || message.includes("violation") || message.includes("No exchange rate") || message.includes("No active tax rule") || message.includes("do not reconcile")) return 400;
   return 500;
 };
+
+// "Audit Information... Created From, IP Address, Device, Correlation
+// ID" (Part 35) — real request context, plumbed through to
+// AuditLogModel.create via ExpenseService's own optional `auditContext`
+// parameter. `req.ip` / `user-agent` are real Express/HTTP values, never
+// fabricated; `requestId` is the same real per-request id every response
+// already echoes (utils/apiResponse.js).
+const auditContextFrom = (req, requestId) => ({
+  requestId,
+  ipAddress: req.ip || req.socket?.remoteAddress || null,
+  device: req.headers["user-agent"] || null
+});
 
 // Receipt upload — memoryStorage, same pattern as Bank Reconciliation's own
 // uploadStatementFile (controllers/BankReconciliationController.js).
@@ -65,7 +77,7 @@ export const createExpense = async (req, res) => {
     if (!hasPermission(req, "finance.expense.create")) return sendError(res, 403, "Permission denied.", requestId);
     const userId = req.auth?.userId || req.auth?.id || null;
 
-    const expense = await ExpenseService.createExpense(req.body, scope.tenantId, userId);
+    const expense = await ExpenseService.createExpense(req.body, scope.tenantId, userId, auditContextFrom(req, requestId));
     return sendSuccess(res, 201, "Expense created successfully.", expense, requestId);
   } catch (error) {
     console.error("createExpense error:", error);
@@ -81,7 +93,7 @@ export const updateExpense = async (req, res) => {
     if (!hasPermission(req, "finance.expense.create")) return sendError(res, 403, "Permission denied.", requestId);
     const userId = req.auth?.userId || req.auth?.id || null;
 
-    const expense = await ExpenseService.updateExpense(req.params.expenseId, req.body, scope.tenantId, userId);
+    const expense = await ExpenseService.updateExpense(req.params.expenseId, req.body, scope.tenantId, userId, auditContextFrom(req, requestId));
     return sendSuccess(res, 200, "Expense updated successfully.", expense, requestId);
   } catch (error) {
     console.error("updateExpense error:", error);
@@ -99,7 +111,7 @@ export const uploadReceipt = async (req, res) => {
 
     if (!req.file) return sendError(res, 400, "A receipt file is required (multipart field \"file\").", requestId);
 
-    const expense = await ExpenseService.uploadReceipt(req.params.expenseId, req.file, scope.tenantId, userId);
+    const expense = await ExpenseService.uploadReceipt(req.params.expenseId, req.file, scope.tenantId, userId, auditContextFrom(req, requestId));
     return sendSuccess(res, 201, "Receipt uploaded successfully.", expense, requestId);
   } catch (error) {
     console.error("uploadReceipt error:", error);
@@ -115,7 +127,7 @@ export const verifyExpenseReceipt = async (req, res) => {
     if (!hasPermission(req, "finance.expense.approve")) return sendError(res, 403, "Permission denied.", requestId);
     const userId = req.auth?.userId || req.auth?.id || null;
 
-    const expense = await ExpenseService.verifyReceipt(req.params.expenseId, req.params.attachmentId, req.body, scope.tenantId, userId);
+    const expense = await ExpenseService.verifyReceipt(req.params.expenseId, req.params.attachmentId, req.body, scope.tenantId, userId, auditContextFrom(req, requestId));
     return sendSuccess(res, 200, "Receipt verification updated successfully.", expense, requestId);
   } catch (error) {
     console.error("verifyReceipt error:", error);
@@ -131,7 +143,7 @@ export const submitExpense = async (req, res) => {
     if (!hasPermission(req, "finance.expense.create")) return sendError(res, 403, "Permission denied.", requestId);
     const userId = req.auth?.userId || req.auth?.id || null;
 
-    const expense = await ExpenseService.submitExpense(req.params.expenseId, scope.tenantId, userId);
+    const expense = await ExpenseService.submitExpense(req.params.expenseId, scope.tenantId, userId, auditContextFrom(req, requestId));
     return sendSuccess(res, 200, "Expense submitted successfully.", expense, requestId);
   } catch (error) {
     console.error("submitExpense error:", error);
@@ -147,7 +159,7 @@ export const approveExpense = async (req, res) => {
     if (!hasPermission(req, "finance.expense.approve")) return sendError(res, 403, "Permission denied.", requestId);
     const userId = req.auth?.userId || req.auth?.id || null;
 
-    const expense = await ExpenseService.approveExpense(req.params.expenseId, req.body, scope.tenantId, userId);
+    const expense = await ExpenseService.approveExpense(req.params.expenseId, req.body, scope.tenantId, userId, auditContextFrom(req, requestId));
     return sendSuccess(res, 200, "Expense approval recorded successfully.", expense, requestId);
   } catch (error) {
     console.error("approveExpense error:", error);
@@ -163,7 +175,7 @@ export const rejectExpense = async (req, res) => {
     if (!hasPermission(req, "finance.expense.approve")) return sendError(res, 403, "Permission denied.", requestId);
     const userId = req.auth?.userId || req.auth?.id || null;
 
-    const expense = await ExpenseService.rejectExpense(req.params.expenseId, req.body, scope.tenantId, userId);
+    const expense = await ExpenseService.rejectExpense(req.params.expenseId, req.body, scope.tenantId, userId, auditContextFrom(req, requestId));
     return sendSuccess(res, 200, "Expense rejected successfully.", expense, requestId);
   } catch (error) {
     console.error("rejectExpense error:", error);
@@ -179,7 +191,7 @@ export const returnExpense = async (req, res) => {
     if (!hasPermission(req, "finance.expense.approve")) return sendError(res, 403, "Permission denied.", requestId);
     const userId = req.auth?.userId || req.auth?.id || null;
 
-    const expense = await ExpenseService.returnExpense(req.params.expenseId, req.body, scope.tenantId, userId);
+    const expense = await ExpenseService.returnExpense(req.params.expenseId, req.body, scope.tenantId, userId, auditContextFrom(req, requestId));
     return sendSuccess(res, 200, "Expense returned successfully.", expense, requestId);
   } catch (error) {
     console.error("returnExpense error:", error);
@@ -195,7 +207,7 @@ export const cancelExpense = async (req, res) => {
     if (!hasPermission(req, "finance.expense.create")) return sendError(res, 403, "Permission denied.", requestId);
     const userId = req.auth?.userId || req.auth?.id || null;
 
-    const expense = await ExpenseService.cancelExpense(req.params.expenseId, req.body, scope.tenantId, userId);
+    const expense = await ExpenseService.cancelExpense(req.params.expenseId, req.body, scope.tenantId, userId, auditContextFrom(req, requestId));
     return sendSuccess(res, 200, "Expense cancelled successfully.", expense, requestId);
   } catch (error) {
     console.error("cancelExpense error:", error);
@@ -211,7 +223,7 @@ export const reimburseExpense = async (req, res) => {
     if (!hasPermission(req, "finance.expense.manage")) return sendError(res, 403, "Permission denied.", requestId);
     const userId = req.auth?.userId || req.auth?.id || null;
 
-    const expense = await ExpenseService.reimburseExpense(req.params.expenseId, req.body, scope.tenantId, userId);
+    const expense = await ExpenseService.reimburseExpense(req.params.expenseId, req.body, scope.tenantId, userId, auditContextFrom(req, requestId));
     return sendSuccess(res, 200, "Expense reimbursed successfully.", expense, requestId);
   } catch (error) {
     console.error("reimburseExpense error:", error);
@@ -227,7 +239,7 @@ export const closeExpense = async (req, res) => {
     if (!hasPermission(req, "finance.expense.manage")) return sendError(res, 403, "Permission denied.", requestId);
     const userId = req.auth?.userId || req.auth?.id || null;
 
-    const expense = await ExpenseService.closeExpense(req.params.expenseId, scope.tenantId, userId);
+    const expense = await ExpenseService.closeExpense(req.params.expenseId, scope.tenantId, userId, auditContextFrom(req, requestId));
     return sendSuccess(res, 200, "Expense closed successfully.", expense, requestId);
   } catch (error) {
     console.error("closeExpense error:", error);

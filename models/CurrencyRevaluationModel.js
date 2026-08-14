@@ -15,7 +15,7 @@ const CurrencyRevaluationSchema = new mongoose.Schema({
   },
   revaluationDate: { type: Date, required: true, index: true },
   // Config-driven (fxRevaluationTargets) — BankAccount, AccountsReceivable,
-  // AccountsPayable.
+  // AccountsPayable, TreasuryInvestment.
   targetType: { type: String, required: true, index: true },
   targetId: { type: mongoose.Schema.Types.ObjectId, required: true, index: true },
   currencyCode: { type: String, required: true },

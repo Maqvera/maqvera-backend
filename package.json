@@ -11,7 +11,8 @@
     "migrate:remove-branch-id": "node scripts/migrateRemoveBranchId.js",
     "seed:visa-workflow": "node scripts/seedVisaWorkflowDefinition.js",
     "seed:incident-policy": "node scripts/seedIncidentPolicy.js",
-    "seed:timeline-policy": "node scripts/seedTimelinePolicy.js"
+    "seed:timeline-policy": "node scripts/seedTimelinePolicy.js",
+    "seed:chart-templates": "node scripts/seedChartTemplates.js"
   },
   "keywords": [],
   "author": "",
@@ -53,6 +54,8 @@
     "qrcode": "^1.5.4",
     "rate-limit-mongo": "^2.3.2",
     "stripe": "^22.4.0",
+    "swagger-jsdoc": "^6.3.0",
+    "swagger-ui-express": "^5.0.1",
     "tesseract.js": "^7.0.0",
     "twilio": "^6.0.2",
     "uuid": "^13.0.0",

@@ -20,6 +20,19 @@ class FinancialPeriodService {
   }
 
   /**
+   * "Accounting Period Reference" (File 2, Journal Platform Part 4, item
+   * 45) — a direct lookup by the real, stored financialPeriodId a journal
+   * captures at creation (Part 41), preferred over re-deriving "the period
+   * covering this date" live by findPeriodForDate whenever a real id is
+   * on hand — a stored id reflects the period actually in force at
+   * posting time, immune to a period table later being restructured.
+   */
+  static async findPeriodById(tenantId, periodId) {
+    if (!periodId) return null;
+    return FinancialPeriodModel.findOne({ _id: periodId, tenantId }).lean();
+  }
+
+  /**
    * "Validate Financial Period" / "Posting allowed only in Open Period."
    * A tenant that hasn't configured financial periods at all is treated as
    * permissive (unconfigured = open) — this module doesn't yet ship period

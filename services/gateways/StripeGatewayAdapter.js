@@ -62,12 +62,18 @@ class StripeGatewayAdapter extends BaseGatewayAdapter {
     }
   }
 
-  /** Captures a previously authorized PaymentIntent. */
-  async capture({ gatewayDetails }) {
+  /**
+   * Captures a previously authorized PaymentIntent — full by default, or
+   * partial when `amount` is less than what was authorized ("Partial
+   * Capture", Part 18 Part 3), via Stripe's own real `amount_to_capture`
+   * parameter rather than a fabricated partial-capture concept.
+   */
+  async capture({ gatewayDetails, amount = null }) {
     const client = await this._requireClient();
     if (!gatewayDetails?.transactionId) throw new Error("No Stripe PaymentIntent id to capture.");
     try {
-      const intent = await client.paymentIntents.capture(gatewayDetails.transactionId);
+      const captureParams = amount ? { amount_to_capture: Math.round(amount * 100) } : undefined;
+      const intent = await client.paymentIntents.capture(gatewayDetails.transactionId, captureParams);
       const captured = intent.status === "succeeded";
       return {
         status: captured ? "Captured" : "Failed",
@@ -148,6 +154,39 @@ class StripeGatewayAdapter extends BaseGatewayAdapter {
       return { gateway: "Stripe", status: "UP" };
     } catch (error) {
       return { gateway: "Stripe", status: "DOWN", error: error.message };
+    }
+  }
+
+  /**
+   * Real Stripe PaymentIntent creation, unconfirmed (`confirm: false`, no
+   * `payment_method` yet) — Finance Module Part 18 Part 2's own "Payment
+   * Intent" step, backed by Stripe's own PaymentIntents API concept
+   * directly rather than a parallel abstraction. The returned
+   * `clientSecret` is what a real client-side Stripe.js integration would
+   * use to collect the payment method and confirm; `sessionId` is the
+   * Stripe PaymentIntent id this module's own `authorize()`/`capture()`
+   * calls resume against later once a payment method is attached (Part 3).
+   */
+  async createSession({ amount, currency, reference, expiresAt }) {
+    const client = await this._requireClient();
+    try {
+      const intent = await client.paymentIntents.create({
+        amount: Math.round(amount * 100),
+        currency: (currency || "usd").toLowerCase(),
+        capture_method: "manual",
+        confirm: false,
+        description: reference || undefined
+      });
+      return {
+        applicable: true,
+        sessionId: intent.id,
+        url: null,
+        clientSecret: intent.client_secret,
+        status: intent.status,
+        rawResponse: intent
+      };
+    } catch (error) {
+      return { applicable: true, sessionId: null, url: null, clientSecret: null, status: "Failed", rawResponse: error.raw || null, failureReason: error.message };
     }
   }
 }

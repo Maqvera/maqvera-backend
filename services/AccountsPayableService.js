@@ -4,6 +4,7 @@ import AuditLogModel from "../models/AuditLogmodel.js";
 import PaymentService from "./PaymentService.js";
 import VendorCreditService from "./VendorCreditService.js";
 import JournalService from "./JournalService.js";
+import CurrencyService, { calculateGainLoss } from "./CurrencyService.js";
 import FinanceSequenceModel from "../models/FinanceSequenceModel.js";
 import { publishEvent } from "../utils/eventBus.js";
 import { getFinanceConfig } from "../utils/financeConfig.js";
@@ -132,6 +133,19 @@ class AccountsPayableService {
     const invoiceDateObj = invoiceDate ? new Date(invoiceDate) : new Date();
     const dueDateObj = new Date(dueDate);
 
+    // File 4 Part 3 — real booking-time rate snapshot, mirror of
+    // AccountsReceivableService.createReceivable's own (liability side).
+    let bookingExchangeRate = null;
+    let bookingBaseCurrency = null;
+    let bookingBaseCurrencyAmount = null;
+    const baseCurrencyForBooking = await CurrencyService.getBaseCurrency(tenantId);
+    if (currency.toUpperCase() !== baseCurrencyForBooking) {
+      const booking = await CurrencyService.convert(roundedAmount, currency, baseCurrencyForBooking, tenantId, { asOfDate: invoiceDateObj });
+      bookingExchangeRate = booking.rate;
+      bookingBaseCurrency = baseCurrencyForBooking;
+      bookingBaseCurrencyAmount = booking.convertedAmount;
+    }
+
     let creationJournalId = null;
     if (expenseAccountCode && config.apControlAccountCode) {
       const journal = await AccountsPayableService._postAutomaticJournal({
@@ -159,6 +173,7 @@ class AccountsPayableService {
       paidAmount: 0,
       outstandingBalance: roundedAmount,
       currency,
+      bookingExchangeRate, bookingBaseCurrency, bookingBaseCurrencyAmount,
       status: config.defaultPayableStatus,
       timeline: [{ event: "PayableCreated", description: `Payable created for vendor invoice ${resolvedInvoiceNumber}.`, performedBy: userId || null }],
       createdBy: userId || null,
@@ -287,6 +302,30 @@ class AccountsPayableService {
     payable.timeline.push({ event: "VendorPaymentAllocated", description: `Payment of ${roundedAmount} ${payable.currency} allocated.`, performedBy: userId || null });
     await payable.save();
 
+    // File 4 Part 3 — "Realized FX Gain/Loss at settlement," mirror of
+    // AccountsReceivableService.allocatePayment's own (liability side —
+    // `isLiability: true` flips the sign: a rising base-currency value is
+    // a LOSS here, since it now costs more base currency to settle the
+    // same foreign obligation).
+    let realizedFx = null;
+    if (payable.bookingExchangeRate && appliedToBalance > 0) {
+      const previousBaseAmount = roundCurrency(appliedToBalance * payable.bookingExchangeRate);
+      const { convertedAmount: currentBaseAmount } = await CurrencyService.convert(appliedToBalance, payable.currency, payable.bookingBaseCurrency, tenantId);
+      const { amount: gainLossAmount, type: gainLossType } = calculateGainLoss(previousBaseAmount, currentBaseAmount, true, true);
+
+      if (gainLossAmount > 0) {
+        const fxJournal = await CurrencyService.postFxGainLossJournal({
+          tenantId, userId, postingDate: new Date(), description: `Realized FX ${gainLossType} on payable ${payable.invoiceNumber}`,
+          baseCurrency: payable.bookingBaseCurrency, controlAccountCode: config.apControlAccountCode, isLiability: true,
+          gainLossAmount, gainLossType, referenceNumber: payable.invoiceNumber
+        });
+        realizedFx = { amount: gainLossAmount, type: gainLossType, journalId: fxJournal?._id || null };
+        payable.timeline.push({ event: gainLossType.replace(" ", ""), description: `${gainLossAmount} ${payable.bookingBaseCurrency} ${gainLossType} realized on settlement.`, performedBy: userId || null });
+        await payable.save();
+        publishEvent(gainLossType.endsWith("Gain") ? "FXGainCalculated" : "FXLossCalculated", { tenantId, targetType: "AccountsPayable", targetId: payable._id.toString(), amount: gainLossAmount, realized: true, journalId: fxJournal?._id || null, performedBy: userId || null });
+      }
+    }
+
     let credit = null;
     if (overpaymentExcess > 0) {
       credit = await VendorCreditService.createCredit({
@@ -305,7 +344,7 @@ class AccountsPayableService {
       resourceId: payable._id.toString(),
       userId: userId || null,
       tenantId,
-      details: { paymentId: paymentId.toString(), amount: roundedAmount, appliedToBalance, overpaymentExcess }
+      details: { paymentId: paymentId.toString(), amount: roundedAmount, appliedToBalance, overpaymentExcess, realizedFx }
     });
 
     publishEvent("VendorPaymentAllocated", { tenantId, payableId: payable._id.toString(), vendorId: payable.vendorId.toString(), paymentId: paymentId.toString(), amount: roundedAmount, appliedToBalance, overpaymentExcess, performedBy: userId || null });
@@ -316,7 +355,7 @@ class AccountsPayableService {
       publishEvent("VendorSettlementCompleted", { tenantId, payableId: payable._id.toString(), vendorId: payable.vendorId.toString(), settledVia: "Payment", performedBy: userId || null });
     }
 
-    return { payable: payable.toJSON(), credit };
+    return { payable: payable.toJSON(), credit, realizedFx };
   }
 
   /**

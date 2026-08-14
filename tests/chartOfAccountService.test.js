@@ -6,7 +6,9 @@ import {
   wouldCreateCycle,
   assertWithinMaxDepth,
   recomputeDescendantPath,
-  assertCanDeactivate
+  assertCanDeactivate,
+  assertCanMerge,
+  assertValidRevenueRecognition
 } from "../services/ChartOfAccountService.js";
 
 const oid = () => new mongoose.Types.ObjectId();
@@ -80,4 +82,78 @@ test("assertCanDeactivate blocks accounts with posted journal activity", () => {
 
 test("assertCanDeactivate allows an ordinary, untouched account", () => {
   assert.doesNotThrow(() => assertCanDeactivate({ isSystemAccount: false, hasPostedTransactions: false }));
+});
+
+test("assertCanMerge (Part 36) blocks merging an account into itself", () => {
+  const id = oid();
+  const account = { _id: id, isSystemAccount: false, hasPostedTransactions: false };
+  assert.throws(() => assertCanMerge(account, account), /cannot be merged into itself/);
+});
+
+test("assertCanMerge blocks merging a system account away", () => {
+  const source = { _id: oid(), isSystemAccount: true, hasPostedTransactions: false };
+  const target = { _id: oid(), isSystemAccount: false, hasPostedTransactions: false, status: "Active" };
+  assert.throws(() => assertCanMerge(source, target), /System accounts cannot be merged away/);
+});
+
+test("assertCanMerge blocks merging a source with posted journal history — no immutable history is ever reassigned", () => {
+  const source = { _id: oid(), isSystemAccount: false, hasPostedTransactions: true };
+  const target = { _id: oid(), isSystemAccount: false, hasPostedTransactions: false, status: "Active" };
+  assert.throws(() => assertCanMerge(source, target), /journal entries cannot be merged/);
+});
+
+test("assertCanMerge requires the target account to be Active", () => {
+  const source = { _id: oid(), isSystemAccount: false, hasPostedTransactions: false };
+  const target = { _id: oid(), isSystemAccount: false, hasPostedTransactions: false, status: "Inactive", accountCode: "1999" };
+  assert.throws(() => assertCanMerge(source, target), /must be Active to receive a merge/);
+});
+
+test("assertCanMerge allows an ordinary, untouched source into an Active target", () => {
+  const source = { _id: oid(), isSystemAccount: false, hasPostedTransactions: false };
+  const target = { _id: oid(), isSystemAccount: false, hasPostedTransactions: false, status: "Active" };
+  assert.doesNotThrow(() => assertCanMerge(source, target));
+});
+
+const revenueRecognitionConfig = {
+  deferredRevenueAccountTypes: ["Deferred Revenue", "Unearned Revenue", "Contract Liability"],
+  revenueRecognitionMethods: ["Immediate", "Daily", "Monthly", "Milestone", "UsageBased", "PercentageCompletion"]
+};
+
+test("assertValidRevenueRecognition (Part 37) allows no revenueRecognition at all", () => {
+  assert.doesNotThrow(() => assertValidRevenueRecognition({ category: "Expense", revenueRecognition: null }, revenueRecognitionConfig));
+});
+
+test("assertValidRevenueRecognition allows a deferredRevenueType on a Liabilities-category account", () => {
+  assert.doesNotThrow(() => assertValidRevenueRecognition(
+    { category: "Liabilities", revenueRecognition: { deferredRevenueType: "Deferred Revenue" } },
+    revenueRecognitionConfig
+  ));
+});
+
+test("assertValidRevenueRecognition rejects a deferredRevenueType on a non-Liabilities account", () => {
+  assert.throws(
+    () => assertValidRevenueRecognition({ category: "Revenue", revenueRecognition: { deferredRevenueType: "Deferred Revenue" } }, revenueRecognitionConfig),
+    /can only be set on a Liabilities-category account/
+  );
+});
+
+test("assertValidRevenueRecognition rejects an unconfigured deferredRevenueType", () => {
+  assert.throws(
+    () => assertValidRevenueRecognition({ category: "Liabilities", revenueRecognition: { deferredRevenueType: "Merchant Escrow" } }, revenueRecognitionConfig),
+    /Invalid revenueRecognition.deferredRevenueType/
+  );
+});
+
+test("assertValidRevenueRecognition rejects an unconfigured recognitionRule.method", () => {
+  assert.throws(
+    () => assertValidRevenueRecognition({ category: "Revenue", revenueRecognition: { recognitionRule: { method: "PerpetualLicense" } } }, revenueRecognitionConfig),
+    /Invalid revenueRecognition.recognitionRule.method/
+  );
+});
+
+test("assertValidRevenueRecognition allows a configured recognitionRule.method with no deferredRevenueType", () => {
+  assert.doesNotThrow(() => assertValidRevenueRecognition(
+    { category: "Revenue", revenueRecognition: { recognitionRule: { method: "Monthly", durationMonths: 12 } } },
+    revenueRecognitionConfig
+  ));
 });

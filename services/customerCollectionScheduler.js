@@ -13,8 +13,13 @@ async function runCollectionOverdueCheck() {
   const startTime = Date.now();
   try {
     const overdueCount = await CustomerCollectionService.markOverdueCollections();
+    // Part 18 Part 4 — "Grace Period" for installments is a real, separate
+    // pass from the collection's own overdue check (an installment plan's
+    // individual lines can go Overdue independently of the parent
+    // collection's own paymentDueDate).
+    const installmentOverdueCount = await CustomerCollectionService.markOverdueInstallments();
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-    logger.info(`Customer collection overdue check completed in ${elapsed}s — ${overdueCount} newly overdue.`);
+    logger.info(`Customer collection overdue check completed in ${elapsed}s — ${overdueCount} newly overdue collection(s), ${installmentOverdueCount} newly overdue installment(s).`);
   } catch (err) {
     logger.error("Customer collection overdue check failed.", { error: err.message });
   }

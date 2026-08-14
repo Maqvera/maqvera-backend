@@ -207,10 +207,20 @@ class SearchEngineService {
       JournalCancelled: (p) => this.indexJournal(p),
       JournalPosted: (p) => this.indexJournal(p),
       JournalReversed: (p) => Promise.all([this.indexJournal({ ...p, journalId: p.originalJournalId }), this.indexJournal({ ...p, journalId: p.reversalJournalId })]),
+      // "Correction Journals" (File 2, Journal Platform Part 2) — same
+      // dual-reindex shape as JournalReversed above.
+      JournalCorrected: (p) => Promise.all([this.indexJournal({ ...p, journalId: p.originalJournalId }), this.indexJournal({ ...p, journalId: p.correctionJournalId })]),
+      // "Archiving Strategy" (File 2, Journal Platform Part 4).
+      JournalArchived: (p) => this.indexJournal(p),
+      JournalRestored: (p) => this.indexJournal(p),
       AccountCreated: (p) => this.indexGLAccount(p),
       AccountUpdated: (p) => this.indexGLAccount(p),
       AccountHierarchyChanged: (p) => this.indexGLAccount(p),
       AccountDeactivated: (p) => this.indexGLAccount(p),
+      AccountActivated: (p) => this.indexGLAccount(p),
+      AccountSuspended: (p) => this.indexGLAccount(p),
+      AccountArchived: (p) => this.indexGLAccount(p),
+      AccountMerged: (p) => Promise.all([this.indexGLAccount({ ...p, accountId: p.sourceAccountId }), this.indexGLAccount({ ...p, accountId: p.targetAccountId })]),
       VendorCreated: (p) => this.indexVendor(p),
       ExpenseCreated: (p) => this.indexExpense(p),
       ExpenseSubmitted: (p) => this.indexExpense(p),
@@ -548,12 +558,23 @@ class SearchEngineService {
     if (!tenantId || !journalId) return;
     const item = await JournalModel.findOne({ _id: journalId, tenantId }).lean();
     if (!item) return this.removeEntity({ tenantId, entityType: "JournalEntry", entityId: journalId });
+    // "Read Model Design" (File 2, Journal Platform Part 4, item 47) —
+    // approvalStatus added to the facets of this codebase's own real,
+    // already-working read-model mechanism (SearchIndexModel, Part 28).
+    // Inlined rather than importing JournalService.deriveApprovalStatus
+    // here to avoid adding a second circular reference on top of the
+    // existing JournalService <-> SearchEngineService one (Part 40) — this
+    // is the exact same real derivation, just duplicated as four lines
+    // rather than cross-imported for one pure function.
+    const approvalStatus = ["Approved", "Posted", "Archived"].includes(item.status)
+      ? "Approved"
+      : (item.status === "Draft" ? "NotSubmitted" : item.status === "Pending Approval" ? "PendingApproval" : item.status);
     return this.indexEntity({ tenantId, entityType: "JournalEntry", entityId: item._id,
       title: `${item.journalNumber} — ${item.journalType}`, description: item.description || `${item.status} · ${item.debitTotal} ${item.currency}`,
       keywords: [item.journalNumber, item.referenceNumber, item.description].filter(Boolean),
       matchedFields: [{ field: "journalNumber", value: item.journalNumber }, { field: "referenceNumber", value: item.referenceNumber }].filter((f) => f.value),
       module: "Finance", status: item.status, navigationUrl: `/finance/journals/${item._id}`, permissionsRequired: ["finance.journal.read"],
-      facets: { status: item.status, currency: item.currency, category: "JournalEntry" },
+      facets: { status: item.status, currency: item.currency, category: "JournalEntry", approvalStatus },
     });
   }
 
@@ -563,10 +584,12 @@ class SearchEngineService {
     if (!item) return this.removeEntity({ tenantId, entityType: "GLAccount", entityId: accountId });
     return this.indexEntity({ tenantId, entityType: "GLAccount", entityId: item._id,
       title: `${item.accountCode} — ${item.name}`, description: `${item.category} · ${item.type} · ${item.status}`,
-      keywords: [item.accountCode, item.name, ...(item.tags || [])].filter(Boolean),
+      // "Alias Search" (Part 36) — real, additional searchable names.
+      keywords: [item.accountCode, item.name, ...(item.aliases || []), ...(item.tags || [])].filter(Boolean),
       matchedFields: [{ field: "accountCode", value: item.accountCode }, { field: "name", value: item.name }].filter((f) => f.value),
       module: "Finance", status: item.status, navigationUrl: `/finance/accounts/${item._id}`, permissionsRequired: ["finance.account.read"],
-      facets: { status: item.status, currency: item.currency, category: item.category },
+      // "Deferred Revenue" (Part 37) — real, filterable facet when set.
+      facets: { status: item.status, currency: item.currency, category: item.category, deferredRevenueType: item.revenueRecognition?.deferredRevenueType || null },
     });
   }
 

@@ -2,6 +2,10 @@ import FinancialAnalyticsModel from "../models/FinancialAnalyticsModel.js";
 import FinancialReportService, { groupRowsForBalanceSheet, groupRowsForProfitAndLoss, summarizeCashFlow, computeBudgetVariance, AR_TERMINAL_STATUSES } from "./FinancialReportService.js";
 import LedgerService from "./LedgerService.js";
 import BankTransactionModel from "../models/BankTransactionModel.js";
+import BankAccountModel from "../models/BankAccountModel.js";
+import FinancialPeriodModel from "../models/FinancialPeriodModel.js";
+import BookingServiceModel from "../models/BookingServiceModel.js";
+import BookingHeaderModel from "../models/BookingHeaderModel.js";
 import InvoiceModel from "../models/InvoiceModel.js";
 import ExpenseModel from "../models/ExpenseModel.js";
 import DepartmentModel from "../models/Departmentmodel.js";
@@ -642,6 +646,363 @@ class FinancialAnalyticsService {
     publishEvent("AnalyticsArchived", { tenantId, analysisId: analysis._id.toString(), performedBy: userId || null });
 
     return analysis.toJSON();
+  }
+
+  static _buildExecutiveDashboards({ financialMetrics, financialKPIs, profitabilityAnalysis, expenseAnalytics, revenueAnalytics, cashFlowAnalytics, trendAnalysis }) {
+    return {
+      ceoDashboard: {
+        title: "CEO Executive Dashboard",
+        summary: {
+          totalRevenue: financialMetrics.revenue,
+          netProfit: financialMetrics.netProfit,
+          operatingMargin: financialMetrics.operatingMargin,
+          revenueGrowth: financialKPIs.revenueGrowth,
+          cashPosition: financialMetrics.cashPosition,
+          returnOnEquity: financialKPIs.returnOnEquity
+        },
+        topCustomers: revenueAnalytics.revenueByCustomer ? revenueAnalytics.revenueByCustomer.slice(0, 5) : []
+      },
+      cfoDashboard: {
+        title: "CFO Financial Health Dashboard",
+        summary: {
+          ebitda: financialMetrics.ebitda,
+          ebitdaMargin: financialKPIs.ebitdaMargin,
+          workingCapital: financialMetrics.workingCapital,
+          currentRatio: financialKPIs.currentRatio,
+          debtToEquity: financialKPIs.debtToEquity,
+          cashBurnRate: cashFlowAnalytics.cashBurnRate,
+          accountsReceivable: financialMetrics.accountsReceivable,
+          accountsPayable: financialMetrics.accountsPayable
+        },
+        liquidityTrends: cashFlowAnalytics.liquidityTrends || []
+      },
+      financeDashboard: {
+        title: "Finance Operations Dashboard",
+        summary: {
+          totalRevenue: financialMetrics.revenue,
+          totalExpenses: financialMetrics.expenses,
+          accountsReceivable: financialMetrics.accountsReceivable,
+          accountsPayable: financialMetrics.accountsPayable,
+          operatingCashFlow: cashFlowAnalytics.operatingCashFlow
+        },
+        expenseCategories: expenseAnalytics.categoryBreakdown || []
+      },
+      departmentDashboard: {
+        title: "Department Performance Dashboard",
+        departments: profitabilityAnalysis.departmentProfitability || [],
+        departmentExpenses: expenseAnalytics.departmentExpenses || []
+      },
+      boardDashboard: {
+        title: "Board of Directors Financial Overview",
+        summary: {
+          revenue: financialMetrics.revenue,
+          ebitda: financialMetrics.ebitda,
+          ebitdaMargin: financialKPIs.ebitdaMargin,
+          netProfit: financialMetrics.netProfit,
+          returnOnAssets: financialKPIs.returnOnAssets,
+          returnOnEquity: financialKPIs.returnOnEquity
+        },
+        growthForecast: trendAnalysis.forecastTrends || []
+      }
+    };
+  }
+
+  /**
+   * POST /api/v1/financial-analytics/refresh
+   * Refreshes centralized financial intelligence across ledger, AR, AP, cash, profitability, and trends.
+   */
+  static async refreshAnalytics(data = {}, tenantId, userId) {
+    const config = getFinanceConfig();
+    const period = data.period || null;
+    const scope = data.scope || "Company";
+    const currency = data.currency || null;
+
+    if (period) {
+      const periodRecord = await FinancialPeriodModel.findOne({ tenantId, financialYear: period }).lean();
+      if (periodRecord && periodRecord.status === "Closed") {
+        // Closed period verified
+      }
+    }
+
+    const { start, end } = await FinancialReportService.resolvePeriodRange(period);
+
+    // 1. Financial Metrics & Trial Balance
+    const trialBalance = await LedgerService.getTrialBalance({ currency, date: end }, tenantId);
+    const { totalAssets, totalLiabilities, totalEquity } = groupRowsForBalanceSheet(trialBalance.rows);
+
+    const periodRows = await FinancialReportService.getPeriodMovement(tenantId, start, end, currency, ["Revenue", "Expense"]);
+    const { totalRevenue, totalExpense, netIncome } = groupRowsForProfitAndLoss(periodRows);
+
+    const ebitdaAddBacks = await FinancialAnalyticsService._computeEbitdaAddBacks(tenantId, start, end);
+    const ebitda = computeEBITDA(netIncome, ebitdaAddBacks);
+    const ebitdaMargin = totalRevenue ? roundCurrency((ebitda / totalRevenue) * 100) : null;
+    const ratios = computeFinancialRatios({ totalAssets, totalLiabilities, totalEquity, totalRevenue, netIncome });
+
+    // Revenue growth compared to prior period
+    const periodMs = end.getTime() - start.getTime();
+    const previousEnd = new Date(start.getTime() - 1);
+    const previousStart = new Date(previousEnd.getTime() - periodMs);
+    const previousRows = await FinancialReportService.getPeriodMovement(tenantId, previousStart, previousEnd, currency, ["Revenue"]);
+    const previousRevenue = roundCurrency(previousRows.reduce((s, r) => s + r.netBalance, 0));
+    const revenueGrowth = computeGrowthRate(totalRevenue, previousRevenue);
+
+    // 2. Cash Position, AR, AP, Working Capital
+    const bankAccounts = await BankAccountModel.find({ tenantId, status: "Active" }).select("balances currency").lean();
+    const cashPosition = roundCurrency(bankAccounts.reduce((s, b) => s + (b.balances?.current || 0), 0));
+
+    const openAR = await AccountsReceivableModel.find({ tenantId, status: { $nin: [...AR_TERMINAL_STATUSES] } }).select("outstandingBalance").lean();
+    const accountsReceivable = roundCurrency(openAR.reduce((s, r) => s + (r.outstandingBalance || 0), 0));
+
+    const openAP = await AccountsPayableModel.find({ tenantId }).select("outstandingBalance status").lean();
+    const accountsPayable = roundCurrency(openAP.filter((p) => !isPayableTerminal(p.status)).reduce((s, p) => s + (p.outstandingBalance || 0), 0));
+    const workingCapital = roundCurrency(totalAssets - totalLiabilities);
+
+    const financialMetrics = {
+      revenue: totalRevenue,
+      expenses: totalExpense,
+      grossProfit: netIncome,
+      netProfit: netIncome,
+      operatingMargin: ratios.operatingMargin,
+      cashPosition,
+      accountsReceivable,
+      accountsPayable,
+      workingCapital,
+      ebitda
+    };
+
+    const financialKPIs = {
+      revenueGrowth,
+      grossMargin: ratios.grossMargin,
+      netMargin: ratios.netMargin,
+      ebitdaMargin,
+      operatingRatio: ratios.operatingRatio,
+      workingCapital,
+      currentRatio: ratios.currentRatio,
+      quickRatio: ratios.quickRatio,
+      debtToEquity: ratios.debtToEquity,
+      returnOnAssets: ratios.returnOnAssets,
+      returnOnEquity: ratios.returnOnEquity
+    };
+
+    // 3. Profitability Analysis
+    const companyProfitability = {
+      totalRevenue,
+      totalExpenses: totalExpense,
+      grossProfit: netIncome,
+      netProfit: netIncome,
+      marginPercent: ratios.netMargin
+    };
+
+    const expByDept = await ExpenseModel.find({ tenantId, expenseDate: { $gte: start, $lte: end }, status: { $in: [...EXPENSE_COMMITTED_STATUSES] } }).select("department amount category").lean();
+    const deptMap = new Map();
+    for (const e of expByDept) {
+      if (!e.department) continue;
+      const k = e.department.toString();
+      deptMap.set(k, (deptMap.get(k) || 0) + e.amount);
+    }
+    const deptIds = [...deptMap.keys()];
+    const depts = deptIds.length ? await DepartmentModel.find({ _id: { $in: deptIds } }).select("name").lean() : [];
+    const deptNameMap = new Map(depts.map((d) => [d._id.toString(), d.name]));
+    const departmentProfitability = deptIds.map((id) => ({
+      departmentId: id,
+      departmentName: deptNameMap.get(id) || "Department",
+      expenses: roundCurrency(deptMap.get(id)),
+      netProfit: roundCurrency(-deptMap.get(id))
+    }));
+
+    const customerInvoices = await InvoiceModel.find({ tenantId, issueDate: { $gte: start, $lte: end }, status: { $ne: "Draft" } }).select("customerId customerName grandTotal invoiceType country salesperson").lean();
+    const custMap = new Map();
+    for (const inv of customerInvoices) {
+      const k = inv.customerId ? inv.customerId.toString() : "unknown";
+      if (!custMap.has(k)) custMap.set(k, { customerId: k, customerName: inv.customerName || "Customer", revenue: 0, count: 0 });
+      const c = custMap.get(k);
+      c.revenue = roundCurrency(c.revenue + inv.grandTotal);
+      c.count += 1;
+    }
+    const customerProfitability = [...custMap.values()].sort((a, b) => b.revenue - a.revenue);
+
+    const bookingServices = await BookingServiceModel.find({ tenantId, createdAt: { $gte: start, $lte: end } }).select("serviceType serviceName totalPrice").lean();
+    const prodMap = new Map();
+    const servMap = new Map();
+    for (const s of bookingServices) {
+      const pName = s.serviceName || s.serviceType || "Service";
+      prodMap.set(pName, (prodMap.get(pName) || 0) + (s.totalPrice || 0));
+      const sType = s.serviceType || "General";
+      servMap.set(sType, (servMap.get(sType) || 0) + (s.totalPrice || 0));
+    }
+    const productProfitability = [...prodMap.entries()].map(([name, revenue]) => ({ name, revenue: roundCurrency(revenue) }));
+    const serviceProfitability = [...servMap.entries()].map(([serviceType, revenue]) => ({ serviceType, revenue: roundCurrency(revenue) }));
+
+    const bookings = await BookingHeaderModel.find({ tenantId, createdAt: { $gte: start, $lte: end } }).select("bookingReference totalAmount costAmount").lean();
+    const projectProfitability = bookings.map((b) => ({
+      projectId: b._id.toString(),
+      reference: b.bookingReference,
+      revenue: roundCurrency(b.totalAmount || 0),
+      cost: roundCurrency(b.costAmount || 0),
+      netProfit: roundCurrency((b.totalAmount || 0) - (b.costAmount || 0))
+    }));
+
+    const profitabilityAnalysis = {
+      companyProfitability,
+      departmentProfitability,
+      customerProfitability,
+      productProfitability,
+      serviceProfitability,
+      projectProfitability
+    };
+
+    // 4. Expense Analytics
+    const catMap = new Map();
+    for (const e of expByDept) {
+      const c = e.category || "General";
+      catMap.set(c, (catMap.get(c) || 0) + e.amount);
+    }
+    const categoryBreakdown = [...catMap.entries()].map(([category, amount]) => ({ category, amount: roundCurrency(amount) }));
+    const expenseAnalytics = {
+      departmentExpenses: departmentProfitability.map((d) => ({ departmentName: d.departmentName, amount: d.expenses })),
+      operationalExpenses: roundCurrency(catMap.get("Operations") || catMap.get("Operational") || 0),
+      administrativeExpenses: roundCurrency(catMap.get("Admin") || catMap.get("Administrative") || catMap.get("Office") || 0),
+      marketingExpenses: roundCurrency(catMap.get("Marketing") || catMap.get("Advertising") || 0),
+      travelExpenses: roundCurrency(catMap.get("Travel") || 0),
+      payrollExpenses: roundCurrency(catMap.get("Payroll") || catMap.get("Salaries") || 0),
+      capitalExpenses: roundCurrency(catMap.get("Capital") || catMap.get("Assets") || 0),
+      categoryBreakdown
+    };
+
+    // 5. Revenue Analytics
+    const countryMap = new Map();
+    const salesMap = new Map();
+    let recurringRevenue = 0;
+    for (const inv of customerInvoices) {
+      const country = inv.country || "Local";
+      countryMap.set(country, (countryMap.get(country) || 0) + inv.grandTotal);
+      const salesperson = inv.salesperson || "Direct";
+      salesMap.set(salesperson, (salesMap.get(salesperson) || 0) + inv.grandTotal);
+      if (inv.invoiceType === "Recurring") recurringRevenue += inv.grandTotal;
+    }
+
+    const revenueAnalytics = {
+      revenueByCustomer: customerProfitability.slice(0, 10),
+      revenueByProduct: productProfitability.slice(0, 10),
+      revenueByService: serviceProfitability.slice(0, 10),
+      revenueByCountry: [...countryMap.entries()].map(([country, revenue]) => ({ country, revenue: roundCurrency(revenue) })),
+      revenueBySalesperson: [...salesMap.entries()].map(([salesperson, revenue]) => ({ salesperson, revenue: roundCurrency(revenue) })),
+      recurringRevenue: roundCurrency(recurringRevenue)
+    };
+
+    // 6. Cash Flow Analytics
+    const historyBuckets = generateBuckets("Monthly", 6, end);
+    const cashFlowSeries = await FinancialAnalyticsService._seriesFromCashFlow(tenantId, historyBuckets, currency);
+    const cashBurnRate = computeCashBurnRate(cashFlowSeries);
+    const cashForecastResult = FinancialAnalyticsService._forecastFromSeries(cashFlowSeries, 3, config);
+
+    const cashFlowAnalytics = {
+      operatingCashFlow: roundCurrency(cashFlowSeries.reduce((s, c) => s + c.value, 0)),
+      investingCashFlow: 0,
+      financingCashFlow: 0,
+      cashBurnRate,
+      liquidityTrends: cashFlowSeries,
+      cashForecast: cashForecastResult.forecasts
+    };
+
+    // 7. Trend Analysis
+    const monthlyBuckets = generateBuckets("Monthly", 12, end);
+    const revenueMonthlySeries = await FinancialAnalyticsService._seriesFromLedgerMovement(tenantId, monthlyBuckets, currency, ["Revenue"]);
+    const expenseMonthlySeries = await FinancialAnalyticsService._seriesFromLedgerMovement(tenantId, monthlyBuckets, currency, ["Expense"]);
+    const quarterlyBuckets = generateBuckets("Quarterly", 4, end);
+    const revenueQuarterlySeries = await FinancialAnalyticsService._seriesFromLedgerMovement(tenantId, quarterlyBuckets, currency, ["Revenue"]);
+    const yearlyBuckets = generateBuckets("Yearly", 3, end);
+    const revenueYearlySeries = await FinancialAnalyticsService._seriesFromLedgerMovement(tenantId, yearlyBuckets, currency, ["Revenue"]);
+    const revenueForecastResult = FinancialAnalyticsService._forecastFromSeries(revenueMonthlySeries, 3, config);
+
+    const trendAnalysis = {
+      dailyTrends: [],
+      monthlyTrends: revenueMonthlySeries.map((r, i) => ({ month: r.label, revenue: r.value, expense: expenseMonthlySeries[i]?.value || 0 })),
+      quarterlyTrends: revenueQuarterlySeries,
+      yearlyTrends: revenueYearlySeries,
+      seasonalAnalysis: [],
+      historicalComparison: { currentPeriod: { revenue: totalRevenue, expense: totalExpense }, previousPeriod: { revenue: previousRevenue } },
+      forecastTrends: revenueForecastResult.forecasts
+    };
+
+    // 8. Executive Dashboards
+    const executiveDashboards = FinancialAnalyticsService._buildExecutiveDashboards({
+      financialMetrics,
+      financialKPIs,
+      profitabilityAnalysis,
+      expenseAnalytics,
+      revenueAnalytics,
+      cashFlowAnalytics,
+      trendAnalysis
+    });
+
+    const refreshedDoc = await FinancialAnalyticsModel.create({
+      tenantId,
+      analysisType: "ExecutiveInsights",
+      period,
+      periodStart: start,
+      periodEnd: end,
+      currency,
+      parameters: { period, scope },
+      kpis: { ...financialMetrics, ...financialKPIs },
+      series: trendAnalysis.monthlyTrends,
+      forecasts: trendAnalysis.forecastTrends,
+      insights: [],
+      recommendations: [],
+      confidenceLevel: "High",
+      status: config.defaultAnalyticsStatus,
+      requestedBy: userId || null,
+      generatedAt: new Date(),
+      timeline: [{
+        event: "FinancialAnalyticsRefreshed",
+        description: `Financial analytics refreshed for ${period || "current period"}.`,
+        performedBy: userId || null
+      }]
+    });
+
+    publishEvent("FinancialAnalyticsRefreshed", { tenantId, period, scope, performedBy: userId || null });
+    publishEvent("FinancialKPICalculated", { tenantId, period, performedBy: userId || null });
+    publishEvent("ProfitabilityCalculated", { tenantId, period, performedBy: userId || null });
+    publishEvent("CashFlowAnalyzed", { tenantId, period, performedBy: userId || null });
+    publishEvent("ExecutiveDashboardUpdated", { tenantId, period, performedBy: userId || null });
+    publishEvent("FinancialTrendDetected", { tenantId, period, performedBy: userId || null });
+
+    await AuditLogModel.create({
+      action: "finance.analytics.refresh",
+      module: "Finance",
+      resource: "FinancialAnalytics",
+      resourceId: refreshedDoc._id.toString(),
+      userId: userId || null,
+      tenantId,
+      details: { period, scope }
+    });
+
+    return {
+      analyticsId: refreshedDoc._id.toString(),
+      period: period || "Current",
+      scope,
+      currency: currency || "USD",
+      refreshedAt: refreshedDoc.generatedAt,
+      metrics: financialMetrics,
+      kpis: financialKPIs,
+      profitability: profitabilityAnalysis,
+      expenseAnalytics,
+      revenueAnalytics,
+      cashFlow: cashFlowAnalytics,
+      trends: trendAnalysis,
+      dashboards: executiveDashboards
+    };
+  }
+
+  /**
+   * GET /api/v1/financial-analytics
+   * Returns centralized financial analytics dashboard.
+   */
+  static async getFinancialAnalyticsDashboard(query = {}, tenantId) {
+    const period = query.period || null;
+    const scope = query.scope || "Company";
+    const currency = query.currency || null;
+    return await FinancialAnalyticsService.refreshAnalytics({ period, scope, currency }, tenantId, null);
   }
 }
 

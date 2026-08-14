@@ -15,7 +15,14 @@ import mongoose from "mongoose";
 // Part 18). The mirror-opposite of Part 17's VendorPaymentModel on the AR
 // side.
 const CollectionLineItemSchema = new mongoose.Schema({
-  receivableId: { type: mongoose.Schema.Types.ObjectId, ref: "accounts_receivable", required: true },
+  // Optional as of Part 18 Part 2 — "Customer Payment is NOT Invoice."
+  // Only populated for the "Sales Invoice" collectionSource, where a real
+  // AccountsReceivableModel record exists to reference; every other
+  // collectionSource (Subscription Invoice, Marketplace Order, Deposit,
+  // Wallet Recharge, ...) has no AR record backing it, so this stays null
+  // and `invoiceNumber` carries the caller-supplied/generated reference
+  // instead.
+  receivableId: { type: mongoose.Schema.Types.ObjectId, ref: "accounts_receivable", default: null },
   invoiceNumber: { type: String, required: true },
   amount: { type: Number, required: true, min: 0.01 },
   // Tracked per-line so "Partial Payments" can apply a collected amount
@@ -68,6 +75,30 @@ const CustomerCollectionSchema = new mongoose.Schema({
   // Denormalized snapshot — Customer is not Finance-owned (Part 1), same
   // convention as AccountsReceivableModel.customerName.
   customerName: { type: String, required: true },
+  // "Merchant Awareness"/"Subscription Awareness" — Part 18 Part 2.
+  // Informational only (see PaymentIntentModel's own doc comment for why
+  // no ObjectId `ref`/existence validation exists yet).
+  merchantId: { type: mongoose.Schema.Types.Mixed, default: null },
+  storeId: { type: mongoose.Schema.Types.Mixed, default: null },
+  subscriptionId: { type: mongoose.Schema.Types.Mixed, default: null },
+  // Config-driven (utils/financeConfig.js collectionSources). Defaults to
+  // "Sales Invoice" for every collection created before this Part existed
+  // and every legacy `invoiceIds`-shaped request today — a real value, not
+  // a nullable afterthought, since it is now the field this collection's
+  // whole line-item strategy is decided from.
+  collectionSource: { type: String, required: true, index: true },
+  sourceDocumentId: { type: mongoose.Schema.Types.Mixed, default: null },
+  // Bidirectional with PaymentIntentModel.collectionId — the front-door
+  // Payment Intent `POST /customer-payments` now creates alongside this
+  // record.
+  paymentIntentId: { type: mongoose.Schema.Types.ObjectId, ref: "payment_intent", default: null },
+  correlationId: { type: String, default: null },
+  // Part 18 Part 3 — set when a Manual/Authorize Only/Delayed/Partial
+  // Capture mode leaves a payment sitting in "Authorized" status (status
+  // "Payment Authorized" above); cleared once captured. The Payment
+  // Engine's own real record of that reservation — never a second
+  // authorization concept invented here.
+  authorizedPaymentId: { type: mongoose.Schema.Types.ObjectId, ref: "payment", default: null },
   lineItems: {
     type: [CollectionLineItemSchema],
     validate: {
@@ -95,6 +126,14 @@ const CustomerCollectionSchema = new mongoose.Schema({
   collectionStage: { type: String, default: null },
   isInstallmentPlan: { type: Boolean, default: false },
   installmentFrequency: { type: String, default: null },
+  // Part 18 Part 4 — "Down Payment + Installments," "Balloon Payment,"
+  // "Grace Period." Real amounts/values actually used when building the
+  // schedule (CustomerCollectionService.computeInstallmentSchedule),
+  // recorded here for the life of the plan rather than only living in the
+  // request that created it.
+  downPaymentAmount: { type: Number, default: 0 },
+  balloonAmount: { type: Number, default: 0 },
+  installmentGracePeriodDays: { type: Number, default: null },
   installments: { type: [InstallmentSchema], default: [] },
   payments: { type: [CollectionPaymentSchema], default: [] },
   paymentLink: {
@@ -140,6 +179,9 @@ const CustomerCollectionSchema = new mongoose.Schema({
 CustomerCollectionSchema.index({ tenantId: 1, collectionNumber: 1 }, { unique: true });
 CustomerCollectionSchema.index({ tenantId: 1, customerId: 1, status: 1 });
 CustomerCollectionSchema.index({ tenantId: 1, status: 1, paymentDueDate: 1 });
+CustomerCollectionSchema.index({ tenantId: 1, collectionSource: 1 });
+CustomerCollectionSchema.index({ tenantId: 1, merchantId: 1 });
+CustomerCollectionSchema.index({ tenantId: 1, subscriptionId: 1 });
 CustomerCollectionSchema.index({ "paymentLink.token": 1 });
 
 CustomerCollectionSchema.set("toJSON", {

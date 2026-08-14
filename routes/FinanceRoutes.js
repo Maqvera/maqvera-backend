@@ -1,13 +1,46 @@
 import express from "express";
 import rateLimit from "express-rate-limit";
 import authenticateAccessToken from "../middleware/authenticateAccessToken.js";
-import validate, { accountSchemas, journalSchemas, receivableSchemas, paymentSchemas, payableSchemas, vendorSchemas, receiptSchemas, invoiceSchemas, creditNoteSchemas, debitNoteSchemas, refundSchemas, chargebackSchemas, bankAccountSchemas, bankReconciliationSchemas, cashManagementSchemas, expenseSchemas, vendorPaymentSchemas, customerCollectionSchemas, currencySchemas, taxSchemas, pricingSchemas, approvalWorkflowSchemas, settlementSchemas, financialReportSchemas, financialDashboardSchemas, financialAnalyticsSchemas, auditComplianceSchemas } from "../middleware/validateRequest.js";
+import idempotency from "../middleware/idempotency.js";
+import validate, { accountSchemas, journalSchemas, receivableSchemas, paymentSchemas, payableSchemas, vendorSchemas, receiptSchemas, invoiceSchemas, creditNoteSchemas, debitNoteSchemas, refundSchemas, chargebackSchemas, bankAccountSchemas, bankReconciliationSchemas, cashManagementSchemas, expenseSchemas, vendorPaymentSchemas, customerCollectionSchemas, currencySchemas, taxSchemas, pricingSchemas, approvalWorkflowSchemas, settlementSchemas, financialReportSchemas, financialDashboardSchemas, financialAnalyticsSchemas, auditComplianceSchemas, planningSchemas, treasurySchemas, governanceSchemas, financePlatformSchemas, walletSchemas, subscriptionSchemas, collectionCampaignSchemas, webhookSchemas } from "../middleware/validateRequest.js";
+import { processFinancialRequest, getPlatformArchitecture, getPlatformHealthStatus } from "../controllers/FinancePlatformOrchestrationController.js";
+
+import {
+  createBudget,
+  listBudgets,
+  getBudget,
+  updateBudget,
+  submitBudget,
+  approveBudget,
+  publishBudget,
+  createBudgetRevision,
+  getBudgetRevisions,
+  generateForecast,
+  listForecasts,
+  getForecast,
+  calculateVariance,
+  listVariances,
+  getVariance,
+  createScenario,
+  listScenarios,
+  getScenario,
+  evaluateScenario,
+  getPlanningDashboard
+} from "../controllers/EnterprisePlanningController.js";
 import {
   listAccounts,
   getAccount,
   createAccount,
   updateAccount,
-  deactivateAccount
+  deactivateAccount,
+  reactivateAccount,
+  suspendAccount,
+  archiveAccount,
+  mergeAccounts,
+  listAccountTemplates,
+  getAccountTemplate,
+  createAccountTemplate,
+  applyAccountTemplate
 } from "../controllers/FinanceController.js";
 import {
   listJournals,
@@ -18,7 +51,32 @@ import {
   rejectJournal,
   cancelJournal,
   postJournal,
-  reverseJournal
+  reverseJournal,
+  correctJournal,
+  getJournalHistory,
+  listJournalTemplates,
+  getJournalTemplate,
+  createJournalTemplate,
+  applyJournalTemplate,
+  createRecurringJournal,
+  listRecurringJournals,
+  getRecurringJournal,
+  pauseRecurringJournal,
+  resumeRecurringJournal,
+  cancelRecurringJournal,
+  createJournalBatch,
+  listJournalBatches,
+  getJournalBatch,
+  createRevenueRecognitionJournal,
+  searchJournals,
+  getJournalStatistics,
+  uploadJournalAttachmentFile,
+  addJournalAttachment,
+  uploadJournalImportFile,
+  previewJournalImport,
+  importJournals,
+  archiveJournal,
+  restoreJournal
 } from "../controllers/JournalController.js";
 import {
   listLedgerEntries,
@@ -39,7 +97,8 @@ import {
   createPayment,
   allocatePayment as allocatePaymentGeneric,
   voidPayment,
-  refundPayment
+  refundPayment,
+  retryPayment
 } from "../controllers/PaymentController.js";
 import {
   listPayables,
@@ -228,11 +287,15 @@ import {
   getCollectionAnalytics,
   getCollection,
   collectPayment,
+  captureCollectionPayment,
   disputeCollection,
   writeOffCollection,
   cancelCollection,
   closeCollection,
   createInstallmentPlan,
+  rescheduleInstallment,
+  cancelInstallmentPlan,
+  settleInstallmentPlanEarly,
   generatePaymentLink,
   viewCollectionByToken,
   sendReminder,
@@ -240,19 +303,74 @@ import {
   createCustomerDeposit
 } from "../controllers/CustomerCollectionController.js";
 import {
+  createWallet,
+  listWallets,
+  getWallet,
+  listWalletTransactions,
+  topUpWallet,
+  purchaseWithWallet,
+  refundToWallet,
+  transferWallet,
+  withdrawWallet,
+  suspendWallet,
+  reactivateWallet,
+  closeWallet
+} from "../controllers/WalletController.js";
+import {
+  createSubscription,
+  listSubscriptions,
+  getSubscription,
+  runSubscriptionBillingCycle,
+  recordSubscriptionUsage,
+  changeSubscriptionPlan,
+  pauseSubscription,
+  resumeSubscription,
+  cancelSubscription,
+  terminateSubscription
+} from "../controllers/SubscriptionController.js";
+import {
+  createCampaign,
+  listCampaigns,
+  getCampaign,
+  previewCampaignTargets,
+  runCampaign,
+  cancelCampaign
+} from "../controllers/CollectionCampaignController.js";
+import {
+  generateCustomerPortalToken,
+  viewCustomerPortalByToken
+} from "../controllers/CustomerPortalController.js";
+import {
+  createWebhookSubscription,
+  listWebhookSubscriptions,
+  getWebhookSubscription,
+  rotateWebhookSecret,
+  suspendWebhookSubscription,
+  reactivateWebhookSubscription,
+  disableWebhookSubscription,
+  listWebhookDeliveries,
+  replayWebhookDelivery
+} from "../controllers/WebhookController.js";
+import {
   createCurrency,
   listCurrencies,
   getCurrency,
+  submitCurrencyForApproval,
+  approveCurrencyDefinition,
   activateCurrency,
   suspendCurrency,
   archiveCurrency,
+  deprecateCurrency,
   createExchangeRate,
+  approveExchangeRate,
+  rejectExchangeRate,
   listExchangeRates,
   importExchangeRates,
   convertCurrency,
   runRevaluation,
   listRevaluations,
-  getCurrencyExposure
+  getCurrencyExposure,
+  listConversions
 } from "../controllers/CurrencyController.js";
 import {
   createTaxRule,
@@ -350,6 +468,7 @@ import {
 } from "../controllers/FinancialDashboardController.js";
 import {
   runAnalysis,
+  refreshAnalytics,
   listAnalytics,
   getFinancialAnalysis,
   cancelAnalysis,
@@ -371,6 +490,38 @@ import {
   listPolicies,
   updatePolicyStatus
 } from "../controllers/AuditComplianceController.js";
+import {
+  calculateCashPosition,
+  getCashPosition,
+  getTreasuryDashboard,
+  syncBankBalances,
+  generateLiquidityForecast,
+  listLiquidityForecasts,
+  createInvestment,
+  listInvestments,
+  getInvestmentById,
+  updateInvestmentStatus,
+  recordDebt,
+  listDebts,
+  getDebtById,
+  updateDebtStatus,
+  calculateFXExposure,
+  getFXExposures,
+  evaluateTreasuryRisks,
+  getTreasuryRisks
+} from "../controllers/TreasuryController.js";
+import {
+  evaluateGovernance,
+  listPolicies as listGovernancePolicies,
+  createPolicy as createGovernancePolicy,
+  listSoDRules,
+  createSoDRule,
+  listEvidencePackages,
+  getEvidenceById,
+  listFraudRules,
+  createFraudRule,
+  getGovernanceDashboard
+} from "../controllers/FinancialGovernanceController.js";
 
 const router = express.Router();
 const limiter = rateLimit({
@@ -401,20 +552,65 @@ router.get("/receipts/download/:token", limiter, downloadReceiptPdf);
 // two Receipt routes above. Do not move this below the router.use() line.
 router.get("/customer-payments/pay/:token", limiter, viewCollectionByToken);
 
+// Customer Self-Service Portal — docs/05-api/07-finance-api.md Part 18
+// Part 4. Same public-token-as-access-control convention as the two
+// routes above; GET-only (see CustomerPortalService's own doc comment for
+// why). Do not move this below the router.use() line.
+router.get("/customer-portal/:token", limiter, viewCustomerPortalByToken);
+
 // Finance data is tenant-owned (customer/company financial records) — never
 // public, matching every other tenant-scoped route group in this codebase.
 router.use(authenticateAccessToken);
 
-// Chart of Accounts — docs/05-api/07-finance-api.md Part 2.
+// Chart of Accounts — docs/05-api/07-finance-api.md Part 2, extended Part 36.
 router.get("/accounts", limiter, listAccounts);
 router.post("/accounts", limiter, validate(accountSchemas.createAccount), createAccount);
 router.get("/accounts/:accountId", limiter, getAccount);
 router.patch("/accounts/:accountId", limiter, validate(accountSchemas.updateAccount), updateAccount);
 router.delete("/accounts/:accountId", limiter, deactivateAccount);
+router.post("/accounts/:accountId/reactivate", limiter, reactivateAccount);
+router.post("/accounts/:accountId/suspend", limiter, validate(accountSchemas.suspendAccount), suspendAccount);
+router.post("/accounts/:accountId/archive", limiter, archiveAccount);
+router.post("/accounts/:accountId/merge", limiter, validate(accountSchemas.mergeAccounts), mergeAccounts);
+
+// Chart of Account Templates — Part 36. Static routes registered before the
+// dynamic /account-templates/:templateId route.
+router.get("/account-templates", limiter, listAccountTemplates);
+router.post("/account-templates", limiter, validate(accountSchemas.createTemplate), createAccountTemplate);
+router.post("/account-templates/:templateId/apply", limiter, applyAccountTemplate);
+router.get("/account-templates/:templateId", limiter, getAccountTemplate);
 
 // General Journal — docs/05-api/07-finance-api.md Part 3.
 router.get("/journals", limiter, listJournals);
-router.post("/journals", limiter, validate(journalSchemas.createJournal), createJournal);
+// "Idempotency Key" (File 2, Journal Platform Part 1) — closes the real,
+// pre-existing gap Part 28/33 already flagged (IdempotencyKeyModel +
+// middleware/idempotency.js existed but were unused by any Finance
+// service). Opt-in via the Idempotency-Key header, same real pattern
+// already proven on TravelPlanRoutes/IncidentRoutes/AmadeusIntegrationRoutes
+// — never made hard-required, matching this codebase's only existing use
+// of this middleware.
+router.post("/journals", limiter, idempotency(), validate(journalSchemas.createJournal), createJournal);
+
+// File 2, Journal Platform Part 3 (Part 40) — static /journals/* paths
+// registered before the dynamic /journals/:journalId GET route below, so
+// Express never mistakes "search"/"statistics" for a journalId. Bulk/
+// Template/Recurring here are real, thin aliases onto the exact same
+// controllers already mounted at /journal-batches, /journal-templates,
+// /recurring-journals (Part 39) — same capability, matching this Part's
+// own literal endpoint-path contract. Intercompany/Merchant Settlement/
+// Reprocess are not aliased — no backing capability (Intercompany/
+// Merchant) or no distinct behavior (Reprocess === calling
+// POST /journals/:journalId/post again) to alias onto; see
+// docs/05-api/07-finance-api.md Part 40's own "explicitly out of scope" note.
+router.get("/journals/search", limiter, searchJournals);
+router.get("/journals/statistics", limiter, getJournalStatistics);
+router.post("/journals/bulk", limiter, idempotency(), validate(journalSchemas.createJournalBatch), createJournalBatch);
+router.post("/journals/templates", limiter, validate(journalSchemas.createJournalTemplate), createJournalTemplate);
+router.post("/journals/recurring", limiter, validate(journalSchemas.createRecurringJournal), createRecurringJournal);
+router.post("/journals/revenue-recognition", limiter, idempotency(), validate(journalSchemas.createJournal), createRevenueRecognitionJournal);
+router.post("/journals/import/preview", limiter, uploadJournalImportFile, previewJournalImport);
+router.post("/journals/import", limiter, idempotency(), uploadJournalImportFile, importJournals);
+
 router.get("/journals/:journalId", limiter, getJournal);
 router.patch("/journals/:journalId", limiter, validate(journalSchemas.updateJournal), updateJournal);
 router.post("/journals/:journalId/approve", limiter, approveJournal);
@@ -422,6 +618,35 @@ router.post("/journals/:journalId/reject", limiter, validate(journalSchemas.reje
 router.post("/journals/:journalId/cancel", limiter, cancelJournal);
 router.post("/journals/:journalId/post", limiter, postJournal);
 router.post("/journals/:journalId/reverse", limiter, validate(journalSchemas.reverseJournal), reverseJournal);
+
+// File 2, Journal Platform Part 2 — docs/05-api/07-finance-api.md Part 39.
+router.post("/journals/:journalId/correct", limiter, validate(journalSchemas.correctJournal), correctJournal);
+router.get("/journals/:journalId/history", limiter, getJournalHistory);
+router.post("/journals/:journalId/attachments", limiter, uploadJournalAttachmentFile, addJournalAttachment);
+
+// File 2, Journal Platform Part 4 — docs/05-api/07-finance-api.md Part 41.
+router.post("/journals/:journalId/archive", limiter, archiveJournal);
+router.post("/journals/:journalId/restore", limiter, restoreJournal);
+
+// Journal Templates — static paths registered before any dynamic
+// /journal-templates/:templateId path.
+router.get("/journal-templates", limiter, listJournalTemplates);
+router.post("/journal-templates", limiter, validate(journalSchemas.createJournalTemplate), createJournalTemplate);
+router.post("/journal-templates/:templateId/apply", limiter, idempotency(), validate(journalSchemas.applyJournalTemplate), applyJournalTemplate);
+router.get("/journal-templates/:templateId", limiter, getJournalTemplate);
+
+// Recurring Journals.
+router.get("/recurring-journals", limiter, listRecurringJournals);
+router.post("/recurring-journals", limiter, validate(journalSchemas.createRecurringJournal), createRecurringJournal);
+router.get("/recurring-journals/:recurringJournalId", limiter, getRecurringJournal);
+router.post("/recurring-journals/:recurringJournalId/pause", limiter, pauseRecurringJournal);
+router.post("/recurring-journals/:recurringJournalId/resume", limiter, resumeRecurringJournal);
+router.post("/recurring-journals/:recurringJournalId/cancel", limiter, cancelRecurringJournal);
+
+// Journal Batches.
+router.get("/journal-batches", limiter, listJournalBatches);
+router.post("/journal-batches", limiter, idempotency(), validate(journalSchemas.createJournalBatch), createJournalBatch);
+router.get("/journal-batches/:batchId", limiter, getJournalBatch);
 
 // General Ledger — docs/05-api/07-finance-api.md Part 4. Static paths
 // registered before the dynamic /:accountId/balance path.
@@ -444,6 +669,9 @@ router.get("/payments/:paymentId", limiter, getPayment);
 router.post("/payments/:paymentId/allocate", limiter, validate(paymentSchemas.allocate), allocatePaymentGeneric);
 router.post("/payments/:paymentId/void", limiter, validate(paymentSchemas.void), voidPayment);
 router.post("/payments/:paymentId/refund", limiter, validate(paymentSchemas.refund), refundPayment);
+// Part 18 Part 5 — "Manual Retry" (Payment Retry Engine). Idempotency-Key
+// reused so a double-click can't create two retry payments.
+router.post("/payments/:paymentId/retry", limiter, idempotency(), retryPayment);
 
 // Accounts Payable — docs/05-api/07-finance-api.md Part 6.
 router.get("/accounts-payable", limiter, listPayables);
@@ -654,17 +882,87 @@ router.post("/customer-payments/deposits", limiter, validate(customerCollectionS
 router.get("/customer-payments/analytics", limiter, getCollectionAnalytics);
 
 router.get("/customer-payments", limiter, listCollections);
-router.post("/customer-payments", limiter, validate(customerCollectionSchemas.createCollectionRequest), createCollectionRequest);
+// Part 18 Part 2 — "Idempotency-Key... Duplicate requests -> Return
+// Existing Payment -> Never create duplicate payments." Reuses the
+// already-real, generic middleware/idempotency.js (same as journals/
+// incidents/travel plans above) rather than a parallel implementation.
+router.post("/customer-payments", limiter, idempotency(), validate(customerCollectionSchemas.createCollectionRequest), createCollectionRequest);
 router.get("/customer-payments/:collectionId", limiter, getCollection);
-router.post("/customer-payments/:collectionId/collect", limiter, validate(customerCollectionSchemas.collectPayment), collectPayment);
+// Part 18 Part 3 — Idempotency-Key reused here too (same generic
+// middleware/idempotency.js), since a collect/capture retry must never
+// double-charge.
+router.post("/customer-payments/:collectionId/collect", limiter, idempotency(), validate(customerCollectionSchemas.collectPayment), collectPayment);
+router.post("/customer-payments/:collectionId/capture", limiter, idempotency(), validate(customerCollectionSchemas.captureAuthorizedPayment), captureCollectionPayment);
 router.post("/customer-payments/:collectionId/dispute", limiter, validate(customerCollectionSchemas.dispute), disputeCollection);
 router.post("/customer-payments/:collectionId/write-off", limiter, validate(customerCollectionSchemas.writeOff), writeOffCollection);
 router.post("/customer-payments/:collectionId/cancel", limiter, validate(customerCollectionSchemas.cancel), cancelCollection);
 router.post("/customer-payments/:collectionId/close", limiter, closeCollection);
 router.post("/customer-payments/:collectionId/installments", limiter, validate(customerCollectionSchemas.createInstallmentPlan), createInstallmentPlan);
+// Part 18 Part 4 — Installment Rescheduling/Cancellation/Early Settlement.
+router.post("/customer-payments/:collectionId/installments/:installmentNumber/reschedule", limiter, validate(customerCollectionSchemas.rescheduleInstallment), rescheduleInstallment);
+router.post("/customer-payments/:collectionId/installments/cancel", limiter, validate(customerCollectionSchemas.cancelInstallmentPlan), cancelInstallmentPlan);
+router.post("/customer-payments/:collectionId/installments/settle-early", limiter, settleInstallmentPlanEarly);
 router.post("/customer-payments/:collectionId/payment-link", limiter, generatePaymentLink);
 router.post("/customer-payments/:collectionId/send-reminder", limiter, validate(customerCollectionSchemas.sendReminder), sendReminder);
 router.get("/customer-payments/:collectionId/reminders", limiter, listCollectionReminders);
+
+// Enterprise Customer Payments — Customer Self-Service Portal (Part 18
+// Part 4). Only token generation is authenticated (staff-initiated); the
+// token view itself is public — see the router.use(authenticateAccessToken)
+// section above.
+router.post("/customers/:customerId/portal-token", limiter, generateCustomerPortalToken);
+
+// Enterprise Customer Payments — Wallet Support (Part 18 Part 4). Static
+// routes registered BEFORE the dynamic "/wallets/:walletId" routes below —
+// same static-before-dynamic ordering used repeatedly this session.
+router.get("/wallets", limiter, listWallets);
+router.post("/wallets", limiter, validate(walletSchemas.createWallet), createWallet);
+router.get("/wallets/:walletId", limiter, getWallet);
+router.get("/wallets/:walletId/transactions", limiter, listWalletTransactions);
+router.post("/wallets/:walletId/topup", limiter, idempotency(), validate(walletSchemas.topUp), topUpWallet);
+router.post("/wallets/:walletId/purchase", limiter, idempotency(), validate(walletSchemas.purchase), purchaseWithWallet);
+router.post("/wallets/:walletId/refund", limiter, validate(walletSchemas.refund), refundToWallet);
+router.post("/wallets/:walletId/transfer", limiter, idempotency(), validate(walletSchemas.transfer), transferWallet);
+router.post("/wallets/:walletId/withdraw", limiter, validate(walletSchemas.withdraw), withdrawWallet);
+router.post("/wallets/:walletId/suspend", limiter, validate(walletSchemas.suspend), suspendWallet);
+router.post("/wallets/:walletId/reactivate", limiter, reactivateWallet);
+router.post("/wallets/:walletId/close", limiter, closeWallet);
+
+// Enterprise Customer Payments — Subscription + Membership Billing (Part
+// 18 Part 4). One real platform covers both (`planType`) — see
+// SubscriptionModel's own doc comment.
+router.get("/subscriptions", limiter, listSubscriptions);
+router.post("/subscriptions", limiter, validate(subscriptionSchemas.createSubscription), createSubscription);
+router.get("/subscriptions/:subscriptionId", limiter, getSubscription);
+router.post("/subscriptions/:subscriptionId/bill", limiter, idempotency(), runSubscriptionBillingCycle);
+router.post("/subscriptions/:subscriptionId/usage", limiter, validate(subscriptionSchemas.recordUsage), recordSubscriptionUsage);
+router.post("/subscriptions/:subscriptionId/change-plan", limiter, validate(subscriptionSchemas.changePlan), changeSubscriptionPlan);
+router.post("/subscriptions/:subscriptionId/pause", limiter, validate(subscriptionSchemas.pause), pauseSubscription);
+router.post("/subscriptions/:subscriptionId/resume", limiter, resumeSubscription);
+router.post("/subscriptions/:subscriptionId/cancel", limiter, validate(subscriptionSchemas.cancel), cancelSubscription);
+router.post("/subscriptions/:subscriptionId/terminate", limiter, validate(subscriptionSchemas.terminate), terminateSubscription);
+
+// Enterprise Customer Payments — Collection Campaigns (Part 18 Part 4).
+router.get("/collection-campaigns", limiter, listCampaigns);
+router.post("/collection-campaigns", limiter, validate(collectionCampaignSchemas.createCampaign), createCampaign);
+router.get("/collection-campaigns/:campaignId", limiter, getCampaign);
+router.get("/collection-campaigns/:campaignId/preview", limiter, previewCampaignTargets);
+router.post("/collection-campaigns/:campaignId/run", limiter, runCampaign);
+router.post("/collection-campaigns/:campaignId/cancel", limiter, cancelCampaign);
+
+// Enterprise Customer Payments — Webhook Platform (Part 18 Part 5). Static
+// routes registered BEFORE the dynamic "/webhook-subscriptions/:subscriptionId"
+// routes below — same static-before-dynamic ordering used repeatedly this
+// session.
+router.get("/webhook-subscriptions", limiter, listWebhookSubscriptions);
+router.post("/webhook-subscriptions", limiter, validate(webhookSchemas.createSubscription), createWebhookSubscription);
+router.get("/webhook-subscriptions/:subscriptionId", limiter, getWebhookSubscription);
+router.post("/webhook-subscriptions/:subscriptionId/rotate-secret", limiter, rotateWebhookSecret);
+router.post("/webhook-subscriptions/:subscriptionId/suspend", limiter, validate(webhookSchemas.updateStatus), suspendWebhookSubscription);
+router.post("/webhook-subscriptions/:subscriptionId/reactivate", limiter, validate(webhookSchemas.updateStatus), reactivateWebhookSubscription);
+router.post("/webhook-subscriptions/:subscriptionId/disable", limiter, validate(webhookSchemas.updateStatus), disableWebhookSubscription);
+router.get("/webhook-subscriptions/:subscriptionId/deliveries", limiter, listWebhookDeliveries);
+router.post("/webhook-deliveries/:deliveryId/replay", limiter, replayWebhookDelivery);
 
 // Enterprise Multi-Currency & Foreign Exchange — docs/05-api/07-finance-api.md
 // Part 19. Static routes registered BEFORE the dynamic
@@ -674,17 +972,26 @@ router.get("/currencies/convert", limiter, convertCurrency);
 router.get("/currencies/exposure", limiter, getCurrencyExposure);
 router.post("/currencies/revalue", limiter, validate(currencySchemas.runRevaluation), runRevaluation);
 router.get("/currencies/revaluations", limiter, listRevaluations);
+router.get("/currencies/conversions", limiter, listConversions);
 
 router.get("/exchange-rates", limiter, listExchangeRates);
-router.post("/exchange-rates", limiter, validate(currencySchemas.createExchangeRate), createExchangeRate);
+// File 4 Part 2 — "Idempotency-Key... Duplicate submissions -> Return
+// Existing Exchange Rate -> Never create duplicate records." Reuses the
+// already-real, generic middleware/idempotency.js.
+router.post("/exchange-rates", limiter, idempotency(), validate(currencySchemas.createExchangeRate), createExchangeRate);
 router.post("/exchange-rates/import", limiter, validate(currencySchemas.importRates), importExchangeRates);
+router.post("/exchange-rates/:exchangeRateId/approve", limiter, approveExchangeRate);
+router.post("/exchange-rates/:exchangeRateId/reject", limiter, validate(currencySchemas.rejectExchangeRate), rejectExchangeRate);
 
 router.get("/currencies", limiter, listCurrencies);
-router.post("/currencies", limiter, validate(currencySchemas.createCurrency), createCurrency);
+router.post("/currencies", limiter, idempotency(), validate(currencySchemas.createCurrency), createCurrency);
 router.get("/currencies/:currencyId", limiter, getCurrency);
+router.post("/currencies/:currencyId/submit", limiter, submitCurrencyForApproval);
+router.post("/currencies/:currencyId/approve", limiter, approveCurrencyDefinition);
 router.post("/currencies/:currencyId/activate", limiter, activateCurrency);
 router.post("/currencies/:currencyId/suspend", limiter, validate(currencySchemas.suspend), suspendCurrency);
 router.post("/currencies/:currencyId/archive", limiter, archiveCurrency);
+router.post("/currencies/:currencyId/deprecate", limiter, deprecateCurrency);
 
 // Enterprise Tax Engine — docs/05-api/07-finance-api.md Part 20. "A real
 // ERP never hardcodes tax logic. It uses a centralized Tax Engine."
@@ -826,6 +1133,7 @@ router.put("/dashboard-preferences/:dashboardType", limiter, validate(financialD
 // BEFORE the dynamic "/financial-analytics/:analysisId" routes below —
 // same static-before-dynamic ordering used throughout.
 router.post("/financial-analytics/run", limiter, validate(financialAnalyticsSchemas.runAnalysis), runAnalysis);
+router.post("/financial-analytics/refresh", limiter, validate(financialAnalyticsSchemas.refreshAnalytics), refreshAnalytics);
 router.get("/financial-analytics", limiter, listAnalytics);
 router.get("/financial-analytics/:analysisId", limiter, getFinancialAnalysis);
 router.post("/financial-analytics/:analysisId/cancel", limiter, cancelAnalysis);
@@ -854,4 +1162,111 @@ router.get("/compliance-policies", limiter, listPolicies);
 router.post("/compliance-policies", limiter, validate(auditComplianceSchemas.createPolicy), createPolicy);
 router.post("/compliance-policies/:policyId/status", limiter, validate(auditComplianceSchemas.updatePolicyStatus), updatePolicyStatus);
 
+// Enterprise Budgeting & Forecasting Platform — Part 17 (EPM).
+// Centralized financial planning, budgeting, forecasting, variance analysis,
+// scenario modeling, and executive planning dashboards across the ERP.
+// Static routes registered BEFORE dynamic routes throughout.
+
+// Planning Dashboard
+router.get("/planning-dashboards", limiter, getPlanningDashboard);
+
+// Budget Endpoints
+router.post("/budgets", limiter, validate(planningSchemas.createBudget), createBudget);
+router.get("/budgets", limiter, listBudgets);
+router.get("/budgets/:budgetId/versions", limiter, getBudgetRevisions);
+router.get("/budgets/:budgetId", limiter, getBudget);
+router.put("/budgets/:budgetId", limiter, validate(planningSchemas.updateBudget), updateBudget);
+router.post("/budgets/:budgetId/submit", limiter, submitBudget);
+router.post("/budgets/:budgetId/approve", limiter, validate(planningSchemas.approveBudget), approveBudget);
+router.post("/budgets/:budgetId/publish", limiter, publishBudget);
+router.post("/budgets/:budgetId/versions", limiter, validate(planningSchemas.createRevision), createBudgetRevision);
+
+// Forecast Endpoints
+router.post("/forecasts", limiter, validate(planningSchemas.generateForecast), generateForecast);
+router.get("/forecasts", limiter, listForecasts);
+router.get("/forecasts/:forecastId", limiter, getForecast);
+
+// Variance Endpoints
+router.post("/variances/calculate", limiter, validate(planningSchemas.calculateVariance), calculateVariance);
+router.get("/variances", limiter, listVariances);
+router.get("/variances/:varianceId", limiter, getVariance);
+
+// Scenario Endpoints
+router.post("/scenarios", limiter, validate(planningSchemas.createScenario), createScenario);
+router.get("/scenarios", limiter, listScenarios);
+router.post("/scenarios/:scenarioId/evaluate", limiter, evaluateScenario);
+router.get("/scenarios/:scenarioId", limiter, getScenario);
+
+// Enterprise Treasury Management Platform — Part 18 (TMS).
+// Centralized cash position, liquidity forecasting, bank connectivity,
+// investment management, debt administration, foreign exchange (FX), and treasury risk controls.
+// Static routes registered BEFORE dynamic routes.
+
+// Cash Position
+router.post("/treasury/cash-position", limiter, validate(treasurySchemas.calculateCashPosition), calculateCashPosition);
+router.get("/treasury/cash-position", limiter, getCashPosition);
+
+// Treasury Dashboard
+router.get("/treasury/dashboard", limiter, getTreasuryDashboard);
+
+// Bank Sync
+router.post("/treasury/bank-sync", limiter, validate(treasurySchemas.syncBankBalances), syncBankBalances);
+
+// Liquidity Management & Forecast
+router.post("/treasury/liquidity-forecast", limiter, validate(treasurySchemas.generateLiquidityForecast), generateLiquidityForecast);
+router.get("/treasury/liquidity-forecast", limiter, listLiquidityForecasts);
+
+// Investment Management
+router.post("/treasury/investments", limiter, validate(treasurySchemas.createInvestment), createInvestment);
+router.get("/treasury/investments", limiter, listInvestments);
+router.get("/treasury/investments/:investmentId", limiter, getInvestmentById);
+router.patch("/treasury/investments/:investmentId/status", limiter, validate(treasurySchemas.updateInvestmentStatus), updateInvestmentStatus);
+
+// Debt Management
+router.post("/treasury/debts", limiter, validate(treasurySchemas.recordDebt), recordDebt);
+router.get("/treasury/debts", limiter, listDebts);
+router.get("/treasury/debts/:debtId", limiter, getDebtById);
+router.patch("/treasury/debts/:debtId", limiter, validate(treasurySchemas.updateDebtStatus), updateDebtStatus);
+
+// Foreign Exchange (FX) Management
+router.post("/treasury/fx-exposure", limiter, validate(treasurySchemas.calculateFXExposure), calculateFXExposure);
+router.get("/treasury/fx-exposure", limiter, getFXExposures);
+
+// Treasury Risk Controls
+router.post("/treasury/risk-assessment", limiter, validate(treasurySchemas.evaluateTreasuryRisks), evaluateTreasuryRisks);
+router.get("/treasury/risk-assessment", limiter, getTreasuryRisks);
+
+// Enterprise Financial Governance & Compliance Platform — Part 19.
+// Governance policy evaluation, Segregation of Duties (SoD), internal controls,
+// fraud detection rules, evidence packages, and executive compliance dashboards.
+// Static routes registered BEFORE dynamic routes.
+
+// Evaluation
+router.post("/finance-governance/evaluate", limiter, validate(governanceSchemas.evaluateGovernance), evaluateGovernance);
+
+// Policies
+router.get("/finance-governance/policies", limiter, listGovernancePolicies);
+router.post("/finance-governance/policies", limiter, validate(governanceSchemas.createPolicy), createGovernancePolicy);
+
+// Segregation of Duties (SoD)
+router.get("/finance-governance/sod-rules", limiter, listSoDRules);
+router.post("/finance-governance/sod-rules", limiter, validate(governanceSchemas.createSoDRule), createSoDRule);
+
+// Evidence Repository
+router.get("/finance-governance/evidence", limiter, listEvidencePackages);
+router.get("/finance-governance/evidence/:evidenceId", limiter, getEvidenceById);
+
+// Fraud Detection Checks
+router.get("/finance-governance/fraud-checks", limiter, listFraudRules);
+router.post("/finance-governance/fraud-checks", limiter, validate(governanceSchemas.createFraudRule), createFraudRule);
+
+// Governance Dashboard
+router.get("/finance-governance/dashboard", limiter, getGovernanceDashboard);
+
+// Master Enterprise Finance Platform Orchestration — Part 20.
+router.post("/finance-platform/process-request", limiter, validate(financePlatformSchemas.processFinancialRequest), processFinancialRequest);
+router.get("/finance-platform/architecture", limiter, getPlatformArchitecture);
+router.get("/finance-platform/health", limiter, getPlatformHealthStatus);
+
 export default router;
+

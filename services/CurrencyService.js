@@ -1,15 +1,18 @@
 import CurrencyModel from "../models/CurrencyModel.js";
 import ExchangeRateModel from "../models/ExchangeRateModel.js";
 import CurrencyRevaluationModel from "../models/CurrencyRevaluationModel.js";
+import CurrencyConversionModel from "../models/CurrencyConversionModel.js";
 import BankAccountModel from "../models/BankAccountModel.js";
 import AccountsReceivableModel from "../models/AccountsReceivableModel.js";
 import AccountsPayableModel from "../models/AccountsPayableModel.js";
+import TreasuryInvestmentModel from "../models/TreasuryInvestmentModel.js";
 import { isPayableTerminal } from "./AccountsPayableService.js";
 import JournalService from "./JournalService.js";
 import AuditLogModel from "../models/AuditLogmodel.js";
-import { isValidIso4217Code, ISO_4217_CURRENCIES } from "../utils/iso4217.js";
+import { isValidIso4217Code, isValidIso4217NumericCode, ISO_4217_CURRENCIES } from "../utils/iso4217.js";
 import { publishEvent } from "../utils/eventBus.js";
 import { getFinanceConfig } from "../utils/financeConfig.js";
+import CacheManager from "../utils/cacheManager.js";
 
 const roundCurrency = (value, decimalPlaces = 2) => {
   const factor = 10 ** decimalPlaces;
@@ -51,11 +54,42 @@ export const invertRate = (rate) => {
  * increasing is a LOSS (it now costs more of the base currency to settle
  * the same foreign-currency obligation).
  */
-export const calculateGainLoss = (previousBaseAmount, currentBaseAmount, isLiability = false) => {
+/**
+ * `realized` (File 4 Part 3 — "Realized FX Gain, Realized FX Loss") picks
+ * which of the two real, otherwise-identical label pairs to return —
+ * Unrealized (period-end revaluation, `revalueRecord`) vs. Realized (at
+ * actual settlement, `AccountsReceivableService`/`AccountsPayableService`
+ * `allocatePayment`). Same underlying math both times; only the label and
+ * WHERE the comparison amounts came from differ.
+ */
+export const calculateGainLoss = (previousBaseAmount, currentBaseAmount, isLiability = false, realized = false) => {
   const delta = roundCurrency(currentBaseAmount - previousBaseAmount);
   const signedDelta = isLiability ? -delta : delta;
   if (signedDelta === 0) return { amount: 0, type: null };
-  return { amount: Math.abs(signedDelta), type: signedDelta > 0 ? "Unrealized Gain" : "Unrealized Loss" };
+  const label = realized ? "Realized" : "Unrealized";
+  return { amount: Math.abs(signedDelta), type: signedDelta > 0 ? `${label} Gain` : `${label} Loss` };
+};
+
+/**
+ * "Currency Rounding Rules... Banker's Rounding, Commercial Rounding,
+ * Always Up, Always Down." Applied only at the Conversion Engine's own
+ * final output rounding (`convert()` below) — every other `roundCurrency`
+ * call in this codebase's internal ledger/accounting math is deliberately
+ * untouched (plain commercial round-half-up), so this never destabilizes
+ * arithmetic no caller asked to make configurable.
+ */
+export const roundWithMode = (value, decimalPlaces, mode = "Commercial") => {
+  const factor = 10 ** decimalPlaces;
+  const scaled = (Number(value) || 0) * factor;
+  if (mode === "AlwaysUp") return Math.ceil(scaled) / factor;
+  if (mode === "AlwaysDown") return Math.floor(scaled) / factor;
+  if (mode === "BankersRounding") {
+    const floor = Math.floor(scaled);
+    const diff = scaled - floor;
+    if (Math.abs(diff - 0.5) < 1e-9) return (floor % 2 === 0 ? floor : floor + 1) / factor;
+    return Math.round(scaled) / factor;
+  }
+  return Math.round(scaled) / factor; // Commercial — unchanged existing behavior.
 };
 
 // ---------------------------------------------------------------------------
@@ -65,10 +99,26 @@ export const calculateGainLoss = (previousBaseAmount, currentBaseAmount, isLiabi
 class CurrencyService {
   // ---- Currencies ----
 
+  /** Real, shared status transition — bumps `version`, appends `timeline`, sets `updatedBy`. Every Currency lifecycle method below goes through this one place. */
+  static _transitionCurrencyStatus(currency, status, event, description, userId) {
+    currency.status = status;
+    currency.version = (currency.version || 1) + 1;
+    currency.updatedBy = userId || null;
+    currency.timeline.push({ event, description, performedBy: userId || null });
+  }
+
   /**
-   * POST /api/v1/currencies
-   * Validate Currency -> Validate ISO Code -> Approval Workflow -> Activate
-   * Currency -> Audit -> Publish CurrencyCreated.
+   * POST /api/v1/currencies — File 4 Part 2 (API Contracts Refactoring).
+   * Validate Currency -> Validate ISO Code -> Validate Precision ->
+   * Validate Duplicate -> Approval Workflow -> Activate Currency -> Audit
+   * -> Publish CurrencyCreated. When `currencyApprovalRequired` is false
+   * (default), creation auto-walks Draft -> Pending Approval -> Approved
+   * -> Active in this one call — the exact same real end state this
+   * endpoint has always produced, now recording the real intermediate
+   * transitions on `timeline` instead of a single status jump. When true,
+   * creation stops at Draft and the caller must walk
+   * `submitCurrencyForApproval` -> `approveCurrencyDefinition` ->
+   * `activateCurrency` explicitly.
    */
   static async createCurrency(data, tenantId, userId) {
     const config = getFinanceConfig();
@@ -81,28 +131,85 @@ class CurrencyService {
     const reference = ISO_4217_CURRENCIES[currencyCode];
     const name = data.name || reference.name;
     const decimalPlaces = data.decimalPlaces !== undefined && data.decimalPlaces !== null ? data.decimalPlaces : reference.decimalPlaces;
+    if (decimalPlaces < 0 || decimalPlaces > 4) throw new Error("decimalPlaces must be between 0 and 4.");
+
+    // "ISO Numeric Exists" — real cross-validation against
+    // utils/iso4217.js's own reference table, not merely a 3-digit format
+    // check.
+    let isoNumericCode = data.isoNumericCode ? String(data.isoNumericCode).trim() : null;
+    if (isoNumericCode) {
+      if (!isValidIso4217NumericCode(isoNumericCode)) throw new Error(`"${isoNumericCode}" is not a valid ISO 4217 numeric code (must be 3 digits).`);
+      if (reference.numericCode && isoNumericCode !== reference.numericCode) {
+        throw new Error(`Invalid ISO numeric code "${isoNumericCode}" — does not match the real ISO 4217 numeric code for ${currencyCode} ("${reference.numericCode}").`);
+      }
+    } else {
+      isoNumericCode = reference.numericCode || null;
+    }
+
+    const currencyType = data.currencyType || config.defaultCurrencyType;
+    if (!config.currencyTypes.includes(currencyType)) throw new Error(`Invalid currencyType "${currencyType}".`);
+
     const isBaseCurrency = !!data.baseCurrency;
+    const isReportingCurrency = !!data.reportingCurrency;
 
     if (isBaseCurrency) {
       await CurrencyModel.updateMany({ tenantId, isBaseCurrency: true }, { $set: { isBaseCurrency: false } });
+      await CacheManager.invalidate(`currency:base:${tenantId}`);
+    }
+    if (isReportingCurrency) {
+      await CurrencyModel.updateMany({ tenantId, isReportingCurrency: true }, { $set: { isReportingCurrency: false } });
     }
 
     const currency = new CurrencyModel({
-      tenantId, currencyCode, name, symbol: data.symbol || null, decimalPlaces, isBaseCurrency,
-      status: config.defaultCurrencyStatus,
+      tenantId, currencyCode, name, symbol: data.symbol || null, decimalPlaces, isoNumericCode, currencyType, isBaseCurrency, isReportingCurrency,
+      status: "Draft", version: 1,
       timeline: [{ event: "CurrencyCreated", description: `Currency ${currencyCode} (${name}) created.`, performedBy: userId || null }],
       createdBy: userId || null, updatedBy: userId || null
     });
 
     if (!config.currencyApprovalRequired) {
-      currency.status = "Active";
-      currency.timeline.push({ event: "CurrencyActivated", description: "Auto-activated — approval is not required.", performedBy: "system" });
+      CurrencyService._transitionCurrencyStatus(currency, "Pending Approval", "CurrencySubmittedForApproval", "Auto-submitted — approval is not required.", "system");
+      currency.approvedBy = "system";
+      currency.approvedAt = new Date();
+      CurrencyService._transitionCurrencyStatus(currency, "Approved", "CurrencyApproved", "Auto-approved — approval is not required.", "system");
+      CurrencyService._transitionCurrencyStatus(currency, "Active", "CurrencyActivated", "Auto-activated — approval is not required.", "system");
     }
     await currency.save();
 
-    await AuditLogModel.create({ action: "finance.currency.create", module: "Finance", resource: "Currency", resourceId: currency._id.toString(), userId: userId || null, tenantId, details: { currencyCode, isBaseCurrency } });
-    publishEvent("CurrencyCreated", { tenantId, currencyId: currency._id.toString(), currencyCode, isBaseCurrency, performedBy: userId || null });
+    await AuditLogModel.create({ action: "finance.currency.create", module: "Finance", resource: "Currency", resourceId: currency._id.toString(), userId: userId || null, tenantId, details: { currencyCode, isBaseCurrency, isReportingCurrency, currencyType } });
+    publishEvent("CurrencyCreated", { tenantId, currencyId: currency._id.toString(), currencyCode, isBaseCurrency, isReportingCurrency, currencyType, performedBy: userId || null });
     if (currency.status === "Active") publishEvent("CurrencyActivated", { tenantId, currencyId: currency._id.toString(), currencyCode, performedBy: "system" });
+
+    return currency.toJSON();
+  }
+
+  /** POST /api/v1/currencies/{currencyId}/submit — Draft -> Pending Approval. */
+  static async submitCurrencyForApproval(currencyId, tenantId, userId) {
+    const currency = await CurrencyModel.findOne({ _id: currencyId, tenantId });
+    if (!currency) throw new Error("Currency not found.");
+    if (currency.status !== "Draft") throw new Error(`Cannot submit a currency for approval from status "${currency.status}".`);
+
+    CurrencyService._transitionCurrencyStatus(currency, "Pending Approval", "CurrencySubmittedForApproval", "Submitted for approval.", userId);
+    await currency.save();
+
+    await AuditLogModel.create({ action: "finance.currency.submit", module: "Finance", resource: "Currency", resourceId: currency._id.toString(), userId: userId || null, tenantId, details: {} });
+
+    return currency.toJSON();
+  }
+
+  /** POST /api/v1/currencies/{currencyId}/approve — Pending Approval -> Approved. Same single configurable gate as Journal's/Invoice's own — see utils/financeConfig.js's own doc comment on `currencyApprovalRequired`. */
+  static async approveCurrencyDefinition(currencyId, tenantId, userId) {
+    const currency = await CurrencyModel.findOne({ _id: currencyId, tenantId });
+    if (!currency) throw new Error("Currency not found.");
+    if (currency.status !== "Pending Approval") throw new Error(`Cannot approve a currency from status "${currency.status}".`);
+
+    currency.approvedBy = userId || null;
+    currency.approvedAt = new Date();
+    CurrencyService._transitionCurrencyStatus(currency, "Approved", "CurrencyApproved", "Approved.", userId);
+    await currency.save();
+
+    await AuditLogModel.create({ action: "finance.currency.approve", module: "Finance", resource: "Currency", resourceId: currency._id.toString(), userId: userId || null, tenantId, details: {} });
+    publishEvent("CurrencyApproved", { tenantId, currencyId: currency._id.toString(), currencyCode: currency.currencyCode, performedBy: userId || null });
 
     return currency.toJSON();
   }
@@ -119,15 +226,24 @@ class CurrencyService {
     return currency;
   }
 
+  /**
+   * POST /api/v1/currencies/{currencyId}/activate — from Suspended
+   * (reactivation, unchanged legacy behavior, real regardless of the
+   * approval gate) or Approved (the new gated path). From Draft: allowed
+   * ONLY when `currencyApprovalRequired` is false — otherwise a direct
+   * Draft -> Active call would silently bypass the entire approval gate
+   * this Part exists to enforce, so it's blocked exactly like Pending
+   * Approval/Archived/Deprecated are.
+   */
   static async activateCurrency(currencyId, tenantId, userId) {
+    const config = getFinanceConfig();
     const currency = await CurrencyModel.findOne({ _id: currencyId, tenantId });
     if (!currency) throw new Error("Currency not found.");
     if (currency.status === "Active") throw new Error("Currency is already Active.");
-    if (currency.status === "Archived") throw new Error("Cannot activate an Archived currency.");
+    if (["Archived", "Pending Approval", "Deprecated"].includes(currency.status)) throw new Error(`Cannot activate a currency in status "${currency.status}".`);
+    if (currency.status === "Draft" && config.currencyApprovalRequired) throw new Error("Cannot activate a currency directly from Draft while approval is required — submit it for approval first.");
 
-    currency.status = "Active";
-    currency.updatedBy = userId || null;
-    currency.timeline.push({ event: "CurrencyActivated", description: "Currency activated.", performedBy: userId || null });
+    CurrencyService._transitionCurrencyStatus(currency, "Active", "CurrencyActivated", "Currency activated.", userId);
     await currency.save();
 
     await AuditLogModel.create({ action: "finance.currency.activate", module: "Finance", resource: "Currency", resourceId: currency._id.toString(), userId: userId || null, tenantId, details: {} });
@@ -140,11 +256,9 @@ class CurrencyService {
     const currency = await CurrencyModel.findOne({ _id: currencyId, tenantId });
     if (!currency) throw new Error("Currency not found.");
     if (currency.isBaseCurrency) throw new Error("Cannot suspend the tenant's own base currency.");
-    if (!["Active", "Draft"].includes(currency.status)) throw new Error(`Cannot suspend a currency in status "${currency.status}".`);
+    if (!["Active", "Draft", "Pending Approval", "Approved"].includes(currency.status)) throw new Error(`Cannot suspend a currency in status "${currency.status}".`);
 
-    currency.status = "Suspended";
-    currency.updatedBy = userId || null;
-    currency.timeline.push({ event: "CurrencySuspended", description: data?.reason || "Currency suspended.", performedBy: userId || null });
+    CurrencyService._transitionCurrencyStatus(currency, "Suspended", "CurrencySuspended", data?.reason || "Currency suspended.", userId);
     await currency.save();
 
     await AuditLogModel.create({ action: "finance.currency.suspend", module: "Finance", resource: "Currency", resourceId: currency._id.toString(), userId: userId || null, tenantId, details: { reason: data?.reason || null } });
@@ -158,12 +272,33 @@ class CurrencyService {
     if (currency.isBaseCurrency) throw new Error("Cannot archive the tenant's own base currency.");
     if (currency.status === "Archived") throw new Error("Currency is already Archived.");
 
-    currency.status = "Archived";
-    currency.updatedBy = userId || null;
-    currency.timeline.push({ event: "CurrencyArchived", description: "Currency archived.", performedBy: userId || null });
+    CurrencyService._transitionCurrencyStatus(currency, "Archived", "CurrencyArchived", "Currency archived.", userId);
     await currency.save();
 
     await AuditLogModel.create({ action: "finance.currency.archive", module: "Finance", resource: "Currency", resourceId: currency._id.toString(), userId: userId || null, tenantId, details: {} });
+
+    return currency.toJSON();
+  }
+
+  /**
+   * POST /api/v1/currencies/{currencyId}/deprecate — genuinely distinct
+   * from Archive: a Deprecated currency remains valid for reading
+   * historical transactions already posted in it (nothing about existing
+   * `ExchangeRateModel`/ledger rows changes), it is simply rejected for
+   * any NEW transaction going forward. Only a real, currently-Active
+   * currency can be deprecated.
+   */
+  static async deprecateCurrency(currencyId, tenantId, userId) {
+    const currency = await CurrencyModel.findOne({ _id: currencyId, tenantId });
+    if (!currency) throw new Error("Currency not found.");
+    if (currency.isBaseCurrency) throw new Error("Cannot deprecate the tenant's own base currency.");
+    if (currency.status !== "Active") throw new Error(`Cannot deprecate a currency that is not Active (status "${currency.status}").`);
+
+    CurrencyService._transitionCurrencyStatus(currency, "Deprecated", "CurrencyDeprecated", "Currency deprecated — no longer available for new transactions.", userId);
+    await currency.save();
+
+    await AuditLogModel.create({ action: "finance.currency.deprecate", module: "Finance", resource: "Currency", resourceId: currency._id.toString(), userId: userId || null, tenantId, details: {} });
+    publishEvent("CurrencyDeprecated", { tenantId, currencyId: currency._id.toString(), currencyCode: currency.currencyCode, performedBy: userId || null });
 
     return currency.toJSON();
   }
@@ -175,10 +310,25 @@ class CurrencyService {
    * explicitly created a base currency yet, the same "unconfigured =
    * sane default" stance used by Financial Periods/Credit Limits.
    */
+  /**
+   * "Performance... Cache Layer... Caches Currency Rules. Short-lived
+   * cache only. Financial transactions are never cached." (Part 18 Part
+   * 5.) This is the one real, safe, high-value cache target in this Part
+   * — a plain currency-code string with zero serialization risk (unlike
+   * a full exchange-rate lookup, which carries a Date/ObjectId that a
+   * real Redis backend would round-trip through JSON and subtly change
+   * the shape of — not worth the risk for a config value this cheap to
+   * keep looking up directly). Invalidated explicitly on the one real
+   * mutation that can change it (`createCurrency` setting a new base
+   * currency), not left to expire silently and serve a stale value.
+   */
   static async getBaseCurrency(tenantId) {
     const config = getFinanceConfig();
-    const currency = await CurrencyModel.findOne({ tenantId, isBaseCurrency: true }).lean();
-    return currency ? currency.currencyCode : config.defaultCurrency;
+    const { data } = await CacheManager.getOrCompute(`currency:base:${tenantId}`, async () => {
+      const currency = await CurrencyModel.findOne({ tenantId, isBaseCurrency: true }).lean();
+      return currency ? currency.currencyCode : config.defaultCurrency;
+    }, 300);
+    return data;
   }
 
   static async _getDecimalPlaces(tenantId, currencyCode) {
@@ -189,17 +339,37 @@ class CurrencyService {
 
   // ---- Exchange Rates ----
 
+  /** Real, shared activation — sets `approvalStatus: "Activated"`, and — if this row was created to replace a prior current one (`supersedes`) — flips that OLD row to "Superseded" (never edited/deleted otherwise). Used by both the immediate-activation path (`createExchangeRate` when no approval is required) and the explicit `approveExchangeRate` endpoint. */
+  static async _activateExchangeRateRow(exchangeRate, userId) {
+    exchangeRate.approvalStatus = "Activated";
+    exchangeRate.approvedBy = userId || "system";
+    exchangeRate.approvedAt = new Date();
+    await exchangeRate.save();
+
+    if (exchangeRate.supersedes) {
+      await ExchangeRateModel.updateOne({ _id: exchangeRate.supersedes }, { $set: { approvalStatus: "Superseded", supersededBy: exchangeRate._id } });
+    }
+  }
+
   /**
-   * POST /api/v1/exchange-rates
-   * Validate Currency Pair -> Validate Rate -> Store Historical Rate ->
-   * Publish ExchangeRateUpdated. Immutable — there is no update/delete;
-   * a correction is a new row with a later `effectiveDate`/`createdAt`.
+   * POST /api/v1/exchange-rates — File 4 Part 2. Validate Provider ->
+   * Validate Currency Pair -> Validate Rate -> Check Effective Date ->
+   * Store New Version -> Preserve Historical Version -> Approval Workflow
+   * (Optional) -> Activate Rate -> Publish ExchangeRateUpdated -> Audit.
+   * Immutable — there is no update/delete; every call is a genuinely new
+   * row. "No Overlapping Active Version" — the previously-current
+   * Activated row for this exact (fromCurrency, toCurrency, rateType) is
+   * linked via `supersedes` at creation and flipped to "Superseded" the
+   * moment this new row actually activates (immediately here when
+   * `exchangeRateApprovalRequired` is false, or later via
+   * `approveExchangeRate` when it's true) — never before, since an
+   * unapproved row must never suppress the still-current approved one.
    */
-  static async createExchangeRate(data, tenantId, userId) {
+  static async createExchangeRate(data, tenantId, userId, correlationId = null) {
     const config = getFinanceConfig();
     const fromCurrency = (data.fromCurrency || "").toUpperCase().trim();
     const toCurrency = (data.toCurrency || "").toUpperCase().trim();
-    const { rate, effectiveDate, rateType = config.defaultExchangeRateType, provider = config.defaultRateProvider } = data;
+    const { rate, effectiveDate, expiresAt = null, rateType = config.defaultExchangeRateType, provider = config.defaultRateProvider } = data;
 
     if (!isValidIso4217Code(fromCurrency) || !isValidIso4217Code(toCurrency)) throw new Error("fromCurrency and toCurrency must be valid ISO 4217 codes.");
     if (fromCurrency === toCurrency) throw new Error("fromCurrency and toCurrency must differ.");
@@ -208,16 +378,69 @@ class CurrencyService {
     if (!config.exchangeRateTypes.includes(rateType)) throw new Error(`Invalid rateType "${rateType}".`);
     if (!config.rateProviders.includes(provider)) throw new Error(`Invalid provider "${provider}".`);
 
+    const effectiveDateObj = new Date(effectiveDate);
+    const expiresAtObj = expiresAt ? new Date(expiresAt) : null;
+    if (expiresAtObj && expiresAtObj <= effectiveDateObj) throw new Error("expiresAt must be after effectiveDate.");
+
+    const previousActive = await ExchangeRateModel.findOne({
+      tenantId, fromCurrency, toCurrency, rateType,
+      $or: [{ approvalStatus: "Activated" }, { approvalStatus: null }, { approvalStatus: { $exists: false } }]
+    }).sort({ version: -1, effectiveDate: -1 });
+    const version = previousActive ? (previousActive.version || 1) + 1 : 1;
+
     const exchangeRate = await ExchangeRateModel.create({
-      tenantId, fromCurrency, toCurrency, rate, rateType, provider, source: "Manual", effectiveDate: new Date(effectiveDate), createdBy: userId || null
+      tenantId, fromCurrency, toCurrency, rate, rateType, provider, source: "Manual", effectiveDate: effectiveDateObj, expiresAt: expiresAtObj,
+      version, approvalStatus: "Pending Approval", supersedes: previousActive?._id || null, correlationId, createdBy: userId || null
     });
 
-    await AuditLogModel.create({ action: "finance.currency.create_rate", module: "Finance", resource: "ExchangeRate", resourceId: exchangeRate._id.toString(), userId: userId || null, tenantId, details: { fromCurrency, toCurrency, rate, rateType, provider } });
-    publishEvent("ExchangeRateUpdated", { tenantId, exchangeRateId: exchangeRate._id.toString(), fromCurrency, toCurrency, rate, rateType, effectiveDate: exchangeRate.effectiveDate, performedBy: userId || null });
+    if (!config.exchangeRateApprovalRequired) {
+      await CurrencyService._activateExchangeRateRow(exchangeRate, userId);
+    }
+
+    await AuditLogModel.create({ action: "finance.currency.create_rate", module: "Finance", resource: "ExchangeRate", resourceId: exchangeRate._id.toString(), userId: userId || null, tenantId, details: { fromCurrency, toCurrency, rate, rateType, provider, version, approvalStatus: exchangeRate.approvalStatus } });
+    publishEvent("ExchangeRateUpdated", { tenantId, exchangeRateId: exchangeRate._id.toString(), fromCurrency, toCurrency, rate, rateType, effectiveDate: exchangeRate.effectiveDate, version, approvalStatus: exchangeRate.approvalStatus, correlationId, performedBy: userId || null });
 
     return exchangeRate.toJSON();
   }
 
+  /** POST /api/v1/exchange-rates/{exchangeRateId}/approve — Pending Approval -> Activated. Same single configurable gate as Currency's own — "Finance Review -> Treasury Review" collapses into this one real approval action (no concrete multi-tier policy was given to build a real policy engine against). */
+  static async approveExchangeRate(exchangeRateId, tenantId, userId) {
+    const exchangeRate = await ExchangeRateModel.findOne({ _id: exchangeRateId, tenantId });
+    if (!exchangeRate) throw new Error("Exchange rate not found.");
+    if (exchangeRate.approvalStatus !== "Pending Approval") throw new Error(`Cannot approve an exchange rate in status "${exchangeRate.approvalStatus}".`);
+
+    await CurrencyService._activateExchangeRateRow(exchangeRate, userId);
+
+    await AuditLogModel.create({ action: "finance.currency.approve_rate", module: "Finance", resource: "ExchangeRate", resourceId: exchangeRate._id.toString(), userId: userId || null, tenantId, details: {} });
+    publishEvent("ExchangeRateUpdated", { tenantId, exchangeRateId: exchangeRate._id.toString(), fromCurrency: exchangeRate.fromCurrency, toCurrency: exchangeRate.toCurrency, rate: exchangeRate.rate, version: exchangeRate.version, approvalStatus: "Activated", performedBy: userId || null });
+
+    return exchangeRate.toJSON();
+  }
+
+  static async rejectExchangeRate(exchangeRateId, data, tenantId, userId) {
+    const exchangeRate = await ExchangeRateModel.findOne({ _id: exchangeRateId, tenantId });
+    if (!exchangeRate) throw new Error("Exchange rate not found.");
+    if (exchangeRate.approvalStatus !== "Pending Approval") throw new Error(`Cannot reject an exchange rate in status "${exchangeRate.approvalStatus}".`);
+
+    exchangeRate.approvalStatus = "Rejected";
+    await exchangeRate.save();
+
+    await AuditLogModel.create({ action: "finance.currency.reject_rate", module: "Finance", resource: "ExchangeRate", resourceId: exchangeRate._id.toString(), userId: userId || null, tenantId, details: { reason: data?.reason || null } });
+
+    return exchangeRate.toJSON();
+  }
+
+  /**
+   * GET /api/v1/exchange-rates — File 4 Part 2. Adds `status`
+   * (approvalStatus)/`version` filters, friendly `sort` aliases, and an
+   * opt-in `cursor` pagination mode alongside the pre-existing `page`/
+   * `pageSize` offset pagination (omitting `cursor` keeps prior behavior
+   * exactly) — same pattern already proven on Part 18's own
+   * `GET /customer-payments`. `tenant`/`company`/`branch` from the spec
+   * are never accepted as filters — tenant identity only ever comes from
+   * `getAccessScope(req)`, and there is no Company/Branch isolation
+   * dimension in this codebase at all.
+   */
   static async listExchangeRates(query, tenantId) {
     const config = getFinanceConfig();
     const filter = { tenantId };
@@ -225,18 +448,58 @@ class CurrencyService {
     if (query.toCurrency) filter.toCurrency = query.toCurrency.toUpperCase();
     if (query.provider) filter.provider = query.provider;
     if (query.rateType) filter.rateType = query.rateType;
+    if (query.status) filter.approvalStatus = query.status;
+    if (query.version) filter.version = parseInt(query.version, 10);
     if (query.effectiveDate) filter.effectiveDate = { $lte: new Date(query.effectiveDate) };
 
-    const page = Math.max(parseInt(query.page, 10) || 1, 1);
     const pageSize = Math.min(Math.max(parseInt(query.pageSize, 10) || config.defaultPageSize, 1), config.maxPageSize);
-    const skip = (page - 1) * pageSize;
 
-    const [items, total] = await Promise.all([
-      ExchangeRateModel.find(filter).sort({ effectiveDate: -1 }).skip(skip).limit(pageSize).lean(),
-      ExchangeRateModel.countDocuments(filter)
-    ]);
+    // "Sorting... Newest, Oldest, Highest Rate, Lowest Rate, Provider,
+    // Effective Date, Created Date, Version, Custom Sort."
+    const SORT_ALIASES = {
+      newest: "-effectiveDate", oldest: "effectiveDate",
+      "highest rate": "-rate", "lowest rate": "rate",
+      provider: "provider", "effective date": "-effectiveDate", "created date": "-createdAt", version: "-version"
+    };
+    const rawSort = query.sort ? (SORT_ALIASES[query.sort.toLowerCase()] || query.sort) : "-effectiveDate";
+    const direction = rawSort.startsWith("-") ? -1 : 1;
+    const sortField = rawSort.replace(/^-/, "");
+    const sortSpec = { [sortField]: direction };
 
-    return { items, pagination: { total, page, pageSize, totalPages: Math.ceil(total / pageSize) } };
+    let items; let pagination;
+    if (query.cursor) {
+      let decoded;
+      try {
+        decoded = JSON.parse(Buffer.from(query.cursor, "base64").toString("utf8"));
+      } catch (error) {
+        throw new Error("Invalid cursor.");
+      }
+      const cmp = direction === -1 ? "$lt" : "$gt";
+      Object.assign(filter, {
+        $and: [
+          ...(filter.$and || []),
+          { $or: [{ [sortField]: { [cmp]: decoded.lastValue } }, { [sortField]: decoded.lastValue, _id: { [cmp]: decoded.lastId } }] }
+        ]
+      });
+      items = await ExchangeRateModel.find(filter).sort({ ...sortSpec, _id: direction }).limit(pageSize).lean();
+      let nextCursor = null;
+      if (items.length === pageSize) {
+        const last = items[items.length - 1];
+        nextCursor = Buffer.from(JSON.stringify({ lastValue: last[sortField], lastId: last._id })).toString("base64");
+      }
+      pagination = { mode: "cursor", pageSize, nextCursor };
+    } else {
+      const page = Math.max(parseInt(query.page, 10) || 1, 1);
+      const skip = (page - 1) * pageSize;
+      let total;
+      [items, total] = await Promise.all([
+        ExchangeRateModel.find(filter).sort(sortSpec).skip(skip).limit(pageSize).lean(),
+        ExchangeRateModel.countDocuments(filter)
+      ]);
+      pagination = { mode: "offset", total, page, pageSize, totalPages: Math.ceil(total / pageSize) };
+    }
+
+    return { items, pagination };
   }
 
   /**
@@ -273,10 +536,23 @@ class CurrencyService {
     for (const currency of tenantCurrencies) {
       const rate = payload.rates[currency.currencyCode];
       if (!rate || rate <= 0) continue;
+
+      // Same real versioning/supersede discipline as createExchangeRate —
+      // an automatic import is never a second, parallel path around it.
+      const previousActive = await ExchangeRateModel.findOne({
+        tenantId, fromCurrency: baseCurrency, toCurrency: currency.currencyCode, rateType: "Spot",
+        $or: [{ approvalStatus: "Activated" }, { approvalStatus: null }, { approvalStatus: { $exists: false } }]
+      }).sort({ version: -1, effectiveDate: -1 });
+      const version = previousActive ? (previousActive.version || 1) + 1 : 1;
+
       const exchangeRate = await ExchangeRateModel.create({
         tenantId, fromCurrency: baseCurrency, toCurrency: currency.currencyCode, rate, rateType: "Spot",
-        provider: "OpenExchangeAPI", source: "Automatic", effectiveDate, createdBy: userId || null
+        provider: "OpenExchangeAPI", source: "Automatic", effectiveDate, version, supersedes: previousActive?._id || null, createdBy: userId || null
       });
+      // Automatic imports are real, already-verified provider data — no
+      // approval gate applies to them regardless of `exchangeRateApprovalRequired`
+      // (that gate is for a human manually typing in a rate).
+      await CurrencyService._activateExchangeRateRow(exchangeRate, "system");
       imported.push(exchangeRate.toJSON());
     }
 
@@ -297,26 +573,73 @@ class CurrencyService {
    * direct pair is on file. Never fabricates a rate — throws when none of
    * the three resolve.
    */
+  /**
+   * Resolves the single best candidate row for a directional pair — real,
+   * config-driven "Priority configurable" provider tie-breaking (File 4
+   * Part 2): among candidates sharing the exact latest qualifying
+   * `effectiveDate`, the earlier-listed provider in `rateProviderPriority`
+   * wins; a more recent `effectiveDate` always wins over provider
+   * priority regardless. Also the real backward-compatible filter for
+   * `approvalStatus` (a row created before this Part existed has no such
+   * field — treated the same as "Activated", never as unusable) and
+   * `expiresAt` (an expired row is excluded from live conversion the same
+   * way a future-dated one already is).
+   */
+  static async _resolveBestRate(tenantId, from, to, rateType, asOfDate) {
+    const config = getFinanceConfig();
+    const filter = {
+      tenantId, fromCurrency: from, toCurrency: to, rateType, effectiveDate: { $lte: asOfDate },
+      $and: [
+        { $or: [{ approvalStatus: "Activated" }, { approvalStatus: null }, { approvalStatus: { $exists: false } }] },
+        { $or: [{ expiresAt: null }, { expiresAt: { $gt: asOfDate } }] }
+      ]
+    };
+    const candidates = await ExchangeRateModel.find(filter).sort({ effectiveDate: -1 }).limit(20).lean();
+    if (candidates.length === 0) return null;
+
+    const priorityIndex = (provider) => {
+      const idx = config.rateProviderPriority.indexOf(provider);
+      return idx === -1 ? config.rateProviderPriority.length : idx;
+    };
+    const latestTime = new Date(candidates[0].effectiveDate).getTime();
+    const sameDate = candidates.filter((c) => new Date(c.effectiveDate).getTime() === latestTime);
+    sameDate.sort((a, b) => priorityIndex(a.provider) - priorityIndex(b.provider));
+    return sameDate[0];
+  }
+
+  /**
+   * `options.rateType: "auto"` (File 4 Part 3 — "Rate Resolution
+   * Priority... Priority configurable by tenant") tries each real
+   * `rateType` in `rateTypePriority` order, for BOTH the direct and
+   * reverse-pair lookup, until one resolves — never touches triangulation
+   * priority (triangulation is already a last-resort fallback regardless
+   * of rateType). Any other value (the default — `defaultExchangeRateType`)
+   * looks at that one type only, the exact unchanged Part 1/2 behavior.
+   */
   static async getRate(tenantId, fromCurrency, toCurrency, options = {}) {
+    const config = getFinanceConfig();
     const from = fromCurrency.toUpperCase();
     const to = toCurrency.toUpperCase();
     const asOfDate = options.asOfDate ? new Date(options.asOfDate) : new Date();
-    const rateType = options.rateType || (await CurrencyService._defaultRateType());
+    const requestedRateType = options.rateType || (await CurrencyService._defaultRateType());
 
-    if (from === to) return { rate: 1, rateId: null, rateDate: asOfDate, inverse: false, triangulated: false };
+    if (from === to) return { rate: 1, rateId: null, rateDate: asOfDate, rateType: requestedRateType, rateProvider: null, rateVersion: null, inverse: false, triangulated: false };
 
-    const direct = await ExchangeRateModel.findOne({ tenantId, fromCurrency: from, toCurrency: to, rateType, effectiveDate: { $lte: asOfDate } }).sort({ effectiveDate: -1 }).lean();
-    if (direct) return { rate: direct.rate, rateId: direct._id, rateDate: direct.effectiveDate, inverse: false, triangulated: false };
+    const typesToTry = requestedRateType === "auto" ? config.rateTypePriority : [requestedRateType];
+    for (const rateType of typesToTry) {
+      const direct = await CurrencyService._resolveBestRate(tenantId, from, to, rateType, asOfDate);
+      if (direct) return { rate: direct.rate, rateId: direct._id, rateDate: direct.effectiveDate, rateType, rateProvider: direct.provider, rateVersion: direct.version, inverse: false, triangulated: false };
 
-    const reverse = await ExchangeRateModel.findOne({ tenantId, fromCurrency: to, toCurrency: from, rateType, effectiveDate: { $lte: asOfDate } }).sort({ effectiveDate: -1 }).lean();
-    if (reverse) return { rate: invertRate(reverse.rate), rateId: reverse._id, rateDate: reverse.effectiveDate, inverse: true, triangulated: false };
+      const reverse = await CurrencyService._resolveBestRate(tenantId, to, from, rateType, asOfDate);
+      if (reverse) return { rate: invertRate(reverse.rate), rateId: reverse._id, rateDate: reverse.effectiveDate, rateType, rateProvider: reverse.provider, rateVersion: reverse.version, inverse: true, triangulated: false };
+    }
 
     const baseCurrency = await CurrencyService.getBaseCurrency(tenantId);
     if (baseCurrency !== from && baseCurrency !== to) {
       try {
-        const leg1 = await CurrencyService.getRate(tenantId, from, baseCurrency, { asOfDate, rateType });
-        const leg2 = await CurrencyService.getRate(tenantId, baseCurrency, to, { asOfDate, rateType });
-        return { rate: roundCurrency(leg1.rate * leg2.rate, 8), rateId: null, rateDate: asOfDate, inverse: false, triangulated: true };
+        const leg1 = await CurrencyService.getRate(tenantId, from, baseCurrency, { asOfDate, rateType: requestedRateType });
+        const leg2 = await CurrencyService.getRate(tenantId, baseCurrency, to, { asOfDate, rateType: requestedRateType });
+        return { rate: roundCurrency(leg1.rate * leg2.rate, 8), rateId: null, rateDate: asOfDate, rateType: requestedRateType, rateProvider: null, rateVersion: null, inverse: false, triangulated: true };
       } catch {
         // Fall through to the final "no rate available" error below —
         // triangulation is a best-effort third option, not a guarantee.
@@ -330,12 +653,82 @@ class CurrencyService {
     return getFinanceConfig().defaultExchangeRateType;
   }
 
-  /** Converts `amount` from `fromCurrency` to `toCurrency`, rounded to the target currency's own real decimal places. */
+  /**
+   * Converts `amount` from `fromCurrency` to `toCurrency`, rounded to the
+   * target currency's own real decimal places. "Conversion Audit Trail"
+   * (File 4 Part 3) is real but deliberately OPT-IN: only supplying
+   * `options.source` (one of `conversionSources`) makes this persist a
+   * real `CurrencyConversionModel` row and publish
+   * `CurrencyConversionRequested` -> `ExchangeRateResolved` ->
+   * `CurrencyConverted` -> `RateSnapshotStored` — this codebase's own
+   * internal conversion calls (revaluation loops, FX exposure
+   * recalculation, triangulation legs, etc.) never pass a `source` and
+   * stay exactly as lightweight as before this Part, so this table
+   * records real business transactions, never implementation-detail noise.
+   *
+   * Domain Events audit (File 4 Part 3's own list) — all real except two:
+   * `CurrencyConversionRequested`/`ExchangeRateResolved`/`CurrencyConverted`/
+   * `RateSnapshotStored` here; `FXGainCalculated`/`FXLossCalculated`/
+   * `CurrencyRevalued`/`RevaluationJournalPosted`/`CurrencyRevaluationStarted`
+   * in `revalueRecord`/`runPeriodEndRevaluation`. `HistoricalRateLocked` is
+   * NOT a separate event — `RateSnapshotStored` already fires at the exact
+   * moment a rate becomes permanently attached to an immutable conversion
+   * record, which is the same real trigger point; publishing a second event
+   * for it would be a fabricated duplicate. `TreasuryConversionCompleted`
+   * is deliberately NOT published anywhere — no Treasury FX Deal/Swap/
+   * Forward execution engine exists in this codebase to actually complete
+   * one (TreasuryService only tracks positions/exposure — see its own doc
+   * comments), so there is no real trigger to fire this from; faking one
+   * would violate this module's own "never fabricate" discipline.
+   */
   static async convert(amount, fromCurrency, toCurrency, tenantId, options = {}) {
-    const { rate, rateId, rateDate, inverse, triangulated } = await CurrencyService.getRate(tenantId, fromCurrency, toCurrency, options);
+    const { source = null, sourceReferenceId = null, correlationId = null, userId = null } = options;
+    if (source) publishEvent("CurrencyConversionRequested", { tenantId, source, sourceReferenceId, originalAmount: amount, originalCurrency: fromCurrency.toUpperCase(), convertedCurrency: toCurrency.toUpperCase(), correlationId, performedBy: userId });
+
+    const { rate, rateId, rateDate, rateType, rateProvider, rateVersion, inverse, triangulated } = await CurrencyService.getRate(tenantId, fromCurrency, toCurrency, options);
+    if (source) publishEvent("ExchangeRateResolved", { tenantId, source, rateId, rateType, rateProvider, rateVersion, rate, inverse, triangulated, correlationId, performedBy: userId });
+
     const decimalPlaces = await CurrencyService._getDecimalPlaces(tenantId, toCurrency.toUpperCase());
-    const convertedAmount = roundCurrency(amount * rate, decimalPlaces);
-    return { convertedAmount, rate, rateId, rateDate, inverse, triangulated };
+    const roundingMode = options.roundingMode || getFinanceConfig().currencyRoundingMode;
+    const convertedAmount = roundWithMode(amount * rate, decimalPlaces, roundingMode);
+    const calculationMethod = triangulated ? "Triangulated" : (inverse ? "Inverse" : "Direct");
+    const result = { convertedAmount, rate, rateId, rateDate, rateType, rateProvider, rateVersion, inverse, triangulated };
+
+    if (source) {
+      const config = getFinanceConfig();
+      if (!config.conversionSources.includes(source)) throw new Error(`Invalid conversion source "${source}".`);
+      const conversion = await CurrencyConversionModel.create({
+        tenantId, conversionSource: source, sourceReferenceId, originalAmount: amount, originalCurrency: fromCurrency.toUpperCase(),
+        convertedAmount, convertedCurrency: toCurrency.toUpperCase(), rate, rateId, rateType, rateProvider, rateVersion,
+        calculationMethod, correlationId, performedBy: userId
+      });
+      publishEvent("CurrencyConverted", { tenantId, conversionId: conversion._id.toString(), source, sourceReferenceId, originalAmount: amount, convertedAmount, rate, calculationMethod, correlationId, performedBy: userId });
+      publishEvent("RateSnapshotStored", { tenantId, conversionId: conversion._id.toString(), rateId, rateType, rateProvider, rateVersion, correlationId, performedBy: userId });
+      result.conversionId = conversion._id;
+    }
+
+    return result;
+  }
+
+  /** GET /api/v1/currencies/conversions — real Conversion Audit Trail read. */
+  static async listConversions(query, tenantId) {
+    const config = getFinanceConfig();
+    const filter = { tenantId };
+    if (query.source) filter.conversionSource = query.source;
+    if (query.originalCurrency) filter.originalCurrency = query.originalCurrency.toUpperCase();
+    if (query.convertedCurrency) filter.convertedCurrency = query.convertedCurrency.toUpperCase();
+    if (query.correlationId) filter.correlationId = query.correlationId;
+
+    const page = Math.max(parseInt(query.page, 10) || 1, 1);
+    const pageSize = Math.min(Math.max(parseInt(query.pageSize, 10) || config.defaultPageSize, 1), config.maxPageSize);
+    const skip = (page - 1) * pageSize;
+
+    const [items, total] = await Promise.all([
+      CurrencyConversionModel.find(filter).sort({ createdAt: -1 }).skip(skip).limit(pageSize).lean(),
+      CurrencyConversionModel.countDocuments(filter)
+    ]);
+
+    return { items, pagination: { total, page, pageSize, totalPages: Math.ceil(total / pageSize) } };
   }
 
   // ---- Revaluation & FX Gain/Loss ----
@@ -344,6 +737,33 @@ class CurrencyService {
     const journal = await JournalService.createJournal({ journalType: "Automatic", postingDate, description, referenceNumber, currency, lines }, tenantId, userId || "system");
     await JournalService.approveJournal(journal._id, tenantId, userId || "system");
     return JournalService.postJournal(journal._id, tenantId, userId || "system");
+  }
+
+  /**
+   * Shared FX Gain/Loss journal posting — real Dr/Cr direction derived
+   * once, reused by both `revalueRecord` (period-end, Unrealized) and
+   * `AccountsReceivableService`/`AccountsPayableService`'s own
+   * `allocatePayment` (at settlement, Realized — File 4 Part 3). For an
+   * ASSET (`isLiability: false` — Bank/AR), a rising base-currency value
+   * is a GAIN and the control account absorbs the debit side; for a
+   * LIABILITY (AP), a rising base-currency value is a LOSS — the mirror
+   * opposite, matching `calculateGainLoss`'s own sign-flip exactly. Skips
+   * posting (returns null) — never fabricates a journal — until both
+   * `fxGainAccountCode`/`fxLossAccountCode` AND the caller's own
+   * `controlAccountCode` are configured, same "skip until configured"
+   * fallback every other optional posting in this module uses.
+   */
+  static async postFxGainLossJournal({ tenantId, userId, postingDate, description, baseCurrency, controlAccountCode, isLiability, gainLossAmount, gainLossType, referenceNumber }) {
+    const config = getFinanceConfig();
+    if (!gainLossType || gainLossAmount <= 0 || !config.fxGainAccountCode || !config.fxLossAccountCode || !controlAccountCode) return null;
+
+    const isGain = gainLossType.endsWith("Gain");
+    const controlIsDebit = (isGain && !isLiability) || (!isGain && isLiability);
+    const lines = controlIsDebit
+      ? [{ accountCode: controlAccountCode, debit: gainLossAmount }, { accountCode: isGain ? config.fxGainAccountCode : config.fxLossAccountCode, credit: gainLossAmount }]
+      : [{ accountCode: isGain ? config.fxGainAccountCode : config.fxLossAccountCode, debit: gainLossAmount }, { accountCode: controlAccountCode, credit: gainLossAmount }];
+
+    return CurrencyService._postAutomaticJournal({ tenantId, userId, postingDate, description, currency: baseCurrency, referenceNumber, lines });
   }
 
   /**
@@ -357,7 +777,6 @@ class CurrencyService {
    * (its creation date) — the first-ever revaluation's honest baseline.
    */
   static async revalueRecord({ targetType, targetId, currency, foreignAmount, controlAccountCode, bookingDate, tenantId, revaluationDate, userId }) {
-    const config = getFinanceConfig();
     const baseCurrency = await CurrencyService.getBaseCurrency(tenantId);
     if (currency.toUpperCase() === baseCurrency) return null; // Nothing to revalue — already in base currency.
 
@@ -376,22 +795,12 @@ class CurrencyService {
     const isLiability = targetType === "AccountsPayable";
     const { amount: gainLossAmount, type: gainLossType } = calculateGainLoss(previousBaseAmount, currentBaseAmount, isLiability);
 
-    let journalId = null;
-    if (gainLossAmount > 0 && config.fxGainAccountCode && config.fxLossAccountCode && controlAccountCode) {
-      const isGain = gainLossType === "Unrealized Gain";
-      // A gain increases the asset's/decreases the liability's own control
-      // account balance; a loss does the reverse — the fxGain/fxLoss
-      // account is always the offsetting side.
-      const controlIsDebit = (isGain && !isLiability) || (!isGain && isLiability);
-      const lines = controlIsDebit
-        ? [{ accountCode: controlAccountCode, debit: gainLossAmount }, { accountCode: isGain ? config.fxGainAccountCode : config.fxLossAccountCode, credit: gainLossAmount }]
-        : [{ accountCode: isGain ? config.fxGainAccountCode : config.fxLossAccountCode, debit: gainLossAmount }, { accountCode: controlAccountCode, credit: gainLossAmount }];
-
-      const journal = await CurrencyService._postAutomaticJournal({
-        tenantId, userId, postingDate: asOfDate, description: `FX ${gainLossType} on ${targetType} ${targetId}`, currency: baseCurrency, referenceNumber: targetId.toString(), lines
-      });
-      journalId = journal?._id || null;
-    }
+    const journal = await CurrencyService.postFxGainLossJournal({
+      tenantId, userId, postingDate: asOfDate, description: `FX ${gainLossType} on ${targetType} ${targetId}`, baseCurrency, controlAccountCode,
+      isLiability, gainLossAmount, gainLossType, referenceNumber: targetId.toString()
+    });
+    const journalId = journal?._id || null;
+    if (journalId) publishEvent("RevaluationJournalPosted", { tenantId, targetType, targetId: targetId.toString(), journalId: journalId.toString(), gainLossAmount, gainLossType, performedBy: userId || "system" });
 
     const revaluation = await CurrencyRevaluationModel.create({
       tenantId, revaluationDate: asOfDate, targetType, targetId, currencyCode: currency.toUpperCase(), baseCurrencyCode: baseCurrency,
@@ -417,6 +826,8 @@ class CurrencyService {
     const config = getFinanceConfig();
     const baseCurrency = await CurrencyService.getBaseCurrency(tenantId);
     const results = [];
+
+    publishEvent("CurrencyRevaluationStarted", { tenantId, revaluationDate, targets: config.fxRevaluationTargets, performedBy: userId || "system" });
 
     if (config.fxRevaluationTargets.includes("BankAccount")) {
       const bankAccounts = await BankAccountModel.find({ tenantId, status: { $in: ["Active", "Verified"] }, currency: { $ne: baseCurrency } }).lean();
@@ -448,6 +859,21 @@ class CurrencyService {
         const result = await CurrencyService.revalueRecord({
           targetType: "AccountsPayable", targetId: payable._id, currency: payable.currency, foreignAmount: payable.outstandingBalance,
           controlAccountCode: config.apControlAccountCode, bookingDate: payable.createdAt, tenantId, revaluationDate, userId
+        });
+        if (result) results.push(result);
+      }
+    }
+
+    // File 4 Part 3 — 4th real revaluation target. `treasuryInvestmentControlAccountCode`
+    // defaults unconfigured (null), same "skip posting, never fabricate" fallback
+    // `postFxGainLossJournal` already applies to every other target's control account —
+    // the revaluation record itself is still created either way.
+    if (config.fxRevaluationTargets.includes("TreasuryInvestment")) {
+      const investments = await TreasuryInvestmentModel.find({ tenantId, status: "Active", currency: { $ne: baseCurrency }, currentValue: { $gt: 0 } }).lean();
+      for (const investment of investments) {
+        const result = await CurrencyService.revalueRecord({
+          targetType: "TreasuryInvestment", targetId: investment._id, currency: investment.currency, foreignAmount: investment.currentValue,
+          controlAccountCode: config.treasuryInvestmentControlAccountCode, bookingDate: investment.startDate, tenantId, revaluationDate, userId
         });
         if (result) results.push(result);
       }

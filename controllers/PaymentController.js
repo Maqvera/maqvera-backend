@@ -115,3 +115,20 @@ export const refundPayment = async (req, res) => {
     return sendError(res, statusFromError(error), error.message || "Failed to refund payment.", requestId);
   }
 };
+
+/** POST /api/v1/payments/{paymentId}/retry — "Manual Retry" (Part 18 Part 5's own Payment Retry Engine). */
+export const retryPayment = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "finance.payment.create")) return sendError(res, 403, "Permission denied.", requestId);
+    const userId = req.auth?.userId || req.auth?.id || null;
+
+    const payment = await PaymentService.retryPayment(req.params.paymentId, scope.tenantId, userId);
+    return sendSuccess(res, payment.status === "Failed" ? 402 : 201, "Payment retried.", payment, requestId);
+  } catch (error) {
+    console.error("retryPayment error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to retry payment.", requestId);
+  }
+};

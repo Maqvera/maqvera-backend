@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {
+import FinancialAnalyticsService, {
   linearRegression,
   predictLinear,
   computeGrowthRate,
@@ -138,4 +138,28 @@ test("parseForecastHorizon recognizes real forward-looking horizon strings and f
   assert.deepEqual(parseForecastHorizon("Quarterly", config), { granularity: "Quarterly", count: 3 });
   assert.deepEqual(parseForecastHorizon("garbage", config), { granularity: "Monthly", count: 3 });
   assert.deepEqual(parseForecastHorizon(null, config), { granularity: "Monthly", count: 3 });
+});
+
+test("FinancialAnalyticsService._buildExecutiveDashboards generates CEO, CFO, Finance, Department, and Board executive dashboards", () => {
+  const sampleData = {
+    financialMetrics: { revenue: 10000, expenses: 6000, grossProfit: 4000, netProfit: 4000, operatingMargin: 40, cashPosition: 25000, accountsReceivable: 5000, accountsPayable: 3000, workingCapital: 12000, ebitda: 4500 },
+    financialKPIs: { revenueGrowth: 15, grossMargin: 40, netMargin: 40, ebitdaMargin: 45, operatingRatio: 60, workingCapital: 12000, currentRatio: 2.5, quickRatio: 2.5, debtToEquity: 0.5, returnOnAssets: 10, returnOnEquity: 15 },
+    profitabilityAnalysis: { companyProfitability: {}, departmentProfitability: [{ departmentName: "Engineering", expenses: 3000 }], customerProfitability: [{ customerName: "Acme Corp", revenue: 5000 }], productProfitability: [], serviceProfitability: [], projectProfitability: [] },
+    expenseAnalytics: { departmentExpenses: [{ departmentName: "Engineering", amount: 3000 }], categoryBreakdown: [{ category: "Payroll", amount: 4000 }] },
+    revenueAnalytics: { revenueByCustomer: [{ customerName: "Acme Corp", revenue: 5000 }], revenueByProduct: [], revenueByService: [], revenueByCountry: [], revenueBySalesperson: [], recurringRevenue: 2000 },
+    cashFlowAnalytics: { operatingCashFlow: 4000, cashBurnRate: 0, liquidityTrends: [], cashForecast: [] },
+    trendAnalysis: { monthlyTrends: [], forecastTrends: [] }
+  };
+
+  const dashboards = FinancialAnalyticsService._buildExecutiveDashboards(sampleData);
+  assert.ok(dashboards.ceoDashboard);
+  assert.equal(dashboards.ceoDashboard.summary.totalRevenue, 10000);
+  assert.ok(dashboards.cfoDashboard);
+  assert.equal(dashboards.cfoDashboard.summary.ebitda, 4500);
+  assert.ok(dashboards.financeDashboard);
+  assert.equal(dashboards.financeDashboard.summary.accountsReceivable, 5000);
+  assert.ok(dashboards.departmentDashboard);
+  assert.equal(dashboards.departmentDashboard.departments.length, 1);
+  assert.ok(dashboards.boardDashboard);
+  assert.equal(dashboards.boardDashboard.summary.revenue, 10000);
 });

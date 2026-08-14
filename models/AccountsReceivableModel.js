@@ -63,6 +63,16 @@ const AccountsReceivableSchema = new mongoose.Schema({
     type: String,
     required: true
   },
+  // File 4 Part 3 — "Realized FX Gain/Loss... Customer Invoice USD 1,000,
+  // Rate 305.00, Customer Pays Later, Current Rate 315.00, FX Difference
+  // Calculated." A real, immutable snapshot of this receivable's own
+  // base-currency value at booking time — never re-derived later — so
+  // `allocatePayment` can compare it against the settlement-time value
+  // for the exact portion actually collected. Null when `currency`
+  // already IS the tenant's base currency (nothing to realize).
+  bookingExchangeRate: { type: Number, default: null },
+  bookingBaseCurrency: { type: String, default: null },
+  bookingBaseCurrencyAmount: { type: Number, default: null },
   // Config-driven (utils/financeConfig.js receivableStatuses) — Draft,
   // Open, Partially Paid, Paid, Overdue, In Collection, Settled, Written
   // Off, Cancelled, Disputed.

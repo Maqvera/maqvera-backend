@@ -42,6 +42,7 @@ import visaRoute from "./routes/VisaRoutes.js";
 import visaDashboardRoute from "./routes/VisaDashboardRoutes.js";
 import referenceDataRoute from "./routes/ReferenceDataRoutes.js";
 import financeRoute from "./routes/FinanceRoutes.js";
+import communicationRoute from "./routes/CommunicationRoutes.js";
 import DBconfig from "./config/DbConfig.js";
 import TravelOrchestrationEngine from "./services/TravelOrchestrationEngine.js";
 import VisaTimelineEventBus from "./services/VisaTimelineEventBus.js";
@@ -67,13 +68,16 @@ import InvoiceService from "./services/InvoiceService.js";
 import RefundService from "./services/RefundService.js";
 import BankAccountService from "./services/BankAccountService.js";
 import CustomerCollectionService from "./services/CustomerCollectionService.js";
+import WebhookService from "./services/WebhookService.js";
 import CustomerCollectionScheduler from "./services/customerCollectionScheduler.js";
+import SubscriptionBillingScheduler from "./services/subscriptionBillingScheduler.js";
 import CurrencyRevaluationScheduler from "./services/currencyRevaluationScheduler.js";
 import TaxRuleExpiryScheduler from "./services/taxRuleExpiryScheduler.js";
 import PricingRuleExpiryScheduler from "./services/pricingRuleExpiryScheduler.js";
 import ApprovalEscalationScheduler from "./services/approvalEscalationScheduler.js";
 import FinancialReportScheduler from "./services/financialReportScheduler.js";
 import AuditRetentionScheduler from "./services/auditRetentionScheduler.js";
+import RecurringJournalScheduler from "./services/recurringJournalScheduler.js";
 
 validateEnv();
 
@@ -90,12 +94,14 @@ const bootstrapEnterpriseServices = async () => {
   await FlightScheduleSyncScheduler.init();
   await ReceivableOverdueScheduler.init();
   await CustomerCollectionScheduler.init();
+  await SubscriptionBillingScheduler.init();
   await CurrencyRevaluationScheduler.init();
   await TaxRuleExpiryScheduler.init();
   await PricingRuleExpiryScheduler.init();
   await ApprovalEscalationScheduler.init();
   await FinancialReportScheduler.init();
   await AuditRetentionScheduler.init();
+  await RecurringJournalScheduler.init();
   await AIWorkflowRecoveryScheduler.init();
   await AIContextExpiryScheduler.init();
   await AIApprovalTimeoutScheduler.init();
@@ -167,6 +173,9 @@ app.use("/api/v1/reference", referenceDataRoute);
 app.use("/api/v1", notesTimelineRoute);
 app.use("/api/v1", visaRoute);
 app.use("/api/v1", financeRoute);
+app.use("/api/v1/communication", communicationRoute);
+app.use("/api/v1/emails", communicationRoute);
+app.use("/api/v1/sms", communicationRoute);
 
 // Error handling
 app.use(notFoundHandler);
@@ -186,6 +195,7 @@ const startServer = async () => {
     RefundService.initEventListeners();
     BankAccountService.initEventListeners();
     CustomerCollectionService.initEventListeners();
+    WebhookService.initEventListeners();
     app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
   } catch (error) {
     console.error("Application bootstrap failed:", error.message);

@@ -5,7 +5,9 @@ import {
   computeFraudRiskScore,
   isPaymentAllocatable,
   isPaymentVoidable,
-  isPaymentRefundable
+  isPaymentRefundable,
+  isPaymentCapturable,
+  deriveFraudStatus
 } from "../services/PaymentService.js";
 
 test("resolveGateway routes Cash/Cheque/Bank Transfer to Manual regardless of default", () => {
@@ -70,4 +72,21 @@ test("isPaymentRefundable allows Captured through Completed but not pre-capture 
   assert.equal(isPaymentRefundable("Completed"), true);
   assert.equal(isPaymentRefundable("Initiated"), false);
   assert.equal(isPaymentRefundable("Voided"), false);
+});
+
+test("isPaymentCapturable only allows Authorized (Part 18 Part 3 capture modes)", () => {
+  assert.equal(isPaymentCapturable("Authorized"), true);
+  assert.equal(isPaymentCapturable("Captured"), false);
+  assert.equal(isPaymentCapturable("Initiated"), false);
+  assert.equal(isPaymentCapturable("Pending"), false);
+});
+
+test("deriveFraudStatus bands riskScore into Clear/Review/Flagged", () => {
+  const thresholds = { reviewThreshold: 40, flagThreshold: 70 };
+  assert.equal(deriveFraudStatus(0, thresholds), "Clear");
+  assert.equal(deriveFraudStatus(39, thresholds), "Clear");
+  assert.equal(deriveFraudStatus(40, thresholds), "Review");
+  assert.equal(deriveFraudStatus(69, thresholds), "Review");
+  assert.equal(deriveFraudStatus(70, thresholds), "Flagged");
+  assert.equal(deriveFraudStatus(100, thresholds), "Flagged");
 });

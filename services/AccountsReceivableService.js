@@ -6,6 +6,7 @@ import AuditLogModel from "../models/AuditLogmodel.js";
 import PaymentService from "./PaymentService.js";
 import CustomerCreditService from "./CustomerCreditService.js";
 import JournalService from "./JournalService.js";
+import CurrencyService, { calculateGainLoss } from "./CurrencyService.js";
 import FinanceSequenceModel from "../models/FinanceSequenceModel.js";
 import { subscribeEvent, publishEvent } from "../utils/eventBus.js";
 import { getFinanceConfig } from "../utils/financeConfig.js";
@@ -197,6 +198,22 @@ class AccountsReceivableService {
     const issueDateObj = issueDate ? new Date(issueDate) : new Date();
     const dueDateObj = new Date(dueDate);
 
+    // File 4 Part 3 — real booking-time rate snapshot, captured once and
+    // never re-derived, so "Realized FX Gain/Loss at settlement"
+    // (allocatePayment, below) has an honest baseline to compare against.
+    // Null when this receivable's own currency already IS the tenant's
+    // base currency — nothing to ever realize.
+    let bookingExchangeRate = null;
+    let bookingBaseCurrency = null;
+    let bookingBaseCurrencyAmount = null;
+    const baseCurrencyForBooking = await CurrencyService.getBaseCurrency(tenantId);
+    if (currency.toUpperCase() !== baseCurrencyForBooking) {
+      const booking = await CurrencyService.convert(roundedAmount, currency, baseCurrencyForBooking, tenantId, { asOfDate: issueDateObj });
+      bookingExchangeRate = booking.rate;
+      bookingBaseCurrency = baseCurrencyForBooking;
+      bookingBaseCurrencyAmount = booking.convertedAmount;
+    }
+
     let creationJournalId = null;
     if (revenueAccountCode && config.arControlAccountCode) {
       const journal = await AccountsReceivableService._postAutomaticJournal({
@@ -225,6 +242,7 @@ class AccountsReceivableService {
       paidAmount: 0,
       outstandingBalance: roundedAmount,
       currency,
+      bookingExchangeRate, bookingBaseCurrency, bookingBaseCurrencyAmount,
       status: config.defaultReceivableStatus,
       timeline: [{ event: "ReceivableCreated", description: `Receivable created for invoice ${resolvedInvoiceNumber}.`, performedBy: userId || null }],
       createdBy: userId || null,
@@ -330,6 +348,34 @@ class AccountsReceivableService {
     receivable.timeline.push({ event: "PaymentAllocated", description: `Payment of ${roundedAmount} ${receivable.currency} allocated.`, performedBy: userId || null });
     await receivable.save();
 
+    // File 4 Part 3 — "Realized FX Gain/Loss... Customer Invoice USD
+    // 1,000, Rate 305.00, Customer Pays Later, Current Rate 315.00, FX
+    // Difference Calculated, Gain/Loss Journal Generated." Only applies
+    // when this receivable was booked in a foreign currency
+    // (`bookingExchangeRate` set at creation) — compares the proportional
+    // booking-time base-currency value of the applied portion against its
+    // real value converted at today's rate, for exactly the portion just
+    // settled (never the full original amount, since only this portion
+    // has actually been collected).
+    let realizedFx = null;
+    if (receivable.bookingExchangeRate && appliedToReceivable > 0) {
+      const previousBaseAmount = roundCurrency(appliedToReceivable * receivable.bookingExchangeRate);
+      const { convertedAmount: currentBaseAmount } = await CurrencyService.convert(appliedToReceivable, receivable.currency, receivable.bookingBaseCurrency, tenantId);
+      const { amount: gainLossAmount, type: gainLossType } = calculateGainLoss(previousBaseAmount, currentBaseAmount, false, true);
+
+      if (gainLossAmount > 0) {
+        const fxJournal = await CurrencyService.postFxGainLossJournal({
+          tenantId, userId, postingDate: new Date(), description: `Realized FX ${gainLossType} on receivable ${receivable.invoiceNumber}`,
+          baseCurrency: receivable.bookingBaseCurrency, controlAccountCode: config.arControlAccountCode, isLiability: false,
+          gainLossAmount, gainLossType, referenceNumber: receivable.invoiceNumber
+        });
+        realizedFx = { amount: gainLossAmount, type: gainLossType, journalId: fxJournal?._id || null };
+        receivable.timeline.push({ event: gainLossType.replace(" ", ""), description: `${gainLossAmount} ${receivable.bookingBaseCurrency} ${gainLossType} realized on settlement.`, performedBy: userId || null });
+        await receivable.save();
+        publishEvent(gainLossType.endsWith("Gain") ? "FXGainCalculated" : "FXLossCalculated", { tenantId, targetType: "AccountsReceivable", targetId: receivable._id.toString(), amount: gainLossAmount, realized: true, journalId: fxJournal?._id || null, performedBy: userId || null });
+      }
+    }
+
     let credit = null;
     if (overpaymentExcess > 0) {
       credit = await CustomerCreditService.createCredit({
@@ -348,7 +394,7 @@ class AccountsReceivableService {
       resourceId: receivable._id.toString(),
       userId: userId || null,
       tenantId,
-      details: { paymentId: paymentId.toString(), amount: roundedAmount, appliedToReceivable, overpaymentExcess }
+      details: { paymentId: paymentId.toString(), amount: roundedAmount, appliedToReceivable, overpaymentExcess, realizedFx }
     });
 
     publishEvent("PaymentAllocated", { tenantId, receivableId: receivable._id.toString(), customerId: receivable.customerId.toString(), paymentId: paymentId.toString(), amount: roundedAmount, appliedToReceivable, overpaymentExcess, performedBy: userId || null });
@@ -359,7 +405,7 @@ class AccountsReceivableService {
       publishEvent("ReceivableSettled", { tenantId, receivableId: receivable._id.toString(), customerId: receivable.customerId.toString(), settledVia: "Payment", performedBy: userId || null });
     }
 
-    return { receivable: receivable.toJSON(), credit };
+    return { receivable: receivable.toJSON(), credit, realizedFx };
   }
 
   /**

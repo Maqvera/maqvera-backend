@@ -56,6 +56,11 @@ const AccountsPayableSchema = new mongoose.Schema({
     type: String,
     required: true
   },
+  // File 4 Part 3 — same real booking-time snapshot as
+  // AccountsReceivableModel's own (mirror-opposite on the liability side).
+  bookingExchangeRate: { type: Number, default: null },
+  bookingBaseCurrency: { type: String, default: null },
+  bookingBaseCurrencyAmount: { type: Number, default: null },
   // Config-driven (utils/financeConfig.js payableStatuses) — Draft, Pending
   // Approval, Approved, Open, Partially Paid, Paid, Settled, Cancelled,
   // Disputed, Written Off.

@@ -46,10 +46,60 @@ export const getFinanceConfig = () => {
     accountCategories: parseStringList(process.env.ACCOUNT_CATEGORIES_JSON, ['Assets', 'Liabilities', 'Equity', 'Revenue', 'Expense']),
     // "Account Types" — Header, Posting, Control, Summary, System, Temporary, Virtual.
     accountTypes: parseStringList(process.env.ACCOUNT_TYPES_JSON, ['Header', 'Posting', 'Control', 'Summary', 'System', 'Temporary', 'Virtual']),
-    // "Account Status" — Draft, Active, Inactive, Archived.
-    accountStatuses: parseStringList(process.env.ACCOUNT_STATUSES_JSON, ['Draft', 'Active', 'Inactive', 'Archived']),
+    // "Account Status" — Draft, Active, Inactive, Suspended, Archived.
+    // "Suspended" (Part 36) is a real, distinct, real-world-common
+    // intermediate state — temporarily blocked from posting without the
+    // more final connotation of "Inactive"/"Archived".
+    accountStatuses: parseStringList(process.env.ACCOUNT_STATUSES_JSON, ['Draft', 'Active', 'Inactive', 'Suspended', 'Archived']),
     defaultAccountStatus: process.env.DEFAULT_ACCOUNT_STATUS || 'Active',
     defaultAccountType: process.env.DEFAULT_ACCOUNT_TYPE || 'Posting',
+    // "Posting Restrictions" (Part 36) — the spec's own "Manual Posting
+    // Allowed"/"Manual Posting Blocked"/"System Generated Only" collapse
+    // into one real, checkable distinction: SystemGeneratedOnly blocks a
+    // manually-created (non-Automatic) journal from posting to the
+    // account; Merchant/Company/Branch/Subscription-Feature Restricted
+    // have no backing entity in this codebase (see docs/05-api/07-finance-api.md
+    // Part 36) and are dropped. CurrencyRestricted/DimensionRestricted are
+    // real and enforced by JournalService.
+    postingRestrictionTypes: parseStringList(process.env.POSTING_RESTRICTION_TYPES_JSON, ['Unrestricted', 'SystemGeneratedOnly', 'CurrencyRestricted', 'DimensionRestricted']),
+    // "Financial Dimensions" (Part 36) — real dimension TYPES a journal
+    // line may/must be tagged with; Merchant/Branch dropped (see above),
+    // Company is redundant with tenantId. Callers may still supply
+    // arbitrary custom dimension keys beyond this list on a line itself
+    // ("Unlimited custom dimensions") — this list only constrains what an
+    // account may *require*/*allow* by name via its own `dimensions` field.
+    financialDimensionTypes: parseStringList(process.env.FINANCIAL_DIMENSION_TYPES_JSON, ['Department', 'CostCenter', 'Project', 'ProductLine', 'Region', 'Customer', 'Vendor', 'Employee', 'Asset', 'TaxJurisdiction', 'BusinessUnit']),
+    // "Account Ownership" (Part 36) — Company (the real, only backing
+    // owner — tenantId) and GlobalTemplate (ChartTemplateModel rows,
+    // tenant-agnostic by design). Merchant/Branch/SharedFinance dropped.
+    accountOwnershipTypes: parseStringList(process.env.ACCOUNT_OWNERSHIP_TYPES_JSON, ['Company', 'GlobalTemplate']),
+    // "Deferred Revenue" (Part 37, spec item 24) — real, tied to this ERP's
+    // existing advance-payment/deposit flows: Invoice type "Deposit" (Part
+    // 9's invoiceTypes), Payment type "Deposit" (Part 7's paymentTypes),
+    // and Booking's own `deposit_received` workflow status. Deferred
+    // Revenue accounts are ordinary Liabilities-category accounts (no new
+    // category needed) tagged with one of these real sub-types so
+    // booking/visa/invoice deposit flows can identify "the" deferred
+    // revenue account without inventing a second account-code convention
+    // layered on top of accountCode. Subscription Accounting, Merchant
+    // Account Support, Marketplace Accounting, Merchant Escrow, Wallet,
+    // Gift Card, and Loyalty account types (the rest of the same spec's
+    // items 21-23/25-28/30-33) were declared explicitly out of scope — no
+    // backing entity for Subscription/Merchant/Wallet/Gift-Card/Loyalty
+    // exists anywhere in this codebase; see docs/05-api/07-finance-api.md
+    // Part 37.
+    deferredRevenueAccountTypes: parseStringList(process.env.DEFERRED_REVENUE_ACCOUNT_TYPES_JSON, ['Deferred Revenue', 'Unearned Revenue', 'Contract Liability']),
+    // "Revenue Recognition Rules" (Part 37, spec item 29) — declarative
+    // metadata only, no recognition engine. A future scheduler can read
+    // an account's own revenueRecognition.recognitionRule; nothing in this
+    // codebase currently acts on it.
+    revenueRecognitionMethods: parseStringList(process.env.REVENUE_RECOGNITION_METHODS_JSON, ['Immediate', 'Daily', 'Monthly', 'Milestone', 'UsageBased', 'PercentageCompletion']),
+    // Resolved by account code against the tenant's own Chart of Accounts
+    // when a future deposit-to-revenue flow needs "the" default deferred
+    // revenue account. Same "skip until configured" fallback as every
+    // other optional account code in this module — left unset, existing
+    // deposit flows keep posting exactly the way they already do today.
+    defaultDeferredRevenueAccountCode: process.env.DEFAULT_DEFERRED_REVENUE_ACCOUNT_CODE || null,
     // Real, pre-existing bug fixed in Part 19 (Multi-Currency & FX):
     // bookingConfig.supportedCurrencies defaults to lowercase codes
     // ('usd','sar',...) for Booking's own convention (see
@@ -76,8 +126,56 @@ export const getFinanceConfig = () => {
     // deployment rather than an unreviewable literal in the service.
     maxHierarchyDepth: parseInt(process.env.MAX_ACCOUNT_HIERARCHY_DEPTH || '10', 10),
 
-    // General Journal — Finance Module Part 3.
-    journalTypes: parseStringList(process.env.JOURNAL_TYPES_JSON, ['Manual', 'Automatic', 'Recurring', 'Adjustment', 'Opening Balance', 'Closing', 'Reversal', 'Exchange Rate Adjustment', 'Year End Closing']),
+    // General Journal — Finance Module Part 3. "Revenue Recognition" (File 2
+    // Journal Platform Part 1, spec item 5) added as a real, manually-
+    // triggered journal type — gated by assertRevenueRecognitionJournal
+    // against Part 37's own revenueRecognition metadata. No automatic
+    // recognition scheduler exists (declared out of scope, same as Part 37's
+    // own "no engine" decision) — this only names the real journal category
+    // for a human/future-scheduler-triggered recognition posting.
+    journalTypes: parseStringList(process.env.JOURNAL_TYPES_JSON, ['Manual', 'Automatic', 'Recurring', 'Adjustment', 'Opening Balance', 'Closing', 'Reversal', 'Exchange Rate Adjustment', 'Year End Closing', 'Revenue Recognition']),
+    // "Journal Source Types" (File 2, Journal Platform Part 1, spec item 2)
+    // — real modules that actually generate journals in this codebase
+    // today. Subscription/Merchant/Marketplace/Wallet/Gift Card/Loyalty/
+    // Payroll/Inventory/Assets/Manufacturing/CRM/POS were dropped — no
+    // backing module exists for any of them; see
+    // docs/05-api/07-finance-api.md's Journal Platform Part 1 note.
+    journalSourceModules: parseStringList(process.env.JOURNAL_SOURCE_MODULES_JSON, ['Booking', 'Expense', 'AccountsReceivable', 'AccountsPayable', 'Treasury', 'Tax', 'Banking', 'Forecast', 'Governance', 'Manual', 'System']),
+    // "Duplicate Detection" (File 2, Journal Platform Part 2, item 13) —
+    // a real, heuristic, advisory-only window (flags, never blocks — same
+    // discipline as ExpenseService's fraudRiskScore). 0 disables the check
+    // entirely, the same "0 = unconfigured" convention used elsewhere.
+    journalDuplicateDetectionWindowHours: parseInt(process.env.JOURNAL_DUPLICATE_DETECTION_WINDOW_HOURS || '24', 10),
+    // "Journal Templates" (File 2, Journal Platform Part 2, item 18) —
+    // real, tenant-authored, generic (no fictional example templates are
+    // seeded — see models/JournalTemplateModel.js's own note).
+    journalTemplateStatuses: parseStringList(process.env.JOURNAL_TEMPLATE_STATUSES_JSON, ['Active', 'Archived']),
+    // "Recurring Journals" (File 2, Journal Platform Part 2, item 19) —
+    // real cron-based generation (this codebase already runs a dozen real
+    // schedulers this same way — services/receivableOverdueScheduler.js
+    // etc.); HalfYearly kept as one word to match the spec's own naming.
+    recurringJournalFrequencies: parseStringList(process.env.RECURRING_JOURNAL_FREQUENCIES_JSON, ['Daily', 'Weekly', 'Monthly', 'Quarterly', 'HalfYearly', 'Yearly', 'Custom']),
+    recurringJournalCron: process.env.RECURRING_JOURNAL_CRON_SCHEDULE || '0 3 * * *',
+    // "Batch Journal Processing" (File 2, Journal Platform Part 2, item 14)
+    // — real subset only: Manual/Invoice/Tax/Adjustment/YearEndClosing map
+    // onto journal-generating modules that actually exist in this
+    // codebase. Payroll/Subscription/MerchantSettlement/Depreciation/
+    // Interest batch types were dropped — no backing module for any of
+    // them; see docs/05-api/07-finance-api.md Part 39.
+    journalBatchTypes: parseStringList(process.env.JOURNAL_BATCH_TYPES_JSON, ['Manual', 'Invoice', 'Tax', 'Adjustment', 'YearEndClosing']),
+    journalBatchNumberPrefix: process.env.JOURNAL_BATCH_NUMBER_PREFIX || 'JB',
+    // "Journal Import API" (File 2, Journal Platform Part 3, item 28) —
+    // real formats only: CSV/Excel (this codebase's own already-real
+    // csv-parse/exceljs libraries, the same ones
+    // services/reconciliationParsers/ already uses for Bank Reconciliation
+    // import) plus JSON. SAP Export/Oracle Export/QuickBooks/Xero formats
+    // were dropped — no real parser for any proprietary accounting-system
+    // export format exists anywhere in this codebase, and this ERP has no
+    // established accounting-system-migration use case to build one
+    // against; see docs/05-api/07-finance-api.md Part 40.
+    journalImportFormats: parseStringList(process.env.JOURNAL_IMPORT_FORMATS_JSON, ['CSV', 'Excel', 'JSON']),
+    journalImportMaxFileSizeBytes: parseInt(process.env.JOURNAL_IMPORT_MAX_FILE_SIZE_BYTES || `${10 * 1024 * 1024}`, 10),
+    journalAttachmentMaxFileSizeBytes: parseInt(process.env.JOURNAL_ATTACHMENT_MAX_FILE_SIZE_BYTES || `${10 * 1024 * 1024}`, 10),
     journalStatuses: parseStringList(process.env.JOURNAL_STATUSES_JSON, ['Draft', 'Pending Approval', 'Approved', 'Posted', 'Rejected', 'Cancelled', 'Archived']),
     defaultJournalStatus: process.env.DEFAULT_JOURNAL_STATUS || 'Draft',
     defaultJournalType: process.env.DEFAULT_JOURNAL_TYPE || 'Manual',
@@ -150,6 +248,12 @@ export const getFinanceConfig = () => {
     // fallback as the two account codes above.
     defaultCashAccountCode: process.env.DEFAULT_CASH_ACCOUNT_CODE || null,
     customerCreditLiabilityAccountCode: process.env.CUSTOMER_CREDIT_LIABILITY_ACCOUNT_CODE || null,
+    // Wallet top-up/withdrawal journal (Part 18 Part 4) — same opt-in
+    // "skip ledger posting until configured" fallback.
+    walletLiabilityAccountCode: process.env.WALLET_LIABILITY_ACCOUNT_CODE || null,
+    // Subscription/Membership billing (Part 18 Part 4) — deferred revenue
+    // recognized on each successful renewal invoice, same opt-in fallback.
+    subscriptionRevenueAccountCode: process.env.SUBSCRIPTION_REVENUE_ACCOUNT_CODE || null,
 
     // Enterprise Payment Engine — Finance Module Part 7. Consolidates what
     // was previously two parallel minimal models (Part 5's customer-side
@@ -164,14 +268,23 @@ export const getFinanceConfig = () => {
     defaultPaymentType: process.env.DEFAULT_PAYMENT_TYPE || 'Customer',
     // Matches the spec's own wording exactly (including the space in
     // "Bank Transfer") since it's given as a literal request-example value.
-    paymentMethods: parseStringList(process.env.PAYMENT_METHODS_JSON, ['Cash', 'Bank Transfer', 'Cheque', 'Credit Card', 'Debit Card', 'Wallet', 'UPI', 'Mobile Money', 'Crypto', 'Custom Method']),
+    // Extended for Finance Module Part 18 Part 2 (Customer Payments Payment
+    // Intent refactor) with ACH, Wire Transfer, QR Payment, Gift Card, Store
+    // Credit, BNPL — the same single list every payment-bearing module
+    // already reads, not a second parallel "customer payment methods" list.
+    paymentMethods: parseStringList(process.env.PAYMENT_METHODS_JSON, ['Cash', 'Bank Transfer', 'Cheque', 'Credit Card', 'Debit Card', 'Wallet', 'UPI', 'Mobile Money', 'Crypto', 'Custom Method', 'ACH', 'Wire Transfer', 'QR Payment', 'Gift Card', 'Store Credit', 'BNPL']),
     // "Manual" isn't in the spec's own Payment Gateways list but is the
     // real, honest gateway value for Cash/Cheque/Bank Transfer — money that
     // settles without an external API call. Only Stripe is actually wired
     // this pass (services/gateways/StripeGatewayAdapter.js); the rest exist
     // as configurable values with the adapter contract ready, not yet
-    // implemented (services/gateways/BaseGatewayAdapter.js).
-    gateways: parseStringList(process.env.PAYMENT_GATEWAYS_JSON, ['Manual', 'Stripe', 'PayPal', 'Square', 'AuthorizeNet', 'Adyen', 'Razorpay', 'Custom']),
+    // implemented (services/gateways/BaseGatewayAdapter.js). This is also
+    // the "Payment Provider" list the Part 18 Part 2 Payment Intent
+    // refactor names (Braintree/BankGateway/LocalPaymentGateway/
+    // QRProvider/WalletProvider added) — one gateway catalog for the whole
+    // ERP, never a second "paymentProviders" list that could drift out of
+    // sync with the adapters that actually implement it.
+    gateways: parseStringList(process.env.PAYMENT_GATEWAYS_JSON, ['Manual', 'Stripe', 'PayPal', 'Square', 'AuthorizeNet', 'Adyen', 'Razorpay', 'Custom', 'Braintree', 'BankGateway', 'LocalPaymentGateway', 'QRProvider', 'WalletProvider']),
     defaultGateway: process.env.DEFAULT_PAYMENT_GATEWAY || 'Manual',
     // Full Payment Lifecycle: Initiated -> Pending -> Authorized -> Captured
     // -> Allocated -> Settled -> Completed; alternates: Failed, Cancelled,
@@ -199,6 +312,23 @@ export const getFinanceConfig = () => {
     fraudVelocityWindowMinutes: parseInt(process.env.FRAUD_VELOCITY_WINDOW_MINUTES || '60', 10),
     fraudVelocityMaxCount: parseInt(process.env.FRAUD_VELOCITY_MAX_COUNT || '5', 10),
     fraudAmountThreshold: parseInt(process.env.FRAUD_AMOUNT_THRESHOLD || '1000000', 10),
+    // Part 18 Part 3 (Payment Collection, Allocation & Reconciliation) —
+    // "Risk Score, Fraud Status" in the response. Derived deterministically
+    // from the already-real `computeFraudRiskScore` output (Duplicate
+    // Payment/Velocity/Amount Threshold), never a fabricated ML score — no
+    // real fraud ML model exists in this codebase.
+    fraudReviewScoreThreshold: parseInt(process.env.FRAUD_REVIEW_SCORE_THRESHOLD || '40', 10),
+    fraudFlagScoreThreshold: parseInt(process.env.FRAUD_FLAG_SCORE_THRESHOLD || '70', 10),
+    // "Capture Modes... Automatic Capture, Manual Capture, Authorize Only,
+    // Partial Capture, Delayed Capture." Automatic is the pre-existing
+    // authorize+capture-in-one-call behavior; Manual/Authorize Only/
+    // Delayed Capture all stop after authorize and require a real,
+    // separate `POST /customer-payments/{collectionId}/capture` call
+    // (Part 18 Part 3) to actually capture; Partial Capture is the same
+    // deferred-capture path where that later call captures less than the
+    // full authorized amount.
+    captureModes: parseStringList(process.env.CAPTURE_MODES_JSON, ['Automatic', 'Manual', 'Authorize Only', 'Partial Capture', 'Delayed Capture']),
+    defaultCaptureMode: process.env.DEFAULT_CAPTURE_MODE || 'Automatic',
 
     // Accounts Payable — Finance Module Part 6. Unlike AR, the spec's own
     // Payable Lifecycle has an approval gate before a payable becomes
@@ -242,8 +372,11 @@ export const getFinanceConfig = () => {
     // action (the PDF itself is the printable artifact); Customer
     // Portal/Mobile App have no such surface in this codebase to deliver
     // to. Requesting them is still accepted (real intent, honestly
-    // recorded as unavailable) rather than silently dropped.
-    deliveryMethods: parseStringList(process.env.RECEIPT_DELIVERY_METHODS_JSON, ['Email', 'SMS', 'WhatsApp', 'Print', 'CustomerPortal', 'MobileApp', 'Webhook']),
+    // recorded as unavailable) rather than silently dropped. Slack/
+    // MicrosoftTeams added in Part 18 Part 4's own "Reminder Engine" list
+    // — same honest "accepted, no real adapter yet" treatment, not a
+    // fabricated integration.
+    deliveryMethods: parseStringList(process.env.RECEIPT_DELIVERY_METHODS_JSON, ['Email', 'SMS', 'WhatsApp', 'Print', 'CustomerPortal', 'MobileApp', 'Webhook', 'Slack', 'MicrosoftTeams']),
     receiptNumberPrefix: process.env.RECEIPT_NUMBER_PREFIX || 'RCT',
     // "Receipt Not Already Generated (Configurable)" — one receipt per
     // payment by default; a tenant can opt into multiple (batch/partial
@@ -531,7 +664,16 @@ export const getFinanceConfig = () => {
     // per §3 of the standing master instructions — the spec's own "Branch
     // Match"/"Branch Isolation"/`branch` query param are dropped; see
     // docs/05-api/07-finance-api.md Part 16.
-    expenseCategories: parseStringList(process.env.EXPENSE_CATEGORIES_JSON, ['Travel', 'Visa', 'Meals', 'Accommodation', 'Fuel', 'Office Supplies', 'Marketing', 'Training', 'Utilities', 'IT Equipment', 'Custom']),
+    expenseCategories: parseStringList(process.env.EXPENSE_CATEGORIES_JSON, ['Travel', 'Visa', 'Meals', 'Accommodation', 'Fuel', 'Transportation', 'Air Tickets', 'Office Supplies', 'Marketing', 'Training', 'Utilities', 'IT Equipment', 'Subscriptions', 'Software Licenses', 'Cloud Services', 'Medical', 'Insurance', 'Employee Benefit', 'Customer Entertainment', 'Custom']),
+    // "Expense Type" — a real, separate dimension from `category` above
+    // (Enterprise Expense Management Refactor Part 2's own request example
+    // sends both `expenseCategory` and `expenseType` on the same request).
+    // Category is the specific spend classification (Travel, Meals,
+    // Software Licenses, ...); Type is the higher-level ownership nature
+    // of the spend. Defaults to "Employee" since `employeeId` is required
+    // on every expense in this codebase's real design.
+    expenseTypes: parseStringList(process.env.EXPENSE_TYPES_JSON, ['Employee', 'Operational', 'Project', 'Capital']),
+    defaultExpenseType: process.env.DEFAULT_EXPENSE_TYPE || 'Employee',
     // Real resting states only — "Manager Review"/"Finance Review" from
     // the spec's own Lifecycle diagram collapse into one "Under Review"
     // status; which levels are actually still pending is tracked by
@@ -567,6 +709,9 @@ export const getFinanceConfig = () => {
     expenseReceiptRequiredAboveAmount: parseFloat(process.env.EXPENSE_RECEIPT_REQUIRED_ABOVE_AMOUNT || '25'),
     // Optional per-category ceiling — {} (default) means no cap configured.
     expenseMaxAmountPerCategory: parseJson(process.env.EXPENSE_MAX_AMOUNT_PER_CATEGORY_JSON, {}),
+    // "Fraud Risk Score" (Part 35) — score at/above this (0-100, see
+    // computeFraudRiskScore) publishes FraudRiskDetected for a human to review.
+    expenseFraudRiskScoreThreshold: parseFloat(process.env.EXPENSE_FRAUD_RISK_SCORE_THRESHOLD || '50'),
     // "Budget Validation... Budget rules configurable." Block hard-stops
     // submission over budget; Warn allows it through but flags
     // `budgetExceeded` and fires `BudgetExceeded` for a human to see.
@@ -593,6 +738,18 @@ export const getFinanceConfig = () => {
     // other three methods. Same "skip posting until configured" fallback
     // as every other optional account code in this module.
     expenseReimbursementExpenseAccountCode: process.env.EXPENSE_REIMBURSEMENT_EXPENSE_ACCOUNT_CODE || null,
+    // Enterprise Expense Management Refactor Part 3 — accrual-style
+    // posting. "Expense Approved -> Accounting Validation -> Journal
+    // Generated -> ... -> General Ledger Posted" (the spec's own diagram)
+    // and its own Journal Posting Example both post at Approval, crediting
+    // a payable — not the direct cash/bank credit this codebase posted at
+    // Reimbursement time before this Part. Both new account codes must be
+    // configured for accrual posting to activate; when either is unset,
+    // ExpenseService falls back to the original Part 16 behavior (post
+    // directly at Reimbursement only) — same "skip until configured"
+    // discipline as every other optional account code in this module.
+    expenseReimbursementPayableAccountCode: process.env.EXPENSE_REIMBURSEMENT_PAYABLE_ACCOUNT_CODE || null,
+    expenseRecoverableTaxAccountCode: process.env.EXPENSE_RECOVERABLE_TAX_ACCOUNT_CODE || null,
 
     // Enterprise Vendor Payments — Finance Module Part 17. "Payment Engine
     // moves money. Vendor Payment Platform decides which vendor, which
@@ -652,7 +809,14 @@ export const getFinanceConfig = () => {
     // simply starting in "Requested" — a reminder is a side effect logged
     // on the collection (via CollectionReminderModel), not a distinct
     // resting status (same collapse discipline as every prior Part).
-    customerCollectionStatuses: parseStringList(process.env.CUSTOMER_COLLECTION_STATUSES_JSON, ['Requested', 'Partially Collected', 'Collected', 'Overdue', 'Payment Failed', 'Disputed', 'Written Off', 'Cancelled', 'Closed']),
+    // "Payment Authorized" was added in Part 18 Part 3 — a genuine new
+    // resting state (not a collapsible pipeline step): a Manual/Authorize
+    // Only/Delayed/Partial capture mode leaves real reserved-but-not-yet-
+    // captured funds sitting against `authorizedPaymentId` until a
+    // separate `POST .../capture` call completes it, the same
+    // justification Part 36's own "Suspended" used to earn a real
+    // intermediate state.
+    customerCollectionStatuses: parseStringList(process.env.CUSTOMER_COLLECTION_STATUSES_JSON, ['Requested', 'Partially Collected', 'Payment Authorized', 'Collected', 'Overdue', 'Payment Failed', 'Disputed', 'Written Off', 'Cancelled', 'Closed']),
     defaultCustomerCollectionStatus: process.env.DEFAULT_CUSTOMER_COLLECTION_STATUS || 'Requested',
     customerCollectionNumberPrefix: process.env.CUSTOMER_COLLECTION_NUMBER_PREFIX || 'COL',
     // "Installment Plans... Weekly, Monthly, Quarterly, Custom Schedule."
@@ -695,6 +859,156 @@ export const getFinanceConfig = () => {
     lateFeePercent: parseFloat(process.env.CUSTOMER_COLLECTION_LATE_FEE_PERCENT || '0'),
     lateFeeStage: process.env.CUSTOMER_COLLECTION_LATE_FEE_STAGE || 'Collection Team',
 
+    // Enterprise Customer Payments — Finance Module Part 18 Part 2 (API
+    // Contracts Refactoring). "Collections can originate from Sales
+    // Invoice, Subscription Invoice, Membership Renewal, Marketplace
+    // Order, POS Sale, Project Billing, Training Fee, Visa Fee, Rental
+    // Invoice, Deposit, Wallet Recharge, Manual Receivable, Custom
+    // Source... Source registry is configurable." "Sales Invoice" is the
+    // one source with a real owning collection in this codebase today
+    // (AccountsReceivableModel, driving the pre-existing `invoiceIds`
+    // request shape unchanged for backward compatibility); every other
+    // source is accepted and recorded honestly against a caller-supplied
+    // `sourceDocumentId` with no FK validation, since no Subscription/
+    // Marketplace/POS/Project/Training/Visa-fee/Rental module exists yet
+    // in this codebase to validate against — same "structurally present,
+    // functionally informational until that module ships" treatment this
+    // codebase already gives `AccountsReceivableModel.invoiceId` and
+    // `creditNoteIds`/`debitNoteIds`.
+    collectionSources: parseStringList(process.env.COLLECTION_SOURCES_JSON, ['Sales Invoice', 'Subscription Invoice', 'Membership Renewal', 'Marketplace Order', 'POS Sale', 'Project Billing', 'Training Fee', 'Visa Fee', 'Rental Invoice', 'Deposit', 'Wallet Recharge', 'Manual Receivable', 'Custom Source']),
+    defaultCollectionSource: process.env.DEFAULT_COLLECTION_SOURCE || 'Sales Invoice',
+    // "Payment Intent Lifecycle: Created, Pending, Waiting Customer,
+    // Authorized, Captured, Cancelled, Expired, Failed, Refunded,
+    // Disputed, Chargeback." A Payment Intent is the pre-money-movement
+    // record `POST /customer-payments` now creates — distinct from both
+    // Part 7's own money-movement `paymentStatuses` (which apply once a
+    // real PaymentModel row exists, from Part 3 of this refactor onward)
+    // and this Part's own collection-strategy `customerCollectionStatuses`.
+    paymentIntentStatuses: parseStringList(process.env.PAYMENT_INTENT_STATUSES_JSON, ['Created', 'Pending', 'Waiting Customer', 'Authorized', 'Captured', 'Cancelled', 'Expired', 'Failed', 'Refunded', 'Disputed', 'Chargeback']),
+    defaultPaymentIntentStatus: process.env.DEFAULT_PAYMENT_INTENT_STATUS || 'Created',
+    paymentIntentNumberPrefix: process.env.PAYMENT_INTENT_NUMBER_PREFIX || 'PI',
+    // "Expiration Time" on the intent response — how long an unconfirmed
+    // Payment Intent stays valid before Part 3's execution endpoint must
+    // reject it as Expired.
+    paymentIntentExpiryMinutes: parseInt(process.env.PAYMENT_INTENT_EXPIRY_MINUTES || '60', 10),
+
+    // Enterprise Customer Payments — Finance Module Part 18 Part 4
+    // (Enterprise Collection Features). "Wallet Support." `walletTypes` is
+    // a real, config-driven categorization — only `Customer` maps to a
+    // real FK-validated owner in this codebase (see WalletModel's own doc
+    // comment); the rest are honest descriptive purpose labels.
+    walletTypes: parseStringList(process.env.WALLET_TYPES_JSON, ['Customer', 'Merchant', 'Marketplace', 'Partner', 'Employee', 'Prepaid', 'Gift']),
+    defaultWalletType: process.env.DEFAULT_WALLET_TYPE || 'Customer',
+    walletStatuses: parseStringList(process.env.WALLET_STATUSES_JSON, ['Active', 'Suspended', 'Closed']),
+    defaultWalletStatus: process.env.DEFAULT_WALLET_STATUS || 'Active',
+    walletTransactionTypes: parseStringList(process.env.WALLET_TRANSACTION_TYPES_JSON, ['TopUp', 'Purchase', 'Refund', 'TransferOut', 'TransferIn', 'Withdrawal']),
+    walletNumberPrefix: process.env.WALLET_NUMBER_PREFIX || 'WAL',
+
+    // "Subscription Billing Support... Membership Billing." One real
+    // model (`SubscriptionModel`) covers both — the spec's own two
+    // lifecycle diagrams are structurally identical (active -> billing
+    // cycle -> invoice -> payment -> extended, with the same
+    // retry/grace/suspend/terminate alternate path), so `planType`
+    // ("Subscription" | "Membership") distinguishes them rather than
+    // building two near-duplicate platforms.
+    subscriptionBillingCycles: parseStringList(process.env.SUBSCRIPTION_BILLING_CYCLES_JSON, ['Monthly', 'Quarterly', 'SemiAnnual', 'Annual', 'UsageBased', 'Metered', 'Hybrid', 'Trial']),
+    defaultSubscriptionBillingCycle: process.env.DEFAULT_SUBSCRIPTION_BILLING_CYCLE || 'Monthly',
+    // Real resting states only. "Subscription Active -> Billing Cycle
+    // Starts -> Invoice Generated -> Payment Intent Created -> Customer
+    // Pays -> Payment Allocated -> Subscription Extended" is the pipeline
+    // a single renewal run walks through (recorded on `timeline`, not
+    // seven distinct resting statuses) — the real resting states are
+    // Trial, Active, PastDue (the spec's own "Retry Payment"/"Grace
+    // Period" collapse into this one state — `graceEndsAt` distinguishes
+    // how much runway is left), Suspended, Cancelled, Terminated.
+    subscriptionStatuses: parseStringList(process.env.SUBSCRIPTION_STATUSES_JSON, ['Trial', 'Active', 'PastDue', 'Suspended', 'Cancelled', 'Terminated']),
+    defaultSubscriptionStatus: process.env.DEFAULT_SUBSCRIPTION_STATUS || 'Active',
+    subscriptionPlanTypes: parseStringList(process.env.SUBSCRIPTION_PLAN_TYPES_JSON, ['Subscription', 'Membership']),
+    // "Membership Billing... Gym, Club, Education, Professional,
+    // Corporate, Association, Digital, Premium." A real, config-driven
+    // categorization on top of `planType: "Membership"` — not a second
+    // model.
+    membershipTiers: parseStringList(process.env.MEMBERSHIP_TIERS_JSON, ['Gym', 'Club', 'Education', 'Professional', 'Corporate', 'Association', 'Digital', 'Premium']),
+    subscriptionNumberPrefix: process.env.SUBSCRIPTION_NUMBER_PREFIX || 'SUB',
+    subscriptionDefaultGracePeriodDays: parseInt(process.env.SUBSCRIPTION_DEFAULT_GRACE_PERIOD_DAYS || '7', 10),
+    // "Retry Schedule" — number of automatic retry attempts (each one a
+    // real new `collect` attempt against the renewal collection) before
+    // grace period expiry moves the subscription to Suspended.
+    subscriptionRetryAttempts: parseInt(process.env.SUBSCRIPTION_RETRY_ATTEMPTS || '3', 10),
+    subscriptionBillingCron: process.env.SUBSCRIPTION_BILLING_CRON_SCHEDULE || '0 6 * * *',
+
+    // "Installment Management" enhancements (Part 18 Part 4) — Down
+    // Payment, Balloon Payment, Grace Period, Early Settlement all layer
+    // onto the already-real `computeInstallmentSchedule` (Part 18) rather
+    // than a second scheduling engine.
+    installmentDefaultGracePeriodDays: parseInt(process.env.INSTALLMENT_DEFAULT_GRACE_PERIOD_DAYS || '3', 10),
+    // 0 = no discount (default) — an early-settlement discount is a real
+    // business decision a tenant opts into, never assumed.
+    installmentEarlySettlementDiscountPercent: parseFloat(process.env.INSTALLMENT_EARLY_SETTLEMENT_DISCOUNT_PERCENT || '0'),
+
+    // "Collection Campaigns... High Value Customers, Overdue Customers,
+    // Subscription Renewals, Membership Renewals, Regional, Seasonal,
+    // Risk-Based, Custom." A real, config-driven catalog — targeting
+    // itself is a real MongoDB query built from the campaign's own
+    // `targetCriteria` (CollectionCampaignService), not a fixed list of
+    // canned segments.
+    collectionCampaignTypes: parseStringList(process.env.COLLECTION_CAMPAIGN_TYPES_JSON, ['HighValueCustomers', 'OverdueCustomers', 'SubscriptionRenewals', 'MembershipRenewals', 'RegionalCampaign', 'SeasonalCampaign', 'RiskBased', 'Custom']),
+    collectionCampaignStatuses: parseStringList(process.env.COLLECTION_CAMPAIGN_STATUSES_JSON, ['Draft', 'Active', 'Completed', 'Cancelled']),
+    collectionCampaignNumberPrefix: process.env.COLLECTION_CAMPAIGN_NUMBER_PREFIX || 'CMP',
+
+    // "Customer Self-Service Portal" (Part 18 Part 4) — read-only,
+    // token-scoped (the exact same unguessable-token pattern Part 18's own
+    // payment link already uses — see CustomerCollectionService), since
+    // no real customer-facing authentication surface exists in this
+    // codebase (same boundary Part 18's own payment link view already
+    // documented). Write actions ("Pay Online", "Manage Payment Methods",
+    // "Raise Payment Dispute") stay behind the authenticated staff API.
+    customerPortalTokenExpiryHours: parseInt(process.env.CUSTOMER_PORTAL_TOKEN_EXPIRY_HOURS || '720', 10),
+
+    // Enterprise Customer Payments — Finance Module Part 18 Part 5
+    // (Enterprise Production Readiness). "Webhook Platform... Payment
+    // Authorized, Payment Captured, ... Custom Events. Everything
+    // configurable." This catalog is what a tenant is offered/validated
+    // against when picking a KNOWN event to subscribe to — "Custom
+    // Events" itself means any string is still accepted beyond this list
+    // (see WebhookSubscriptionModel's own doc comment).
+    webhookEventTypes: parseStringList(process.env.WEBHOOK_EVENT_TYPES_JSON, [
+      'PaymentAuthorized', 'PaymentCaptured', 'PaymentFailed', 'PaymentRefunded', 'ChargebackCreated', 'ChargebackResolved',
+      'SettlementCompleted', 'SubscriptionRenewed', 'MembershipRenewed', 'ReceiptGenerated', 'CustomerCreditCreated', 'WalletBalanceUpdated'
+    ]),
+    webhookSubscriptionStatuses: parseStringList(process.env.WEBHOOK_SUBSCRIPTION_STATUSES_JSON, ['Active', 'Suspended', 'Disabled']),
+    defaultWebhookSubscriptionStatus: process.env.DEFAULT_WEBHOOK_SUBSCRIPTION_STATUS || 'Active',
+    webhookDeliveryStatuses: parseStringList(process.env.WEBHOOK_DELIVERY_STATUSES_JSON, ['Pending', 'Delivered', 'Failed', 'Abandoned']),
+    // "Retry Engine... Exponential Backoff, Retry Limits." Reuses the
+    // already-real utils/retryWithBackoff.js (its own RETRY_MAX_ATTEMPTS/
+    // RETRY_BASE_DELAY_MS env vars) for the actual backoff math — these
+    // two are webhook-specific overrides so a slow third-party endpoint
+    // doesn't have to share the same retry budget as internal object-
+    // storage/API calls.
+    webhookRetryMaxAttempts: parseInt(process.env.WEBHOOK_RETRY_MAX_ATTEMPTS || '5', 10),
+    webhookRetryBaseDelayMs: parseInt(process.env.WEBHOOK_RETRY_BASE_DELAY_MS || '1000', 10),
+    webhookDeliveryTimeoutMs: parseInt(process.env.WEBHOOK_DELIVERY_TIMEOUT_MS || '10000', 10),
+    // Real circuit breaker — see WebhookSubscriptionModel's own doc
+    // comment on `consecutiveFailureCount`.
+    webhookAutoSuspendFailureThreshold: parseInt(process.env.WEBHOOK_AUTO_SUSPEND_FAILURE_THRESHOLD || '20', 10),
+
+    // "Payment Retry Engine... Gateway Timeout Retry, Temporary Failure
+    // Retry, Exponential Backoff, Retry Limits." Reuses the already-real
+    // utils/retryWithBackoff.js for the actual backoff math (real network/
+    // timeout errors only — a clean gateway decline is never retried,
+    // since gateway adapters return a normal `{status:"Failed"}` value for
+    // that, not a thrown error) — these are gateway-call-specific
+    // overrides, distinct from the webhook engine's own retry budget.
+    paymentGatewayRetryMaxAttempts: parseInt(process.env.PAYMENT_GATEWAY_RETRY_MAX_ATTEMPTS || '3', 10),
+    paymentGatewayRetryBaseDelayMs: parseInt(process.env.PAYMENT_GATEWAY_RETRY_BASE_DELAY_MS || '500', 10),
+    // "Manual Retry" — how many times a Failed payment may be manually
+    // retried via PaymentService.retryPayment before it's treated as
+    // permanently failed ("Dead Letter Queue" has no real queue
+    // infrastructure to build against in this codebase — this bounded
+    // retry count is the honest, real equivalent: a Failed payment past
+    // this count is left Failed rather than silently retried forever).
+    paymentManualRetryMaxAttempts: parseInt(process.env.PAYMENT_MANUAL_RETRY_MAX_ATTEMPTS || '5', 10),
+
     // Enterprise Multi-Currency & Foreign Exchange — Finance Module Part
     // 19. "One business transaction can involve multiple currencies
     // simultaneously. The ERP must preserve all of them correctly for
@@ -702,51 +1016,137 @@ export const getFinanceConfig = () => {
     // instructions — the spec names no branch language this Part, but the
     // same rule applies regardless.
     //
-    // Real resting states only. "Currency Created -> Rate Imported ->
-    // Validated -> Activated -> Used" is the pipeline TO activation, not
-    // four separate resting states before it — a currency simply starts
-    // Draft and becomes Active; "Rate Imported"/"Validated"/"Used" have no
-    // distinguishing trigger of their own (same collapse discipline as
-    // every prior Part).
-    currencyStatuses: parseStringList(process.env.CURRENCY_STATUSES_JSON, ['Draft', 'Active', 'Suspended', 'Archived']),
+    // Real resting states — File 4 Part 2 (API Contracts Refactoring)
+    // names seven concrete, distinct statuses (not a vague pipeline
+    // description this time — the request example's own `"status":"Draft"`
+    // and the response's own `Version` field both presuppose a real
+    // multi-step workflow), so unlike Part 1's own collapse-by-default
+    // discipline, these seven are built as real resting states:
+    // `CurrencyService.submitCurrencyForApproval`/`approveCurrencyDefinition`/
+    // `activateCurrency`/`suspendCurrency`/`archiveCurrency`/`deprecateCurrency`
+    // each drive one real transition. "Deprecated" is genuinely distinct
+    // from "Archived" — a Deprecated currency remains valid for reading
+    // historical transactions already posted in it but is rejected for
+    // any NEW one; Archived has no such "still valid for history" nuance
+    // named anywhere in this Part's spec.
+    currencyStatuses: parseStringList(process.env.CURRENCY_STATUSES_JSON, ['Draft', 'Pending Approval', 'Approved', 'Active', 'Suspended', 'Archived', 'Deprecated']),
     defaultCurrencyStatus: process.env.DEFAULT_CURRENCY_STATUS || 'Draft',
-    // "Approval Workflow" — same single configurable gate as Journal's/
-    // Invoice's own, for the identical reason (no concrete multi-tier
-    // policy was given to build a real policy engine against).
+    // "Approval Workflow" gate — when required, `createCurrency` stops at
+    // Draft and the caller must walk `submitCurrencyForApproval` ->
+    // `approveCurrencyDefinition` -> `activateCurrency` explicitly; when
+    // not required, creation still auto-walks the same three real
+    // transitions in one call (unchanged backward-compatible behavior),
+    // not a fake status jump straight to Active.
     currencyApprovalRequired: parseBoolean(process.env.CURRENCY_APPROVAL_REQUIRED, false),
+    // "Supported Currency Types... Transaction, Functional, Reporting,
+    // Settlement, Treasury, Pricing, Tax, Local, Custom." A real,
+    // config-driven categorization stored on `CurrencyModel.currencyType`
+    // — distinct from the `isBaseCurrency`/`isReportingCurrency` boolean
+    // roles (at most one true per tenant each), which mark which specific
+    // currency plays that special role, not what category it's filed under.
+    currencyTypes: parseStringList(process.env.CURRENCY_TYPES_JSON, ['Transaction', 'Functional', 'Reporting', 'Settlement', 'Treasury', 'Pricing', 'Tax', 'Local', 'Custom']),
+    defaultCurrencyType: process.env.DEFAULT_CURRENCY_TYPE || 'Transaction',
     // "Conversion Engine... Spot Rate, Historical Rate, Average Rate,
-    // Month-End Rate, Custom Rate."
-    exchangeRateTypes: parseStringList(process.env.EXCHANGE_RATE_TYPES_JSON, ['Spot', 'Historical', 'Average', 'MonthEnd', 'Custom']),
+    // Opening Rate, Closing Rate, Treasury Rate, Settlement Rate,
+    // Negotiated Rate, Manual Rate, Custom Rate." `MonthEnd` (Part 1's own
+    // name) is kept as a real synonym alongside the spec's own `Closing`
+    // rather than removed, since existing stored rows already use it.
+    exchangeRateTypes: parseStringList(process.env.EXCHANGE_RATE_TYPES_JSON, ['Spot', 'Historical', 'Average', 'MonthEnd', 'Opening', 'Closing', 'Treasury', 'Settlement', 'Negotiated', 'Custom']),
     defaultExchangeRateType: process.env.DEFAULT_EXCHANGE_RATE_TYPE || 'Spot',
-    // "Rate Providers... Central Bank, Commercial Bank, Open Exchange
-    // APIs, Manual Entry, Custom Provider. Priority configurable." Only
-    // "Manual" and "OpenExchangeAPI" have a real code path in this pass —
-    // Central Bank/Commercial Bank/Custom Provider integrations need real
-    // credentials/contracts this codebase doesn't have (same category of
-    // deferral as every other Part's excluded external integrations); a
-    // rate can still be recorded under those provider names manually.
-    rateProviders: parseStringList(process.env.RATE_PROVIDERS_JSON, ['CentralBank', 'CommercialBank', 'OpenExchangeAPI', 'Manual', 'Custom']),
+    // "Rate Providers... Central Bank, Commercial Bank, ECB, Federal
+    // Reserve, Open Exchange APIs, Treasury Desk, Manual Entry, Partner
+    // Feed, Custom Provider. Priority configurable." Only "Manual" and
+    // "OpenExchangeAPI" have a real code path in this pass — the rest need
+    // real credentials/contracts this codebase doesn't have (same category
+    // of deferral as every other Part's excluded external integrations); a
+    // rate can still be recorded under any of those provider names manually.
+    rateProviders: parseStringList(process.env.RATE_PROVIDERS_JSON, ['CentralBank', 'CommercialBank', 'ECB', 'FederalReserve', 'OpenExchangeAPI', 'TreasuryDesk', 'Manual', 'PartnerFeed', 'Custom']),
     defaultRateProvider: process.env.DEFAULT_RATE_PROVIDER || 'Manual',
+    // "Priority configurable" — real tie-break order `CurrencyService.getRate`
+    // applies via aggregation when more than one provider has a rate for
+    // the exact same currency pair/rateType/effectiveDate: the
+    // earlier-listed provider wins. Not used to choose BETWEEN different
+    // effective dates (a more recent rate always wins regardless of
+    // provider) — only to break a genuine same-date tie.
+    rateProviderPriority: parseStringList(process.env.RATE_PROVIDER_PRIORITY_JSON, ['CentralBank', 'ECB', 'FederalReserve', 'TreasuryDesk', 'CommercialBank', 'OpenExchangeAPI', 'PartnerFeed', 'Manual', 'Custom']),
+    // File 4 Part 3 — "Exchange Rate Resolution... Check Manual Override
+    // -> Check Treasury Rate -> Check Spot Rate -> Check Historical Rate
+    // -> Check Average Rate -> Apply Priority Rules." That list conflates
+    // provider names (already real via `rateProviderPriority` above) with
+    // real `rateType` values — this is the real rate-TYPE priority order
+    // `CurrencyService.getRate` walks when the caller passes
+    // `rateType: "auto"` instead of pinning one specific type (the
+    // default, unchanged behavior for every existing caller). "Manual
+    // Override" isn't a rateType in this codebase (it's `source: "Manual"`
+    // on any rateType) so it isn't listed here — see the same doc comment
+    // in CurrencyService.getRate for the full reasoning.
+    rateTypePriority: parseStringList(process.env.RATE_TYPE_PRIORITY_JSON, ['Negotiated', 'Treasury', 'Spot', 'Closing', 'Average', 'Historical', 'Opening', 'Settlement', 'MonthEnd', 'Custom']),
+    // "Conversion Sources... Sales Invoice, Purchase Invoice, Customer
+    // Payment, Vendor Payment, Expense, Payroll, Asset Purchase, Asset
+    // Disposal, Journal Entry, Budget, Subscription Billing, Membership
+    // Renewal, Marketplace Order, Treasury Transfer, Bank Transaction,
+    // Custom Sources." Real, config-driven catalog for the Conversion
+    // Audit Trail (`CurrencyConversionModel`) — Asset Purchase/Disposal
+    // have no real Asset module in this codebase to originate from yet
+    // (accepted as a valid source value regardless, same as every other
+    // config catalog that includes a not-yet-built module's own name).
+    conversionSources: parseStringList(process.env.CONVERSION_SOURCES_JSON, [
+      'Sales Invoice', 'Purchase Invoice', 'Customer Payment', 'Vendor Payment', 'Expense', 'Payroll', 'Asset Purchase', 'Asset Disposal',
+      'Journal Entry', 'Budget', 'Subscription Billing', 'Membership Renewal', 'Marketplace Order', 'Treasury Transfer', 'Bank Transaction', 'Custom'
+    ]),
+    // "Currency Rounding Rules... Banker's Rounding, Commercial Rounding,
+    // Always Up, Always Down." Real, applied only to the Conversion
+    // Engine's own final output rounding (`CurrencyService.convert`) —
+    // every other `roundCurrency` call across this codebase's own
+    // internal ledger/accounting math is deliberately untouched (plain
+    // commercial round-half-up, unchanged), so this Part never
+    // destabilizes arithmetic no caller asked to make configurable.
+    // "Currency Precision Rules"/"Merchant Rules"/"Country Rules" have no
+    // real per-merchant/per-country override target in this codebase
+    // (no Merchant module, no Country-level config) — this one real
+    // tenant-wide mode is what's actually buildable.
+    currencyRoundingModes: parseStringList(process.env.CURRENCY_ROUNDING_MODES_JSON, ['Commercial', 'BankersRounding', 'AlwaysUp', 'AlwaysDown']),
+    currencyRoundingMode: process.env.CURRENCY_ROUNDING_MODE || 'Commercial',
+    // "Exchange Rate Lifecycle: Rate Imported -> Validated -> Approved ->
+    // Activated -> Available For Conversion, alt: Rejected/Expired/
+    // Archived/Superseded." Same single configurable approval gate as
+    // Currency's own (`exchangeRateApprovalRequired`) — "Finance Review ->
+    // Treasury Review" collapses into one real approval action
+    // (`approveExchangeRate`), the same "no concrete multi-tier policy was
+    // given to build a real policy engine against" reasoning Journal's/
+    // Invoice's/Currency's own single-gate approvals already use.
+    // `CurrencyService.getRate` only ever resolves a rate whose
+    // `approvalStatus` is "Activated" (or unset, for rows created before
+    // this Part existed — real backward compatibility, not a data
+    // migration) — Draft/Pending Approval/Rejected/Expired/Superseded rows
+    // are stored (immutable history) but never used for a live conversion.
+    exchangeRateApprovalRequired: parseBoolean(process.env.EXCHANGE_RATE_APPROVAL_REQUIRED, false),
+    exchangeRateApprovalStatuses: parseStringList(process.env.EXCHANGE_RATE_APPROVAL_STATUSES_JSON, ['Draft', 'Pending Approval', 'Activated', 'Rejected', 'Expired', 'Archived', 'Superseded']),
     // Real HTTP integration (services/CurrencyService.js importRatesFromProvider,
     // global fetch — no SDK needed) against openexchangerates.org's real
     // API — honestly "not configured" (never faked) when no app id is set.
     openExchangeRatesAppId: process.env.OPEN_EXCHANGE_RATES_APP_ID || null,
     openExchangeRatesBaseUrl: process.env.OPEN_EXCHANGE_RATES_BASE_URL || 'https://openexchangerates.org/api',
     // "Revaluation... Bank Accounts, Accounts Receivable, Accounts
-    // Payable, Loans, Investments." Loans/Investments have no module
-    // anywhere in this codebase to revalue — same "deferred, no concrete
-    // target to build against" treatment as every other Part's excluded
-    // pieces; the three real targets read live balances directly off
-    // their own already-shipped models (BankAccountModel/
-    // AccountsReceivableModel/AccountsPayableModel) with no schema
-    // changes needed to any of them.
-    fxRevaluationTargets: parseStringList(process.env.FX_REVALUATION_TARGETS_JSON, ['BankAccount', 'AccountsReceivable', 'AccountsPayable']),
+    // Payable, Loans, Investments." Loans still have no module anywhere in
+    // this codebase to revalue — deferred, same as every other Part's
+    // excluded pieces without a concrete target to build against.
+    // Investments now has one: TreasuryInvestmentModel (File 4 Part 3) —
+    // the four real targets all read live balances directly off their own
+    // already-shipped models (BankAccountModel/AccountsReceivableModel/
+    // AccountsPayableModel/TreasuryInvestmentModel) with no schema changes
+    // needed to any of them.
+    fxRevaluationTargets: parseStringList(process.env.FX_REVALUATION_TARGETS_JSON, ['BankAccount', 'AccountsReceivable', 'AccountsPayable', 'TreasuryInvestment']),
     fxRevaluationCron: process.env.FX_REVALUATION_CRON_SCHEDULE || '0 1 1 * *',
     // FX Gain/Loss journal posting — skipped until both are configured,
     // same "skip ledger posting until configured" fallback used for every
     // other optional account-code pair in this module (e.g. AR's own
     // arControlAccountCode/badDebtExpenseAccountCode).
     fxGainAccountCode: process.env.FX_GAIN_ACCOUNT_CODE || null,
+    // Treasury Investment's own control account for FX Gain/Loss posting —
+    // unconfigured (null) by default, same skip-until-configured fallback;
+    // the revaluation record itself is still created either way.
+    treasuryInvestmentControlAccountCode: process.env.TREASURY_INVESTMENT_CONTROL_ACCOUNT_CODE || null,
     fxLossAccountCode: process.env.FX_LOSS_ACCOUNT_CODE || null,
 
     // Enterprise Tax Engine — Finance Module Part 20. "A real ERP never
@@ -1316,6 +1716,30 @@ export const getFinanceConfig = () => {
     incomeTaxExpenseAccountCode: process.env.INCOME_TAX_EXPENSE_ACCOUNT_CODE || null,
     depreciationExpenseAccountCode: process.env.DEPRECIATION_EXPENSE_ACCOUNT_CODE || null,
     amortizationExpenseAccountCode: process.env.AMORTIZATION_EXPENSE_ACCOUNT_CODE || null,
+
+    // Enterprise Budgeting & Forecasting Platform — Part 17 (EPM)
+    budgetTypes: parseStringList(process.env.BUDGET_TYPES_JSON, ['Annual', 'Quarterly', 'Monthly', 'Department', 'Project', 'Capital', 'Operational']),
+    budgetStatuses: parseStringList(process.env.BUDGET_STATUSES_JSON, ['Draft', 'Submitted', 'Approved', 'Published', 'Archived']),
+    forecastTypes: parseStringList(process.env.FORECAST_TYPES_JSON, ['Rolling', 'Revenue', 'Expense', 'CashFlow', 'Profit', 'Demand', 'Resource']),
+    varianceTypes: parseStringList(process.env.VARIANCE_TYPES_JSON, ['BudgetVsActual', 'ForecastVsActual', 'RevenueVariance', 'ExpenseVariance', 'ProfitVariance', 'CashFlowVariance']),
+    scenarioTypes: parseStringList(process.env.SCENARIO_TYPES_JSON, ['BestCase', 'ExpectedCase', 'WorstCase', 'GrowthScenario', 'CostReductionScenario', 'Custom']),
+
+    // Enterprise Treasury Management Platform — Part 18 (TMS)
+    investmentTypes: parseStringList(process.env.INVESTMENT_TYPES_JSON, ['FixedDeposit', 'MoneyMarketFund', 'GovernmentSecurity', 'CorporateBond', 'TreasuryBill', 'Custom']),
+    investmentStatuses: parseStringList(process.env.INVESTMENT_STATUSES_JSON, ['Active', 'Matured', 'Liquidated', 'Archived']),
+    debtTypes: parseStringList(process.env.DEBT_TYPES_JSON, ['TermLoan', 'RevolvingCreditFacility', 'BankOverdraft', 'CorporateBond', 'SyndicatedLoan', 'Custom']),
+    debtStatuses: parseStringList(process.env.DEBT_STATUSES_JSON, ['Active', 'Repaid', 'Defaulted', 'Archived']),
+    treasuryRiskTypes: parseStringList(process.env.TREASURY_RISK_TYPES_JSON, ['LiquidityRisk', 'InterestRateRisk', 'CurrencyRisk', 'CounterpartyRisk', 'CreditRisk', 'ConcentrationRisk']),
+    // File 4 Part 3 — real config value replacing what was previously a
+    // hardcoded `2.5` magic number inline in
+    // `TreasuryService.calculateFXExposure`'s own Value-at-Risk estimate.
+    treasuryFxVarPercent: parseFloat(process.env.TREASURY_FX_VAR_PERCENT || '2.5'),
+
+    // Enterprise Financial Governance & Compliance Platform — Part 19
+    governancePolicyTypes: parseStringList(process.env.GOVERNANCE_POLICY_TYPES_JSON, ['InternalControl', 'SegregationOfDuties', 'TaxCompliance', 'RegulatoryCompliance', 'FinancialRisk', 'FraudPrevention', 'Custom']),
+    governancePolicyStatuses: parseStringList(process.env.GOVERNANCE_POLICY_STATUSES_JSON, ['Draft', 'Active', 'Suspended', 'Archived']),
+    governanceDecisionTypes: parseStringList(process.env.GOVERNANCE_DECISION_TYPES_JSON, ['Approved', 'Rejected', 'FlaggedForReview', 'DualApprovalRequired']),
+    fraudRiskLevels: parseStringList(process.env.FRAUD_RISK_LEVELS_JSON, ['Low', 'Medium', 'High', 'Critical'])
   };
 };
 

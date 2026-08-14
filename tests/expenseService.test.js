@@ -14,7 +14,13 @@ import {
   isExpenseCancellable,
   isExpenseReimbursable,
   isExpenseCloseable,
-  isReceiptUploadable
+  isReceiptUploadable,
+  deriveApprovalStatus,
+  deriveBudgetStatus,
+  deriveAccountingStatus,
+  computeFraudRiskScore,
+  validateAllocations,
+  computeAllocationAmounts
 } from "../services/ExpenseService.js";
 
 const CONFIG = {
@@ -99,7 +105,12 @@ test("expense status predicates follow the Draft -> Submitted -> Under Review ->
   assert.equal(isExpenseReturnable("Draft"), false);
 
   assert.equal(isExpenseCancellable("Draft"), true);
-  assert.equal(isExpenseCancellable("Approved"), false);
+  // Part 35 — an Approved-but-not-yet-Reimbursed expense is now
+  // cancellable (real, automatic budget rollback + accrual-journal
+  // reversal; see cancelExpense). Reimbursed/Closed stay terminal.
+  assert.equal(isExpenseCancellable("Approved"), true);
+  assert.equal(isExpenseCancellable("Reimbursed"), false);
+  assert.equal(isExpenseCancellable("Closed"), false);
 
   assert.equal(isExpenseReimbursable("Approved"), true);
   assert.equal(isExpenseReimbursable("Under Review"), false);
@@ -111,4 +122,54 @@ test("expense status predicates follow the Draft -> Submitted -> Under Review ->
   assert.equal(isReceiptUploadable("Under Review"), true);
   assert.equal(isReceiptUploadable("Closed"), false);
   assert.equal(isReceiptUploadable("Rejected"), false);
+});
+
+test("deriveApprovalStatus maps the real lifecycle status onto the spec's own Approval Status vocabulary", () => {
+  assert.equal(deriveApprovalStatus("Draft"), "NotSubmitted");
+  assert.equal(deriveApprovalStatus("Returned"), "NotSubmitted");
+  assert.equal(deriveApprovalStatus("Under Review"), "PendingApproval");
+  assert.equal(deriveApprovalStatus("Approved"), "Approved");
+  assert.equal(deriveApprovalStatus("Reimbursed"), "Approved");
+  assert.equal(deriveApprovalStatus("Closed"), "Approved");
+  assert.equal(deriveApprovalStatus("Rejected"), "Rejected");
+});
+
+test("deriveBudgetStatus reads the real budgetCheck sub-document, never a fabricated separate flag", () => {
+  assert.equal(deriveBudgetStatus(null), "NotChecked");
+  assert.equal(deriveBudgetStatus({ checkedAt: null }), "NotChecked");
+  assert.equal(deriveBudgetStatus({ checkedAt: new Date(), exceeded: true }), "Exceeded");
+  assert.equal(deriveBudgetStatus({ checkedAt: new Date(), exceeded: false }), "WithinBudget");
+});
+
+test("deriveAccountingStatus is Posted only when a real journalId exists, never silently claimed otherwise", () => {
+  assert.equal(deriveAccountingStatus({ status: "Draft", reimbursement: {} }), "NotPosted");
+  assert.equal(deriveAccountingStatus({ status: "Reimbursed", reimbursement: {} }), "ReimbursedNotPosted");
+  assert.equal(deriveAccountingStatus({ status: "Reimbursed", reimbursement: { journalId: "abc" } }), "Posted");
+  assert.equal(deriveAccountingStatus({ status: "Closed", reimbursement: { journalId: "abc" } }), "Posted");
+  assert.equal(deriveAccountingStatus({ status: "Approved", accrual: { journalId: "abc" }, reimbursement: {} }), "Posted");
+});
+
+test("computeFraudRiskScore flags a duplicate checksum, an OCR/claimed amount mismatch, and a category-cap breach independently, capped at 100", () => {
+  assert.deepEqual(computeFraudRiskScore({ isDuplicate: false, ocrAmount: null, claimedAmount: 100 }), { score: 0, flags: [] });
+  assert.deepEqual(computeFraudRiskScore({ isDuplicate: true, ocrAmount: null, claimedAmount: 100 }), { score: 50, flags: ["DuplicateReceiptChecksum"] });
+  assert.deepEqual(computeFraudRiskScore({ isDuplicate: false, ocrAmount: 150, claimedAmount: 100 }), { score: 25, flags: ["OcrAmountMismatch"] });
+  assert.deepEqual(computeFraudRiskScore({ isDuplicate: false, ocrAmount: 105, claimedAmount: 100 }), { score: 0, flags: [] });
+  assert.deepEqual(computeFraudRiskScore({ isDuplicate: false, ocrAmount: null, claimedAmount: 150, categoryCap: 100 }), { score: 25, flags: ["AmountExceedsCategoryLimit"] });
+  const all = computeFraudRiskScore({ isDuplicate: true, ocrAmount: 300, claimedAmount: 100, categoryCap: 50 });
+  assert.equal(all.score, 100);
+  assert.deepEqual(all.flags.sort(), ["AmountExceedsCategoryLimit", "DuplicateReceiptChecksum", "OcrAmountMismatch"].sort());
+});
+
+test("validateAllocations requires percentages to total exactly 100% and each allocation to name a real target", () => {
+  assert.doesNotThrow(() => validateAllocations([], 500));
+  assert.doesNotThrow(() => validateAllocations(null, 500));
+  assert.doesNotThrow(() => validateAllocations([{ costCenter: "CC-1", percentage: 40 }, { projectId: "P-1", percentage: 60 }], 500));
+  assert.throws(() => validateAllocations([{ costCenter: "CC-1", percentage: 40 }, { projectId: "P-1", percentage: 50 }], 500), /must total 100%/);
+  assert.throws(() => validateAllocations([{ percentage: 100 }], 500), /at least one target/);
+});
+
+test("computeAllocationAmounts derives each allocation's real amount from its percentage of the expense total", () => {
+  const result = computeAllocationAmounts([{ costCenter: "Marketing", percentage: 40 }, { costCenter: "Sales", percentage: 35 }, { costCenter: "Operations", percentage: 25 }], 1000);
+  assert.deepEqual(result.map((r) => r.amount), [400, 350, 250]);
+  assert.deepEqual(computeAllocationAmounts([], 1000), []);
 });

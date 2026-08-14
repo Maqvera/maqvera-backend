@@ -479,33 +479,110 @@ const objectIdRef = Joi.string().trim().pattern(/^[0-9a-fA-F]{24}$/).messages({
 const buildAccountSchemas = () => {
   const config = getFinanceConfig();
 
+  // "Posting Restrictions"/"Financial Dimensions"/"Multi-Currency Mapping"/
+  // "Tax Mapping" (Part 36) — shared sub-schemas for createAccount/updateAccount.
+  const postingRestrictionSchema = Joi.object({
+    type: Joi.string().trim().valid(...config.postingRestrictionTypes).required(),
+    restrictedCurrencies: Joi.array().items(Joi.string().trim().uppercase().length(3)).optional(),
+    restrictedDimensionValues: Joi.object().pattern(Joi.string(), Joi.array().items(Joi.string())).optional()
+  });
+
+  const dimensionsSchema = Joi.object({
+    required: Joi.array().items(Joi.string().trim().valid(...config.financialDimensionTypes)).optional(),
+    allowed: Joi.array().items(Joi.string().trim().valid(...config.financialDimensionTypes)).optional()
+  });
+
+  const currencyMappingSchema = Joi.object({
+    allowedTransactionCurrencies: Joi.array().items(Joi.string().trim().uppercase().length(3)).optional(),
+    reportingCurrency: Joi.string().trim().uppercase().length(3).optional().allow(null, ""),
+    revaluationRequired: Joi.boolean().optional(),
+    fxGainAccountCode: Joi.string().trim().optional().allow(null, ""),
+    fxLossAccountCode: Joi.string().trim().optional().allow(null, "")
+  });
+
+  const taxMappingSchema = Joi.object({
+    taxCode: Joi.string().trim().optional().allow(null, ""),
+    taxType: Joi.string().trim().valid(...config.taxTypes).optional().allow(null, ""),
+    jurisdiction: Joi.string().trim().optional().allow(null, ""),
+    electronicFilingCode: Joi.string().trim().optional().allow(null, "")
+  });
+
+  // "Deferred Revenue" + "Revenue Recognition Rules" (Part 37) — declarative
+  // metadata only, same sub-schema pattern as the Part 36 blocks above.
+  const revenueRecognitionSchema = Joi.object({
+    deferredRevenueType: Joi.string().trim().valid(...config.deferredRevenueAccountTypes).optional().allow(null, ""),
+    recognitionRule: Joi.object({
+      method: Joi.string().trim().valid(...config.revenueRecognitionMethods).optional().allow(null, ""),
+      durationMonths: Joi.number().min(0).optional().allow(null)
+    }).optional()
+  });
+
   return {
     createAccount: Joi.object({
       accountCode: Joi.string().trim().min(1).max(50).required(),
       name: Joi.string().trim().min(1).max(200).required(),
       description: Joi.string().trim().max(1000).optional().allow(""),
+      aliases: Joi.array().items(Joi.string().trim().max(100)).optional(),
       category: Joi.string().trim().valid(...config.accountCategories).required(),
       type: Joi.string().trim().valid(...config.accountTypes).optional(),
       parentId: objectIdRef.optional().allow(null, ""),
       status: Joi.string().trim().valid(...config.accountStatuses).optional(),
       currency: Joi.string().trim().uppercase().valid(...config.supportedCurrencies.map((c) => c.toUpperCase())).optional(),
       allowPosting: Joi.boolean().optional(),
-      tags: Joi.array().items(Joi.string().trim().max(50)).optional()
+      tags: Joi.array().items(Joi.string().trim().max(50)).optional(),
+      postingRestriction: postingRestrictionSchema.optional(),
+      dimensions: dimensionsSchema.optional(),
+      ownershipType: Joi.string().trim().valid(...config.accountOwnershipTypes).optional(),
+      currencyMapping: currencyMappingSchema.optional(),
+      taxMapping: taxMappingSchema.optional(),
+      budgetControlled: Joi.boolean().optional(),
+      revenueRecognition: revenueRecognitionSchema.optional()
     }),
 
     updateAccount: Joi.object({
       name: Joi.string().trim().min(1).max(200).optional(),
       description: Joi.string().trim().max(1000).optional().allow(""),
+      aliases: Joi.array().items(Joi.string().trim().max(100)).optional(),
       status: Joi.string().trim().valid(...config.accountStatuses).optional(),
       parentId: objectIdRef.optional().allow(null, ""),
       currency: Joi.string().trim().uppercase().valid(...config.supportedCurrencies.map((c) => c.toUpperCase())).optional(),
       allowPosting: Joi.boolean().optional(),
-      tags: Joi.array().items(Joi.string().trim().max(50)).optional()
-    }).min(1)
+      tags: Joi.array().items(Joi.string().trim().max(50)).optional(),
+      postingRestriction: postingRestrictionSchema.optional(),
+      dimensions: dimensionsSchema.optional(),
+      currencyMapping: currencyMappingSchema.optional(),
+      taxMapping: taxMappingSchema.optional(),
+      budgetControlled: Joi.boolean().optional(),
+      revenueRecognition: revenueRecognitionSchema.optional()
+    }).min(1),
+
+    suspendAccount: Joi.object({
+      reason: Joi.string().trim().max(500).optional().allow(null, "")
+    }),
+
+    mergeAccounts: Joi.object({
+      targetAccountId: objectIdRef.required()
+    }),
+
+    createTemplate: Joi.object({
+      name: Joi.string().trim().min(1).max(200).required(),
+      industry: Joi.string().trim().max(100).optional().allow(null, ""),
+      description: Joi.string().trim().max(1000).optional().allow(null, ""),
+      accountBlueprints: Joi.array().items(Joi.object({
+        accountCode: Joi.string().trim().min(1).max(50).required(),
+        name: Joi.string().trim().min(1).max(200).required(),
+        description: Joi.string().trim().max(1000).optional().allow(null, ""),
+        category: Joi.string().trim().valid(...config.accountCategories).required(),
+        type: Joi.string().trim().valid(...config.accountTypes).required(),
+        parentAccountCode: Joi.string().trim().optional().allow(null, ""),
+        allowPosting: Joi.boolean().optional(),
+        tags: Joi.array().items(Joi.string().trim().max(50)).optional()
+      })).min(1).required()
+    })
   };
 };
 
-const ACCOUNT_SCHEMA_KEYS = new Set(["createAccount", "updateAccount"]);
+const ACCOUNT_SCHEMA_KEYS = new Set(["createAccount", "updateAccount", "suspendAccount", "mergeAccounts", "createTemplate"]);
 
 export const accountSchemas = new Proxy({}, {
   get(_target, prop) {
@@ -524,7 +601,16 @@ const journalLineSchema = Joi.object({
   account: Joi.string().trim().min(1).max(200).optional(),
   debit: Joi.number().min(0).optional(),
   credit: Joi.number().min(0).optional(),
-  description: Joi.string().trim().max(500).optional().allow("")
+  description: Joi.string().trim().max(500).optional().allow(""),
+  // "Journal Line Dimensions"/"Multi-Currency Storage" (File 2, Journal
+  // Platform Part 4, item 41/43) — optional per-line tax code, validated
+  // against a real TaxRuleModel row in JournalService, not shaped here
+  // beyond "a string."
+  taxCode: Joi.string().trim().max(50).optional().allow(null, ""),
+  // "Financial Dimensions" (Part 36) — open key/value tags; validated
+  // against the target account's own `dimensions.required` in
+  // JournalService, not shaped here beyond "an object of strings."
+  dimensions: Joi.object().pattern(Joi.string(), Joi.string()).optional()
 }).or("accountId", "accountCode", "account").or("debit", "credit");
 
 // General Journal (Part 3). Config-driven journalType/status lists rebuild
@@ -545,7 +631,15 @@ const buildJournalSchemas = () => {
         url: Joi.string().uri().required(),
         filename: Joi.string().trim().max(255).optional(),
         contentType: Joi.string().trim().max(100).optional()
-      })).optional()
+      })).optional(),
+      // "Journal Source Types" (File 2, Journal Platform Part 1) — real,
+      // optional traceability metadata. sourceModule is restricted to
+      // modules that actually generate journals in this codebase.
+      sourceModule: Joi.string().trim().valid(...config.journalSourceModules).optional().allow(null, ""),
+      sourceEntity: Joi.string().trim().max(100).optional().allow(null, ""),
+      sourceId: Joi.string().trim().max(100).optional().allow(null, ""),
+      sourceVersion: Joi.number().integer().min(0).optional().allow(null),
+      correlationId: Joi.string().trim().max(100).optional().allow(null, "")
     }),
 
     updateJournal: Joi.object({
@@ -557,7 +651,11 @@ const buildJournalSchemas = () => {
         url: Joi.string().uri().required(),
         filename: Joi.string().trim().max(255).optional(),
         contentType: Joi.string().trim().max(100).optional()
-      })).optional()
+      })).optional(),
+      // "Version Conflict Check" (File 2, Journal Platform Part 3, item 39)
+      // — optional optimistic-concurrency token; omitted entirely, the
+      // check is skipped (backward-compatible with every existing caller).
+      expectedVersion: Joi.number().integer().min(1).optional()
     }).min(1),
 
     rejectJournal: Joi.object({
@@ -571,11 +669,76 @@ const buildJournalSchemas = () => {
         lineId: Joi.string().trim().required(),
         amount: Joi.number().greater(0).required()
       })).optional()
+    }),
+
+    // File 2, Journal Platform Part 2 (Part 39).
+    correctJournal: Joi.object({
+      postingDate: Joi.date().optional(),
+      description: Joi.string().trim().max(1000).optional().allow(""),
+      lines: Joi.array().items(journalLineSchema).min(2).required()
+    }),
+
+    createJournalTemplate: Joi.object({
+      name: Joi.string().trim().min(1).max(200).required(),
+      description: Joi.string().trim().max(1000).optional().allow(null, ""),
+      journalType: Joi.string().trim().valid(...config.journalTypes).optional(),
+      currency: Joi.string().trim().uppercase().valid(...config.supportedCurrencies.map((c) => c.toUpperCase())).optional().allow(null, ""),
+      lineBlueprints: Joi.array().items(Joi.object({
+        accountCode: Joi.string().trim().min(1).max(50).required(),
+        description: Joi.string().trim().max(500).optional().allow(null, ""),
+        debit: Joi.number().min(0).optional(),
+        credit: Joi.number().min(0).optional(),
+        dimensions: Joi.object().pattern(Joi.string(), Joi.string()).optional()
+      })).min(2).required()
+    }),
+
+    applyJournalTemplate: Joi.object({
+      journalType: Joi.string().trim().valid(...config.journalTypes).optional(),
+      postingDate: Joi.date().optional(),
+      description: Joi.string().trim().max(1000).optional().allow(null, ""),
+      referenceNumber: Joi.string().trim().max(100).optional().allow(null, ""),
+      currency: Joi.string().trim().uppercase().valid(...config.supportedCurrencies.map((c) => c.toUpperCase())).optional().allow(null, ""),
+      sourceModule: Joi.string().trim().valid(...config.journalSourceModules).optional().allow(null, ""),
+      correlationId: Joi.string().trim().max(100).optional().allow(null, ""),
+      lineOverrides: Joi.array().items(Joi.object({
+        description: Joi.string().trim().max(500).optional().allow(null, ""),
+        debit: Joi.number().min(0).optional(),
+        credit: Joi.number().min(0).optional(),
+        dimensions: Joi.object().pattern(Joi.string(), Joi.string()).optional()
+      })).optional()
+    }),
+
+    createRecurringJournal: Joi.object({
+      name: Joi.string().trim().min(1).max(200).required(),
+      description: Joi.string().trim().max(1000).optional().allow(null, ""),
+      templateId: Joi.string().trim().required(),
+      frequency: Joi.string().trim().valid(...config.recurringJournalFrequencies).required(),
+      customIntervalDays: Joi.number().integer().greater(0).optional().allow(null),
+      nextRunDate: Joi.date().required(),
+      endDate: Joi.date().optional().allow(null)
+    }),
+
+    createJournalBatch: Joi.object({
+      batchType: Joi.string().trim().valid(...config.journalBatchTypes).required(),
+      autoPost: Joi.boolean().optional(),
+      journals: Joi.array().items(Joi.object({
+        journalType: Joi.string().trim().valid(...config.journalTypes).optional(),
+        postingDate: Joi.date().required(),
+        description: Joi.string().trim().max(1000).optional().allow(""),
+        referenceNumber: Joi.string().trim().max(100).optional().allow(""),
+        currency: Joi.string().trim().uppercase().valid(...config.supportedCurrencies.map((c) => c.toUpperCase())).optional(),
+        lines: Joi.array().items(journalLineSchema).min(2).required(),
+        sourceModule: Joi.string().trim().valid(...config.journalSourceModules).optional().allow(null, ""),
+        correlationId: Joi.string().trim().max(100).optional().allow(null, "")
+      })).min(1).required()
     })
   };
 };
 
-const JOURNAL_SCHEMA_KEYS = new Set(["createJournal", "updateJournal", "rejectJournal", "reverseJournal"]);
+const JOURNAL_SCHEMA_KEYS = new Set([
+  "createJournal", "updateJournal", "rejectJournal", "reverseJournal", "correctJournal",
+  "createJournalTemplate", "applyJournalTemplate", "createRecurringJournal", "createJournalBatch"
+]);
 
 export const journalSchemas = new Proxy({}, {
   get(_target, prop) {
@@ -1275,9 +1438,32 @@ const buildExpenseSchemas = () => {
       department: objectIdRef.optional().allow(null, ""),
       projectId: Joi.string().trim().optional().allow(null, ""),
       costCenter: Joi.string().trim().optional().allow(null, ""),
+      // Purely descriptive organizational labels — never used for tenant/
+      // access scoping. See Part 34's own reconciliation of the "Business
+      // Unit"/"Branch" hierarchy onto this codebase's real architecture.
+      businessUnit: Joi.string().trim().max(200).optional().allow(null, ""),
+      branch: Joi.string().trim().max(200).optional().allow(null, ""),
+      tags: Joi.array().items(Joi.string().trim().max(50)).max(20).optional(),
+      // "Expense Allocation Engine" (Part 35) — optional multi-target
+      // split; validated for 100%-total reconciliation in
+      // ExpenseService.validateAllocations, not here (Joi only shapes the
+      // structure).
+      allocations: Joi.array().items(Joi.object({
+        department: objectIdRef.optional().allow(null, ""),
+        costCenter: Joi.string().trim().optional().allow(null, ""),
+        projectId: Joi.string().trim().optional().allow(null, ""),
+        businessUnit: Joi.string().trim().optional().allow(null, ""),
+        branch: Joi.string().trim().optional().allow(null, ""),
+        percentage: Joi.number().greater(0).max(100).required()
+      })).optional(),
       category: Joi.string().trim().valid(...config.expenseCategories).required(),
+      expenseType: Joi.string().trim().valid(...config.expenseTypes).optional(),
       amount: Joi.number().greater(0).optional(),
       currency: Joi.string().trim().valid(...config.supportedCurrencies).required(),
+      // ISO country code — the Tax Engine's jurisdiction; optional (see
+      // ExpenseModel.js's own doc comment) alongside `taxCode`.
+      country: Joi.string().trim().length(2).uppercase().optional().allow(null, ""),
+      taxCode: Joi.string().trim().optional().allow(null, ""),
       expenseDate: Joi.date().required(),
       description: Joi.string().trim().min(1).max(1000).required(),
       paymentMethod: Joi.string().trim().valid(...config.expensePaymentMethods).optional(),
@@ -1288,12 +1474,27 @@ const buildExpenseSchemas = () => {
 
     updateExpense: Joi.object({
       category: Joi.string().trim().valid(...config.expenseCategories).optional(),
+      expenseType: Joi.string().trim().valid(...config.expenseTypes).optional(),
       amount: Joi.number().greater(0).optional(),
+      currency: Joi.string().trim().valid(...config.supportedCurrencies).optional(),
       description: Joi.string().trim().min(1).max(1000).optional(),
       expenseDate: Joi.date().optional(),
       department: objectIdRef.optional().allow(null, ""),
       projectId: Joi.string().trim().optional().allow(null, ""),
       costCenter: Joi.string().trim().optional().allow(null, ""),
+      businessUnit: Joi.string().trim().max(200).optional().allow(null, ""),
+      branch: Joi.string().trim().max(200).optional().allow(null, ""),
+      tags: Joi.array().items(Joi.string().trim().max(50)).max(20).optional(),
+      allocations: Joi.array().items(Joi.object({
+        department: objectIdRef.optional().allow(null, ""),
+        costCenter: Joi.string().trim().optional().allow(null, ""),
+        projectId: Joi.string().trim().optional().allow(null, ""),
+        businessUnit: Joi.string().trim().optional().allow(null, ""),
+        branch: Joi.string().trim().optional().allow(null, ""),
+        percentage: Joi.number().greater(0).max(100).required()
+      })).optional(),
+      country: Joi.string().trim().length(2).uppercase().optional().allow(null, ""),
+      taxCode: Joi.string().trim().optional().allow(null, ""),
       paymentMethod: Joi.string().trim().valid(...config.expensePaymentMethods).optional().allow(null, "")
     }),
 
@@ -1426,20 +1627,69 @@ const buildCustomerCollectionSchemas = () => {
   const config = getFinanceConfig();
 
   return {
+    // Part 18 Part 2 (API Contracts Refactoring) — `invoiceIds`/
+    // `paymentDueDate` dropped from `.required()` to optional: the
+    // original AR-invoice shape still works exactly as before when
+    // supplied, but a caller may instead supply `collectionSource` +
+    // `amount` + `currency` directly for a non-invoice source ("Customer
+    // Payment is NOT Invoice"). Which combination is actually required is
+    // enforced in CustomerCollectionService.createCollectionRequest itself
+    // (cross-field business validation, same convention as e.g.
+    // createInstallmentPlan's own `customSchedule`-required-when-Custom
+    // check) rather than duplicated here. No `merchantId`/`storeId`/
+    // `subscriptionId` existence validation — informational only, see
+    // PaymentIntentModel's own doc comment for why.
     createCollectionRequest: Joi.object({
       customerId: objectIdRef.required(),
-      invoiceIds: Joi.array().items(objectIdRef).min(1).required(),
-      paymentDueDate: Joi.date().required(),
+      invoiceIds: Joi.array().items(objectIdRef).min(1).optional(),
+      paymentDueDate: Joi.date().optional(),
       preferredMethod: Joi.string().trim().optional().allow(null, ""),
-      generatePaymentLink: Joi.boolean().optional()
+      generatePaymentLink: Joi.boolean().optional(),
+      merchantId: Joi.alternatives().try(objectIdRef, Joi.string().trim()).optional().allow(null, ""),
+      storeId: Joi.alternatives().try(objectIdRef, Joi.string().trim()).optional().allow(null, ""),
+      subscriptionId: Joi.alternatives().try(objectIdRef, Joi.string().trim()).optional().allow(null, ""),
+      collectionSource: Joi.string().trim().valid(...config.collectionSources).optional(),
+      sourceDocumentId: Joi.string().trim().max(200).optional().allow(null, ""),
+      // .insensitive() — the spec's own request example uses uppercase
+      // "USD" while this codebase's `supportedCurrencies` default list
+      // (utils/bookingConfig.js) is lowercase; matched case-insensitively
+      // rather than forcing every caller to know which case this tenant's
+      // config happens to use.
+      currency: Joi.string().trim().valid(...config.supportedCurrencies).insensitive().optional(),
+      amount: Joi.number().greater(0).optional(),
+      paymentMethod: Joi.string().trim().valid(...config.paymentMethods).optional(),
+      paymentProvider: Joi.string().trim().valid(...config.gateways).optional(),
+      paymentDate: Joi.date().optional(),
+      returnUrl: Joi.string().trim().uri().max(2000).optional().allow(null, ""),
+      cancelUrl: Joi.string().trim().uri().max(2000).optional().allow(null, ""),
+      metadata: Joi.object().unknown(true).optional().allow(null)
     }),
 
+    // Part 18 Part 3 (Payment Collection, Allocation & Reconciliation).
+    // `customerIp`/`deviceId`/`riskSessionId`/`savePaymentMethod` are
+    // recorded honestly as authentication/fraud-signal context — no real
+    // 3DS/SCA challenge is implemented (see PaymentIntentModel's own doc
+    // comment).
     collectPayment: Joi.object({
       amount: Joi.number().greater(0).optional(),
-      paymentMethod: Joi.string().trim().optional().allow(null, ""),
+      paymentMethod: Joi.string().trim().valid(...config.paymentMethods).optional().allow(null, ""),
+      installmentNumber: Joi.number().integer().min(1).optional().allow(null),
+      paymentProvider: Joi.string().trim().valid(...config.gateways).optional().allow(null, ""),
+      captureMode: Joi.string().trim().valid(...config.captureModes).optional(),
+      savePaymentMethod: Joi.boolean().optional(),
+      customerIp: Joi.string().trim().ip({ version: ["ipv4", "ipv6"] }).optional().allow(null, ""),
+      deviceId: Joi.string().trim().max(200).optional().allow(null, ""),
+      riskSessionId: Joi.string().trim().max(200).optional().allow(null, "")
+    }),
+
+    // Part 18 Part 3 — POST /customer-payments/{collectionId}/capture.
+    captureAuthorizedPayment: Joi.object({
+      amount: Joi.number().greater(0).optional(),
       installmentNumber: Joi.number().integer().min(1).optional().allow(null)
     }),
 
+    // Part 18 Part 4 — "Down Payment + Installments," "Balloon Payment,"
+    // "Grace Period."
     createInstallmentPlan: Joi.object({
       installmentCount: Joi.number().integer().min(1).optional(),
       frequency: Joi.string().trim().valid(...config.installmentFrequencies).required(),
@@ -1447,7 +1697,20 @@ const buildCustomerCollectionSchemas = () => {
       customSchedule: Joi.array().items(Joi.object({
         dueDate: Joi.date().required(),
         amount: Joi.number().greater(0).required()
-      })).optional()
+      })).optional(),
+      downPayment: Joi.number().min(0).optional(),
+      balloonAmount: Joi.number().min(0).optional(),
+      gracePeriodDays: Joi.number().integer().min(0).optional().allow(null),
+      paymentMethod: Joi.string().trim().valid(...config.paymentMethods).optional().allow(null, "")
+    }),
+
+    rescheduleInstallment: Joi.object({
+      newDueDate: Joi.date().required(),
+      reason: Joi.string().trim().max(500).optional().allow(null, "")
+    }),
+
+    cancelInstallmentPlan: Joi.object({
+      reason: Joi.string().trim().max(500).optional().allow(null, "")
     }),
 
     sendReminder: Joi.object({
@@ -1477,13 +1740,177 @@ const buildCustomerCollectionSchemas = () => {
   };
 };
 
-const CUSTOMER_COLLECTION_SCHEMA_KEYS = new Set(["createCollectionRequest", "collectPayment", "createInstallmentPlan", "sendReminder", "dispute", "writeOff", "cancel", "createDeposit"]);
+const CUSTOMER_COLLECTION_SCHEMA_KEYS = new Set(["createCollectionRequest", "collectPayment", "captureAuthorizedPayment", "createInstallmentPlan", "rescheduleInstallment", "cancelInstallmentPlan", "sendReminder", "dispute", "writeOff", "cancel", "createDeposit"]);
 
 export const customerCollectionSchemas = new Proxy({}, {
   get(_target, prop) {
     if (CUSTOMER_COLLECTION_SCHEMA_KEYS.has(prop)) {
       return buildCustomerCollectionSchemas()[prop];
     }
+    return undefined;
+  }
+});
+
+// Enterprise Customer Payments — Wallet Support (Part 18 Part 4). Same
+// config-driven Proxy pattern as every other Finance schema group. No
+// `branchId`/`branch` field anywhere.
+const buildWalletSchemas = () => {
+  const config = getFinanceConfig();
+
+  return {
+    createWallet: Joi.object({
+      customerId: objectIdRef.required(),
+      walletType: Joi.string().trim().valid(...config.walletTypes).optional(),
+      currency: Joi.string().trim().valid(...config.supportedCurrencies).insensitive().required(),
+      maxBalance: Joi.number().greater(0).optional().allow(null)
+    }),
+    topUp: Joi.object({
+      amount: Joi.number().greater(0).required(),
+      paymentMethod: Joi.string().trim().valid(...config.paymentMethods).required(),
+      paymentProvider: Joi.string().trim().valid(...config.gateways).optional().allow(null, "")
+    }),
+    purchase: Joi.object({
+      amount: Joi.number().greater(0).required(),
+      collectionId: objectIdRef.required(),
+      installmentNumber: Joi.number().integer().min(1).optional().allow(null)
+    }),
+    refund: Joi.object({
+      amount: Joi.number().greater(0).required(),
+      reason: Joi.string().trim().max(500).optional().allow(null, ""),
+      paymentId: objectIdRef.optional().allow(null, "")
+    }),
+    transfer: Joi.object({
+      toWalletId: objectIdRef.required(),
+      amount: Joi.number().greater(0).required()
+    }),
+    withdraw: Joi.object({
+      amount: Joi.number().greater(0).required(),
+      reason: Joi.string().trim().max(500).optional().allow(null, "")
+    }),
+    suspend: Joi.object({
+      reason: Joi.string().trim().max(500).optional().allow(null, "")
+    })
+  };
+};
+
+const WALLET_SCHEMA_KEYS = new Set(["createWallet", "topUp", "purchase", "refund", "transfer", "withdraw", "suspend"]);
+
+export const walletSchemas = new Proxy({}, {
+  get(_target, prop) {
+    if (WALLET_SCHEMA_KEYS.has(prop)) return buildWalletSchemas()[prop];
+    return undefined;
+  }
+});
+
+// Enterprise Customer Payments — Subscription + Membership Billing (Part
+// 18 Part 4). Same config-driven Proxy pattern as every other Finance
+// schema group. No `branchId`/`branch` field anywhere.
+const buildSubscriptionSchemas = () => {
+  const config = getFinanceConfig();
+
+  return {
+    createSubscription: Joi.object({
+      customerId: objectIdRef.required(),
+      planType: Joi.string().trim().valid(...config.subscriptionPlanTypes).optional(),
+      planName: Joi.string().trim().min(1).max(200).required(),
+      membershipTier: Joi.string().trim().valid(...config.membershipTiers).optional().allow(null, ""),
+      billingCycle: Joi.string().trim().valid(...config.subscriptionBillingCycles).optional(),
+      amount: Joi.number().greater(0).required(),
+      currency: Joi.string().trim().valid(...config.supportedCurrencies).insensitive().required(),
+      trialDays: Joi.number().integer().min(0).optional(),
+      autoRenew: Joi.boolean().optional(),
+      gracePeriodDays: Joi.number().integer().min(0).optional().allow(null),
+      retryAttempts: Joi.number().integer().min(0).optional().allow(null),
+      prorationEnabled: Joi.boolean().optional(),
+      paymentMethod: Joi.string().trim().valid(...config.paymentMethods).optional().allow(null, ""),
+      paymentProvider: Joi.string().trim().valid(...config.gateways).optional().allow(null, "")
+    }),
+    recordUsage: Joi.object({
+      quantity: Joi.number().required(),
+      unitPrice: Joi.number().min(0).optional().allow(null)
+    }),
+    changePlan: Joi.object({
+      newAmount: Joi.number().greater(0).required(),
+      type: Joi.string().trim().valid("Upgrade", "Downgrade").required()
+    }),
+    pause: Joi.object({
+      reason: Joi.string().trim().max(500).optional().allow(null, "")
+    }),
+    cancel: Joi.object({
+      reason: Joi.string().trim().max(500).optional().allow(null, "")
+    }),
+    terminate: Joi.object({
+      reason: Joi.string().trim().max(500).optional().allow(null, "")
+    })
+  };
+};
+
+const SUBSCRIPTION_SCHEMA_KEYS = new Set(["createSubscription", "recordUsage", "changePlan", "pause", "cancel", "terminate"]);
+
+export const subscriptionSchemas = new Proxy({}, {
+  get(_target, prop) {
+    if (SUBSCRIPTION_SCHEMA_KEYS.has(prop)) return buildSubscriptionSchemas()[prop];
+    return undefined;
+  }
+});
+
+// Enterprise Customer Payments — Collection Campaigns (Part 18 Part 4).
+// Same config-driven Proxy pattern as every other Finance schema group.
+// No `branchId`/`branch` field anywhere.
+const buildCollectionCampaignSchemas = () => {
+  const config = getFinanceConfig();
+
+  return {
+    createCampaign: Joi.object({
+      name: Joi.string().trim().min(1).max(200).required(),
+      description: Joi.string().trim().max(1000).optional().allow(null, ""),
+      campaignType: Joi.string().trim().valid(...config.collectionCampaignTypes).required(),
+      reminderChannel: Joi.string().trim().valid(...config.deliveryMethods).optional(),
+      targetCriteria: Joi.object({
+        status: Joi.string().trim().valid(...config.customerCollectionStatuses).optional().allow(null, ""),
+        collectionSource: Joi.string().trim().valid(...config.collectionSources).optional().allow(null, ""),
+        currency: Joi.string().trim().optional().allow(null, ""),
+        minAmount: Joi.number().min(0).optional().allow(null),
+        maxAmount: Joi.number().min(0).optional().allow(null),
+        minDaysOverdue: Joi.number().integer().min(0).optional().allow(null),
+        collectionStage: Joi.string().trim().optional().allow(null, "")
+      }).optional()
+    })
+  };
+};
+
+const COLLECTION_CAMPAIGN_SCHEMA_KEYS = new Set(["createCampaign"]);
+
+export const collectionCampaignSchemas = new Proxy({}, {
+  get(_target, prop) {
+    if (COLLECTION_CAMPAIGN_SCHEMA_KEYS.has(prop)) return buildCollectionCampaignSchemas()[prop];
+    return undefined;
+  }
+});
+
+// Enterprise Customer Payments — Webhook Platform (Part 18 Part 5). Same
+// config-driven Proxy pattern as every other Finance schema group. No
+// `branchId`/`branch` field anywhere. `subscribedEvents` accepts any
+// string ("Custom Events") — not restricted to `webhookEventTypes`, since
+// that catalog is a curated "known events" list, not an exhaustive one.
+const buildWebhookSchemas = () => {
+  return {
+    createSubscription: Joi.object({
+      url: Joi.string().trim().uri({ scheme: ["http", "https"] }).max(2000).required(),
+      description: Joi.string().trim().max(500).optional().allow(null, ""),
+      subscribedEvents: Joi.array().items(Joi.string().trim().min(1).max(100)).min(1).required()
+    }),
+    updateStatus: Joi.object({
+      reason: Joi.string().trim().max(500).optional().allow(null, "")
+    })
+  };
+};
+
+const WEBHOOK_SCHEMA_KEYS = new Set(["createSubscription", "updateStatus"]);
+
+export const webhookSchemas = new Proxy({}, {
+  get(_target, prop) {
+    if (WEBHOOK_SCHEMA_KEYS.has(prop)) return buildWebhookSchemas()[prop];
     return undefined;
   }
 });
@@ -1495,25 +1922,40 @@ const buildCurrencySchemas = () => {
   const config = getFinanceConfig();
 
   return {
+    // File 4 Part 2 — `status` from the spec's own request example is
+    // deliberately NOT accepted here: a currency always starts Draft,
+    // real (CurrencyService.createCurrency never trusts a caller-supplied
+    // initial status).
     createCurrency: Joi.object({
       currencyCode: Joi.string().trim().uppercase().length(3).required(),
+      isoNumericCode: Joi.string().trim().pattern(/^\d{3}$/).optional().allow(null, ""),
       name: Joi.string().trim().max(100).optional(),
       symbol: Joi.string().trim().max(8).optional().allow(null, ""),
       decimalPlaces: Joi.number().integer().min(0).max(4).optional(),
-      baseCurrency: Joi.boolean().optional()
+      currencyType: Joi.string().trim().valid(...config.currencyTypes).optional(),
+      baseCurrency: Joi.boolean().optional(),
+      reportingCurrency: Joi.boolean().optional()
     }),
 
     suspend: Joi.object({
       reason: Joi.string().trim().max(1000).optional().allow(null, "")
     }),
 
+    // File 4 Part 2 — `expiresAt` is real and optional; `approvalStatus`/
+    // `version` are never caller-supplied (CurrencyService.createExchangeRate
+    // computes both).
     createExchangeRate: Joi.object({
       fromCurrency: Joi.string().trim().uppercase().length(3).required(),
       toCurrency: Joi.string().trim().uppercase().length(3).required(),
       rate: Joi.number().greater(0).required(),
       effectiveDate: Joi.date().required(),
+      expiresAt: Joi.date().optional().allow(null),
       rateType: Joi.string().trim().valid(...config.exchangeRateTypes).optional(),
       provider: Joi.string().trim().valid(...config.rateProviders).optional()
+    }),
+
+    rejectExchangeRate: Joi.object({
+      reason: Joi.string().trim().max(1000).optional().allow(null, "")
     }),
 
     importRates: Joi.object({
@@ -1526,7 +1968,7 @@ const buildCurrencySchemas = () => {
   };
 };
 
-const CURRENCY_SCHEMA_KEYS = new Set(["createCurrency", "suspend", "createExchangeRate", "importRates", "runRevaluation"]);
+const CURRENCY_SCHEMA_KEYS = new Set(["createCurrency", "suspend", "createExchangeRate", "rejectExchangeRate", "importRates", "runRevaluation"]);
 
 export const currencySchemas = new Proxy({}, {
   get(_target, prop) {
@@ -1901,11 +2343,16 @@ const buildFinancialAnalyticsSchemas = () => {
       periodStart: Joi.date().optional(),
       periodEnd: Joi.date().optional(),
       currency: Joi.string().trim().valid(...config.supportedCurrencies).optional().allow(null, "")
+    }).unknown(true),
+
+    refreshAnalytics: Joi.object({
+      period: Joi.string().trim().optional().allow(null, ""),
+      scope: Joi.string().trim().optional().allow(null, "")
     }).unknown(true)
   };
 };
 
-const FINANCIAL_ANALYTICS_SCHEMA_KEYS = new Set(["runAnalysis"]);
+const FINANCIAL_ANALYTICS_SCHEMA_KEYS = new Set(["runAnalysis", "refreshAnalytics"]);
 
 export const financialAnalyticsSchemas = new Proxy({}, {
   get(_target, prop) {
@@ -2011,6 +2458,459 @@ export const financialDashboardSchemas = new Proxy({}, {
     return undefined;
   }
 });
+
+// Enterprise Budgeting & Forecasting Platform (Part 17 EPM).
+// Config-driven Proxy pattern as every other Finance schema group.
+// Tenant-scoped only — no `branchId`/`branch` field anywhere.
+const buildPlanningSchemas = () => {
+  const config = getFinanceConfig();
+
+  return {
+    createBudget: Joi.object({
+      name: Joi.string().trim().min(1).max(200).required(),
+      department: Joi.string().trim().max(100).optional().allow(null, ""),
+      fiscalYear: Joi.string().trim().min(1).max(20).required(),
+      currency: Joi.string().trim().length(3).uppercase().required(),
+      budgetType: Joi.string().trim().valid(...config.budgetTypes).optional(),
+      owner: Joi.string().trim().max(100).optional(),
+      description: Joi.string().trim().max(1000).optional().allow(null, ""),
+      periodStart: Joi.date().optional(),
+      periodEnd: Joi.date().optional(),
+      lineItems: Joi.array().items(Joi.object({
+        code: Joi.string().trim().optional().allow(null, ""),
+        accountCode: Joi.string().trim().optional().allow(null, ""),
+        category: Joi.string().trim().required(),
+        name: Joi.string().trim().required(),
+        allocatedAmount: Joi.number().min(0).required(),
+        periodBreakdown: Joi.object().optional(),
+        notes: Joi.string().trim().optional().allow(null, "")
+      })).optional()
+    }),
+
+    updateBudget: Joi.object({
+      name: Joi.string().trim().min(1).max(200).optional(),
+      department: Joi.string().trim().max(100).optional().allow(null, ""),
+      currency: Joi.string().trim().length(3).uppercase().optional(),
+      budgetType: Joi.string().trim().valid(...config.budgetTypes).optional(),
+      owner: Joi.string().trim().max(100).optional(),
+      description: Joi.string().trim().max(1000).optional().allow(null, ""),
+      periodStart: Joi.date().optional(),
+      periodEnd: Joi.date().optional(),
+      lineItems: Joi.array().items(Joi.object({
+        code: Joi.string().trim().optional().allow(null, ""),
+        accountCode: Joi.string().trim().optional().allow(null, ""),
+        category: Joi.string().trim().required(),
+        name: Joi.string().trim().required(),
+        allocatedAmount: Joi.number().min(0).required(),
+        periodBreakdown: Joi.object().optional(),
+        notes: Joi.string().trim().optional().allow(null, "")
+      })).optional()
+    }),
+
+    approveBudget: Joi.object({
+      decision: Joi.string().trim().valid("Approved", "Rejected", "RevisionRequested").required(),
+      comments: Joi.string().trim().max(1000).optional().allow(null, "")
+    }),
+
+    createRevision: Joi.object({
+      reason: Joi.string().trim().max(500).optional().allow(null, ""),
+      department: Joi.string().trim().max(100).optional().allow(null, ""),
+      description: Joi.string().trim().max(1000).optional().allow(null, ""),
+      lineItems: Joi.array().items(Joi.object({
+        code: Joi.string().trim().optional().allow(null, ""),
+        accountCode: Joi.string().trim().optional().allow(null, ""),
+        category: Joi.string().trim().required(),
+        name: Joi.string().trim().required(),
+        allocatedAmount: Joi.number().min(0).required(),
+        periodBreakdown: Joi.object().optional(),
+        notes: Joi.string().trim().optional().allow(null, "")
+      })).optional()
+    }),
+
+    generateForecast: Joi.object({
+      name: Joi.string().trim().min(1).max(200).required(),
+      forecastType: Joi.string().trim().valid(...config.forecastTypes).required(),
+      fiscalYear: Joi.string().trim().min(1).max(20).required(),
+      baseBudgetId: Joi.string().trim().optional().allow(null, ""),
+      currency: Joi.string().trim().length(3).uppercase().optional(),
+      methodology: Joi.string().trim().valid("LinearTrend", "MovingAverage", "GrowthRate", "RunRate", "HistoricalAverage", "Custom").optional(),
+      growthRate: Joi.number().optional(),
+      startDate: Joi.date().optional(),
+      endDate: Joi.date().optional(),
+      notes: Joi.string().trim().max(1000).optional().allow(null, "")
+    }),
+
+    calculateVariance: Joi.object({
+      name: Joi.string().trim().min(1).max(200).optional(),
+      varianceType: Joi.string().trim().valid(...config.varianceTypes).optional(),
+      budgetId: Joi.string().trim().optional().allow(null, ""),
+      forecastId: Joi.string().trim().optional().allow(null, ""),
+      fiscalYear: Joi.string().trim().min(1).max(20).required(),
+      period: Joi.string().trim().optional().allow(null, ""),
+      currency: Joi.string().trim().length(3).uppercase().optional()
+    }),
+
+    createScenario: Joi.object({
+      name: Joi.string().trim().min(1).max(200).required(),
+      scenarioType: Joi.string().trim().valid(...config.scenarioTypes).required(),
+      baseBudgetId: Joi.string().trim().optional().allow(null, ""),
+      baseForecastId: Joi.string().trim().optional().allow(null, ""),
+      fiscalYear: Joi.string().trim().min(1).max(20).required(),
+      currency: Joi.string().trim().length(3).uppercase().optional(),
+      assumptions: Joi.object({
+        revenueMultiplier: Joi.number().optional(),
+        expenseMultiplier: Joi.number().optional(),
+        inflationRate: Joi.number().optional(),
+        headcountGrowthPct: Joi.number().optional(),
+        customParameters: Joi.object().optional()
+      }).optional(),
+      description: Joi.string().trim().max(1000).optional().allow(null, "")
+    })
+  };
+};
+
+const PLANNING_SCHEMA_KEYS = new Set([
+  "createBudget", "updateBudget", "approveBudget", "createRevision",
+  "generateForecast", "calculateVariance", "createScenario"
+]);
+
+export const planningSchemas = new Proxy({}, {
+  get(_target, prop) {
+    if (PLANNING_SCHEMA_KEYS.has(prop)) {
+      return buildPlanningSchemas()[prop];
+    }
+    return undefined;
+  }
+});
+
+// Enterprise Treasury Management Platform — Part 18 (TMS).
+// Config-driven Proxy pattern as every other Finance schema group.
+// Tenant-scoped only — no `branchId`/`branch` field anywhere.
+const buildTreasurySchemas = () => {
+  const config = getFinanceConfig();
+
+  return {
+    calculateCashPosition: Joi.object({
+      valuationDate: Joi.date().optional()
+    }),
+
+    syncBankBalances: Joi.object({
+      bankAccountId: Joi.string().trim().optional().allow(null, ""),
+      balanceOverrides: Joi.object().optional()
+    }),
+
+    generateLiquidityForecast: Joi.object({
+      horizon: Joi.string().trim().valid("7-Day", "30-Day", "90-Day", "12-Month", "Custom").optional(),
+      baseCurrency: Joi.string().trim().length(3).uppercase().optional(),
+      minimumBuffer: Joi.number().min(0).optional(),
+      notes: Joi.string().trim().max(1000).optional().allow(null, "")
+    }),
+
+    createInvestment: Joi.object({
+      name: Joi.string().trim().min(1).max(200).required(),
+      investmentType: Joi.string().trim().valid(...config.investmentTypes).required(),
+      counterpartyBank: Joi.string().trim().min(1).max(200).required(),
+      currency: Joi.string().trim().length(3).uppercase().optional(),
+      principalAmount: Joi.number().positive().required(),
+      interestRate: Joi.number().min(0).max(100).optional(),
+      startDate: Joi.date().optional(),
+      maturityDate: Joi.date().required(),
+      notes: Joi.string().trim().max(1000).optional().allow(null, "")
+    }),
+
+    updateInvestmentStatus: Joi.object({
+      status: Joi.string().trim().valid(...config.investmentStatuses).required(),
+      notes: Joi.string().trim().max(1000).optional().allow(null, "")
+    }),
+
+    recordDebt: Joi.object({
+      facilityName: Joi.string().trim().min(1).max(200).required(),
+      debtType: Joi.string().trim().valid(...config.debtTypes).required(),
+      lender: Joi.string().trim().min(1).max(200).required(),
+      currency: Joi.string().trim().length(3).uppercase().optional(),
+      principalAmount: Joi.number().positive().required(),
+      outstandingBalance: Joi.number().min(0).optional(),
+      interestRate: Joi.number().min(0).max(100).optional(),
+      interestType: Joi.string().trim().valid("Fixed", "Floating").optional(),
+      startDate: Joi.date().optional(),
+      maturityDate: Joi.date().required(),
+      repaymentFrequency: Joi.string().trim().valid("Monthly", "Quarterly", "Annually", "Bullet").optional(),
+      nextPaymentDate: Joi.date().optional(),
+      nextPaymentAmount: Joi.number().min(0).optional(),
+      covenants: Joi.array().items(Joi.object({
+        covenantName: Joi.string().trim().required(),
+        metric: Joi.string().trim().required(),
+        targetValue: Joi.number().required(),
+        currentValue: Joi.number().optional(),
+        compliant: Joi.boolean().optional()
+      })).optional(),
+      notes: Joi.string().trim().max(1000).optional().allow(null, "")
+    }),
+
+    updateDebtStatus: Joi.object({
+      status: Joi.string().trim().valid(...config.debtStatuses).optional(),
+      outstandingBalance: Joi.number().min(0).optional(),
+      notes: Joi.string().trim().max(1000).optional().allow(null, "")
+    }),
+
+    calculateFXExposure: Joi.object({
+      baseCurrency: Joi.string().trim().length(3).uppercase().optional()
+    }),
+
+    evaluateTreasuryRisks: Joi.object({})
+  };
+};
+
+const TREASURY_SCHEMA_KEYS = new Set([
+  "calculateCashPosition", "syncBankBalances", "generateLiquidityForecast",
+  "createInvestment", "updateInvestmentStatus", "recordDebt", "updateDebtStatus",
+  "calculateFXExposure", "evaluateTreasuryRisks"
+]);
+
+export const treasurySchemas = new Proxy({}, {
+  get(_target, prop) {
+    if (TREASURY_SCHEMA_KEYS.has(prop)) {
+      return buildTreasurySchemas()[prop];
+    }
+    return undefined;
+  }
+});
+
+// Enterprise Financial Governance & Compliance Platform — Part 19.
+// Config-driven Proxy pattern as every other Finance schema group.
+// Tenant-scoped only — no `branchId`/`branch` field anywhere.
+const buildGovernanceSchemas = () => {
+  const config = getFinanceConfig();
+
+  return {
+    evaluateGovernance: Joi.object({
+      transactionId: Joi.string().trim().min(1).max(100).required(),
+      operation: Joi.string().trim().min(1).max(100).required(),
+      amount: Joi.number().min(0).optional(),
+      creatorId: Joi.string().trim().optional().allow(null, ""),
+      approverId: Joi.string().trim().optional().allow(null, ""),
+      payload: Joi.object().optional()
+    }),
+
+    createPolicy: Joi.object({
+      name: Joi.string().trim().min(1).max(200).required(),
+      policyType: Joi.string().trim().valid(...config.governancePolicyTypes).required(),
+      priority: Joi.number().integer().min(1).max(100).optional(),
+      effectiveDate: Joi.date().optional(),
+      expirationDate: Joi.date().optional(),
+      owner: Joi.string().trim().max(100).optional(),
+      description: Joi.string().trim().max(1000).optional().allow(null, ""),
+      rules: Joi.object({
+        thresholdAmount: Joi.number().min(0).optional().allow(null),
+        requiresDualAuthorization: Joi.boolean().optional(),
+        sodIncompatibleRoles: Joi.array().items(Joi.string().trim()).optional(),
+        sodIncompatibleActions: Joi.array().items(Joi.string().trim()).optional(),
+        allowedOperations: Joi.array().items(Joi.string().trim()).optional(),
+        fraudRiskThreshold: Joi.number().min(0).max(100).optional(),
+        customConditions: Joi.object().optional()
+      }).optional()
+    }),
+
+    createSoDRule: Joi.object({
+      ruleName: Joi.string().trim().min(1).max(200).required(),
+      firstAction: Joi.string().trim().min(1).max(100).required(),
+      secondAction: Joi.string().trim().min(1).max(100).required(),
+      riskLevel: Joi.string().trim().valid("Low", "Medium", "High", "Critical").optional(),
+      description: Joi.string().trim().max(1000).optional().allow(null, ""),
+      mitigationControl: Joi.string().trim().max(1000).optional().allow(null, "")
+    }),
+
+    createFraudRule: Joi.object({
+      ruleName: Joi.string().trim().min(1).max(200).required(),
+      checkType: Joi.string().trim().valid("DuplicatePayment", "UnusualAmount", "ApprovalVelocity", "HighRiskVendor", "OffHoursTransaction", "Custom").required(),
+      riskSeverity: Joi.string().trim().valid(...config.fraudRiskLevels).optional(),
+      parameters: Joi.object().optional()
+    })
+  };
+};
+
+const GOVERNANCE_SCHEMA_KEYS = new Set([
+  "evaluateGovernance", "createPolicy", "createSoDRule", "createFraudRule"
+]);
+
+export const governanceSchemas = new Proxy({}, {
+  get(_target, prop) {
+    if (GOVERNANCE_SCHEMA_KEYS.has(prop)) {
+      return buildGovernanceSchemas()[prop];
+    }
+    return undefined;
+  }
+});
+
+const buildFinancePlatformSchemas = () => ({
+  processFinancialRequest: Joi.object({
+    transactionId: Joi.string().trim().min(1).max(100).required(),
+    operation: Joi.string().trim().min(1).max(100).required(),
+    amount: Joi.number().min(0).optional(),
+    creatorId: Joi.string().trim().optional().allow(null, ""),
+    approverId: Joi.string().trim().optional().allow(null, ""),
+    payload: Joi.object().optional()
+  })
+});
+
+const FINANCE_PLATFORM_SCHEMA_KEYS = new Set(["processFinancialRequest"]);
+
+export const financePlatformSchemas = new Proxy({}, {
+  get(_target, prop) {
+    if (FINANCE_PLATFORM_SCHEMA_KEYS.has(prop)) {
+      return buildFinancePlatformSchemas()[prop];
+    }
+    return undefined;
+  }
+});
+
+const buildCommunicationSchemas = () => ({
+  requestCommunication: Joi.object({
+    sourceModule: Joi.string().trim().valid("CRM", "Booking", "Travel", "Visa", "Finance", "HR", "Inventory", "Sales", "Procurement", "AI", "System").optional(),
+    channel: Joi.string().trim().valid("Email", "SMS", "WhatsApp", "Push", "InApp", "Webhook").required(),
+    recipient: Joi.object({
+      userId: Joi.string().trim().optional().allow(null, ""),
+      email: Joi.string().email({ tlds: false }).lowercase().trim().optional().allow(null, ""),
+      phone: Joi.string().trim().optional().allow(null, ""),
+      pushToken: Joi.string().trim().optional().allow(null, ""),
+      endpointUrl: Joi.string().uri().trim().optional().allow(null, "")
+    }).required(),
+    templateId: Joi.string().trim().optional().allow(null, ""),
+    templateData: Joi.object().optional(),
+    subject: Joi.string().trim().max(500).optional().allow(null, ""),
+    content: Joi.string().trim().max(10000).optional().allow(null, ""),
+    priority: Joi.string().trim().valid("Low", "Normal", "High", "Critical").optional(),
+    scheduledAt: Joi.date().optional(),
+    idempotencyKey: Joi.string().trim().max(100).optional().allow(null, "")
+  }),
+
+  createTemplate: Joi.object({
+    name: Joi.string().trim().min(1).max(200).required(),
+    channel: Joi.string().trim().valid("Email", "SMS", "WhatsApp", "Push", "InApp", "Webhook").required(),
+    subjectTemplate: Joi.string().trim().max(500).optional().allow(""),
+    bodyTemplate: Joi.string().trim().min(1).required(),
+    variables: Joi.array().items(Joi.string().trim()).optional()
+  }),
+
+  updateTemplate: Joi.object({
+    name: Joi.string().trim().min(1).max(200).optional(),
+    subjectTemplate: Joi.string().trim().max(500).optional().allow(""),
+    bodyTemplate: Joi.string().trim().min(1).optional(),
+    variables: Joi.array().items(Joi.string().trim()).optional(),
+    status: Joi.string().trim().valid("Draft", "Active", "Archived").optional()
+  }),
+
+  updateUserPreferences: Joi.object({
+    emailOptIn: Joi.boolean().optional(),
+    smsOptIn: Joi.boolean().optional(),
+    whatsAppOptIn: Joi.boolean().optional(),
+    pushOptIn: Joi.boolean().optional(),
+    inAppOptIn: Joi.boolean().optional(),
+    preferredChannel: Joi.string().trim().valid("Email", "SMS", "WhatsApp", "Push", "InApp").optional(),
+    doNotDisturb: Joi.boolean().optional()
+  }),
+
+  sendEmail: Joi.object({
+    template: Joi.string().trim().optional().allow(null, ""),
+    templateId: Joi.string().trim().optional().allow(null, ""),
+    to: Joi.alternatives().try(
+      Joi.string().email({ tlds: false }).lowercase().trim(),
+      Joi.array().items(Joi.string().email({ tlds: false }).lowercase().trim()).min(1)
+    ).required(),
+    variables: Joi.object().optional(),
+    templateData: Joi.object().optional(),
+    subject: Joi.string().trim().max(500).optional().allow(null, ""),
+    content: Joi.string().trim().max(50000).optional().allow(null, ""),
+    body: Joi.string().trim().max(50000).optional().allow(null, ""),
+    attachments: Joi.array().items(
+      Joi.alternatives().try(
+        Joi.string().trim(),
+        Joi.object({
+          filename: Joi.string().trim().required(),
+          path: Joi.string().trim().optional(),
+          url: Joi.string().uri().trim().optional(),
+          content: Joi.string().optional(),
+          contentType: Joi.string().trim().optional(),
+          size: Joi.number().max(25 * 1024 * 1024).optional()
+        })
+      )
+    ).optional(),
+    emailType: Joi.string().trim().valid("Transactional", "Marketing", "System Alert", "Password Reset", "Verification", "Invoice", "Receipt", "Reminder", "Custom").optional(),
+    sourceModule: Joi.string().trim().valid("CRM", "Booking", "Travel", "Visa", "Finance", "HR", "Inventory", "Sales", "Procurement", "AI", "System").optional(),
+    priority: Joi.string().trim().valid("Low", "Normal", "High", "Critical").optional(),
+    scheduledAt: Joi.date().optional(),
+    idempotencyKey: Joi.string().trim().max(100).optional().allow(null, "")
+  }),
+
+  sendSms: Joi.object({
+    phone: Joi.string().trim().required(),
+    type: Joi.string().trim().valid("OTP", "Authentication", "Verification", "Invoice", "Payment Reminder", "Booking Confirmation", "Visa Update", "System Alert", "Marketing", "Custom").optional(),
+    smsType: Joi.string().trim().valid("OTP", "Authentication", "Verification", "Invoice", "Payment Reminder", "Booking Confirmation", "Visa Update", "System Alert", "Marketing", "Custom").optional(),
+    template: Joi.string().trim().optional().allow(null, ""),
+    templateId: Joi.string().trim().optional().allow(null, ""),
+    variables: Joi.object().optional(),
+    templateData: Joi.object().optional(),
+    message: Joi.string().trim().max(2000).optional().allow(null, ""),
+    content: Joi.string().trim().max(2000).optional().allow(null, ""),
+    priority: Joi.string().trim().valid("Low", "Normal", "High", "Critical").optional(),
+    scheduledAt: Joi.date().optional(),
+    sourceModule: Joi.string().trim().valid("CRM", "Booking", "Travel", "Visa", "Finance", "HR", "Inventory", "Sales", "Procurement", "AI", "System").optional(),
+    idempotencyKey: Joi.string().trim().max(100).optional().allow(null, "")
+  }),
+
+  generateOtp: Joi.object({
+    phone: Joi.string().trim().required(),
+    purpose: Joi.string().trim().max(100).optional(),
+    template: Joi.string().trim().optional().allow(null, ""),
+    variables: Joi.object().optional(),
+    expiryMinutes: Joi.number().integer().min(1).max(60).optional()
+  }),
+
+  verifyOtp: Joi.object({
+    phone: Joi.string().trim().required(),
+    otp: Joi.alternatives().try(Joi.string().trim(), Joi.number()).required(),
+    otpCode: Joi.alternatives().try(Joi.string().trim(), Joi.number()).optional(),
+    purpose: Joi.string().trim().optional()
+  }),
+
+  createBulkCampaign: Joi.object({
+    name: Joi.string().trim().min(1).max(200).required(),
+    smsType: Joi.string().trim().valid("Marketing", "Invoice", "Payment Reminder", "Booking Confirmation", "Visa Update", "System Alert", "Custom").optional(),
+    templateId: Joi.string().trim().optional().allow(null, ""),
+    templateVariables: Joi.object().optional(),
+    messageText: Joi.string().trim().max(2000).optional().allow(null, ""),
+    recipients: Joi.array().items(
+      Joi.alternatives().try(
+        Joi.string().trim(),
+        Joi.object({ phone: Joi.string().trim().required() })
+      )
+    ).min(1).required(),
+    rateLimitPerSecond: Joi.number().integer().min(1).max(1000).optional(),
+    scheduledAt: Joi.date().optional()
+  }),
+
+  updateCampaignStatus: Joi.object({
+    action: Joi.string().trim().valid("pause", "resume", "cancel").required()
+  })
+});
+
+const COMMUNICATION_SCHEMA_KEYS = new Set([
+  "requestCommunication", "createTemplate", "updateTemplate", "updateUserPreferences", "sendEmail",
+  "sendSms", "generateOtp", "verifyOtp", "createBulkCampaign", "updateCampaignStatus"
+]);
+
+export const communicationSchemas = new Proxy({}, {
+  get(_target, prop) {
+    if (COMMUNICATION_SCHEMA_KEYS.has(prop)) {
+      return buildCommunicationSchemas()[prop];
+    }
+    return undefined;
+  }
+});
+
+
+
+
 
 export const customerSchemas = {
   createCustomer: Joi.object({

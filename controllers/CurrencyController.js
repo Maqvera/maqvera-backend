@@ -64,6 +64,54 @@ export const getCurrency = async (req, res) => {
   }
 };
 
+export const submitCurrencyForApproval = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "finance.currency.manage")) return sendError(res, 403, "Permission denied.", requestId);
+    const userId = req.auth?.userId || req.auth?.id || null;
+
+    const currency = await CurrencyService.submitCurrencyForApproval(req.params.currencyId, scope.tenantId, userId);
+    return sendSuccess(res, 200, "Currency submitted for approval successfully.", currency, requestId);
+  } catch (error) {
+    console.error("submitCurrencyForApproval error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to submit currency for approval.", requestId);
+  }
+};
+
+export const approveCurrencyDefinition = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "finance.currency.manage")) return sendError(res, 403, "Permission denied.", requestId);
+    const userId = req.auth?.userId || req.auth?.id || null;
+
+    const currency = await CurrencyService.approveCurrencyDefinition(req.params.currencyId, scope.tenantId, userId);
+    return sendSuccess(res, 200, "Currency approved successfully.", currency, requestId);
+  } catch (error) {
+    console.error("approveCurrencyDefinition error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to approve currency.", requestId);
+  }
+};
+
+export const deprecateCurrency = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "finance.currency.manage")) return sendError(res, 403, "Permission denied.", requestId);
+    const userId = req.auth?.userId || req.auth?.id || null;
+
+    const currency = await CurrencyService.deprecateCurrency(req.params.currencyId, scope.tenantId, userId);
+    return sendSuccess(res, 200, "Currency deprecated successfully.", currency, requestId);
+  } catch (error) {
+    console.error("deprecateCurrency error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to deprecate currency.", requestId);
+  }
+};
+
 export const activateCurrency = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
@@ -121,12 +169,45 @@ export const createExchangeRate = async (req, res) => {
     if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasPermission(req, "finance.currency.manage")) return sendError(res, 403, "Permission denied.", requestId);
     const userId = req.auth?.userId || req.auth?.id || null;
+    const correlationId = req.header("Correlation-ID") || null;
 
-    const exchangeRate = await CurrencyService.createExchangeRate(req.body, scope.tenantId, userId);
+    const exchangeRate = await CurrencyService.createExchangeRate(req.body, scope.tenantId, userId, correlationId);
     return sendSuccess(res, 201, "Exchange rate recorded successfully.", exchangeRate, requestId);
   } catch (error) {
     console.error("createExchangeRate error:", error);
     return sendError(res, statusFromError(error), error.message || "Failed to record exchange rate.", requestId);
+  }
+};
+
+export const approveExchangeRate = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "finance.currency.manage")) return sendError(res, 403, "Permission denied.", requestId);
+    const userId = req.auth?.userId || req.auth?.id || null;
+
+    const exchangeRate = await CurrencyService.approveExchangeRate(req.params.exchangeRateId, scope.tenantId, userId);
+    return sendSuccess(res, 200, "Exchange rate approved successfully.", exchangeRate, requestId);
+  } catch (error) {
+    console.error("approveExchangeRate error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to approve exchange rate.", requestId);
+  }
+};
+
+export const rejectExchangeRate = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "finance.currency.manage")) return sendError(res, 403, "Permission denied.", requestId);
+    const userId = req.auth?.userId || req.auth?.id || null;
+
+    const exchangeRate = await CurrencyService.rejectExchangeRate(req.params.exchangeRateId, req.body, scope.tenantId, userId);
+    return sendSuccess(res, 200, "Exchange rate rejected successfully.", exchangeRate, requestId);
+  } catch (error) {
+    console.error("rejectExchangeRate error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to reject exchange rate.", requestId);
   }
 };
 
@@ -211,6 +292,24 @@ export const listRevaluations = async (req, res) => {
   } catch (error) {
     console.error("listRevaluations error:", error);
     return sendError(res, 500, error.message || "Failed to retrieve revaluations.", requestId);
+  }
+};
+
+// ---- Conversion Audit Trail ----
+
+/** GET /api/v1/currencies/conversions — File 4 Part 3 Conversion Audit Trail. */
+export const listConversions = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "finance.currency.read", "finance.read")) return sendError(res, 403, "Permission denied.", requestId);
+
+    const result = await CurrencyService.listConversions(req.query, scope.tenantId);
+    return sendSuccess(res, 200, "Conversions retrieved successfully.", result, requestId);
+  } catch (error) {
+    console.error("listConversions error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to retrieve conversions.", requestId);
   }
 };
 

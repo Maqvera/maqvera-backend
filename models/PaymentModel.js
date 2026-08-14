@@ -131,6 +131,17 @@ const PaymentSchema = new mongoose.Schema({
     type: String,
     default: null
   },
+  // "Manual Retry, Automatic Retry, Retry Limits" (Part 18 Part 5) — how
+  // many times a Failed payment has been manually retried via
+  // PaymentService.retryPayment; bounded by paymentManualRetryMaxAttempts.
+  retryCount: {
+    type: Number,
+    default: 0
+  },
+  // The Failed payment this one is a real retry attempt of — a retry
+  // never mutates the original Failed record's own history (immutable),
+  // it creates a genuinely new Payment row and links back.
+  retryOf: { type: mongoose.Schema.Types.ObjectId, ref: "payment", default: null },
   // Rule-based (not AI) fraud signal — see utils/financeConfig.js doc
   // comment and PaymentService.computeFraudSignals.
   fraudCheck: {
