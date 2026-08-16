@@ -11,7 +11,8 @@
     "migrate:remove-branch-id": "node scripts/migrateRemoveBranchId.js",
     "seed:visa-workflow": "node scripts/seedVisaWorkflowDefinition.js",
     "seed:incident-policy": "node scripts/seedIncidentPolicy.js",
-    "seed:timeline-policy": "node scripts/seedTimelinePolicy.js"
+    "seed:timeline-policy": "node scripts/seedTimelinePolicy.js",
+    "seed:chart-templates": "node scripts/seedChartTemplates.js"
   },
   "keywords": [],
   "author": "",
@@ -25,9 +26,12 @@
     "cloudinary": "^1.41.3",
     "compression": "^1.8.1",
     "cors": "^2.8.5",
+    "csv-parse": "^7.0.2",
     "dotenv": "^17.2.3",
+    "exceljs": "^4.4.0",
     "express": "^5.1.0",
     "express-rate-limit": "^8.6.1",
+    "fast-xml-parser": "^5.10.1",
     "geoip-lite": "^2.0.3",
     "helmet": "^8.3.0",
     "html-to-text": "^10.0.0",
@@ -46,9 +50,14 @@
     "openai": "^7.4.0",
     "otplib": "^12.0.0",
     "pdf-parse": "^1.1.1",
+    "pdfkit": "^0.19.1",
+    "qrcode": "^1.5.4",
     "rate-limit-mongo": "^2.3.2",
+    "stripe": "^22.4.0",
     "swagger-jsdoc": "^6.3.0",
     "swagger-ui-express": "^5.0.1",
+    "tesseract.js": "^7.0.0",
+    "twilio": "^6.0.2",
     "uuid": "^13.0.0",
     "winston": "^3.19.0"
   }

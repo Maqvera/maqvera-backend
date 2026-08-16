@@ -27,7 +27,17 @@ const SearchIndexSchema = new mongoose.Schema({
       "VisaCase",
       "Passport",
       "EmbassySubmission",
-      "Appointment"
+      "Appointment",
+      "Invoice",
+      "Payment",
+      "Receipt",
+      "JournalEntry",
+      "GLAccount",
+      "Vendor",
+      "Expense",
+      "BankAccount",
+      "AuditEvent",
+      "FinancialReport"
     ],
     required: true,
     index: true
