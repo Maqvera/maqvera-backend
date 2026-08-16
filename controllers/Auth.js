@@ -464,11 +464,17 @@ export const SetupTenant = async (Req, Res) => {
 export const Login = async (Req, Res) => {
   try {
     const { email, password, rememberMe = false } = Req.body;
+    const requestedTenantKey = Req.body.tenantKey || Req.header("X-Tenant-Key") || Req.header("X-Tenant-ID") || null;
     const meta = getRequestMeta(Req);
 
-    const user = await UserModel.findOne({ email });
+    const userQuery = { email };
+    if (requestedTenantKey) {
+      userQuery.tenantId = requestedTenantKey;
+    }
+
+    const user = await UserModel.findOne(userQuery);
     if (!user) {
-      await recordLoginFailure({ reason: "invalid_credentials", email, meta });
+      await recordLoginFailure({ reason: "invalid_credentials", email, meta, metadata: { requestedTenantKey } });
       return sendError(Res, 401, "Invalid email or password.", meta.requestId);
     }
 

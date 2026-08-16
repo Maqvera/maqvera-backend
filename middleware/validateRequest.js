@@ -73,6 +73,7 @@ export const authSchemas = {
     password: Joi.string().min(1).max(128).required().messages({
       "any.required": "Password is required",
     }),
+    tenantKey: tenantKeySlug.optional(),
     mfaToken: Joi.string().optional(),
     code: Joi.string().optional(),
     recoveryCode: Joi.string().optional(),
@@ -149,16 +150,16 @@ export const authSchemas = {
 
 export const userSchemas = {
   createUser: Joi.object({
-    firstName: Joi.string().trim().min(1).max(100).required(),
-    lastName: Joi.string().trim().min(1).max(100).required(),
+    firstName: Joi.string().trim().min(1).max(100).optional().allow(""),
+    lastName: Joi.string().trim().min(1).max(100).optional().allow(""),
     email: Joi.string().email({ tlds: false }).lowercase().trim().max(255).required(),
     phone: Joi.string().trim().pattern(/^\+?[1-9]\d{7,14}$/).optional().allow("").messages({ "string.pattern.base": "Phone must be a valid number (E.164 format, e.g. +923001234567)." }),
-    departmentId: Joi.string().trim().min(1).max(100).required(),
+    departmentId: Joi.string().trim().min(1).max(100).optional().allow(""),
     roleIds: Joi.array().items(Joi.string()).optional(),
-    role: Joi.string().trim().max(100).optional(),
+    role: Joi.string().trim().max(100).optional().allow(""),
     designation: Joi.string().trim().max(100).optional().allow(""),
     joiningDate: Joi.date().optional(),
-  }).or("role", "roleIds"),
+  }),
 
   updateUser: Joi.object({
     firstName: Joi.string().trim().min(1).max(100).optional(),
@@ -204,11 +205,11 @@ export const userSchemas = {
 
   inviteUser: Joi.object({
     email: Joi.string().email({ tlds: false }).lowercase().trim().max(255).required(),
-    firstName: Joi.string().trim().min(1).max(100).required(),
-    lastName: Joi.string().trim().min(1).max(100).required(),
+    firstName: Joi.string().trim().min(1).max(100).optional().allow(""),
+    lastName: Joi.string().trim().min(1).max(100).optional().allow(""),
     phone: Joi.string().trim().pattern(/^\+?[1-9]\d{7,14}$/).optional().allow("").messages({ "string.pattern.base": "Phone must be a valid number (E.164 format, e.g. +923001234567)." }),
-    role: Joi.string().trim().max(100).optional(),
-    departmentId: Joi.string().trim().min(1).max(100).required(),
+    role: Joi.string().trim().max(100).optional().default("User"),
+    departmentId: Joi.string().trim().min(1).max(100).optional().allow(""),
     designation: Joi.string().trim().max(100).optional().allow(""),
   }),
 
