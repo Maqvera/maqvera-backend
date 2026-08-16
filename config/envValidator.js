@@ -17,6 +17,8 @@ const WARN_VARS = [
 const WARN_IF_MISSING = [
   { key: "FRONTEND_URL", name: "Frontend URL" },
   { key: "REDIS_URL", name: "Redis URL (cache will fall back to in-memory)" },
+  { key: "STRIPE_SECRET_KEY", name: "Stripe Secret Key (Stripe gateway payments will be unavailable)" },
+  { key: "TWILIO_ACCOUNT_SID", name: "Twilio Account SID (WhatsApp/SMS receipt delivery will be unavailable)" },
 ];
 
 const isProduction = process.env.NODE_ENV === "production";

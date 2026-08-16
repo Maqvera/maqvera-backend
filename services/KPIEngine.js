@@ -15,6 +15,19 @@ import VisaAnalyticsSummaryModel from "../models/VisaAnalyticsSummaryModel.js";
 import VisaCustomerAnalyticsSummaryModel from "../models/VisaCustomerAnalyticsSummaryModel.js";
 import BookingHeaderModel from "../models/BookingHeaderModel.js";
 import EnterpriseVerificationModel from "../models/EnterpriseVerificationModel.js";
+import BankAccountModel from "../models/BankAccountModel.js";
+import AccountsReceivableModel from "../models/AccountsReceivableModel.js";
+import AccountsPayableModel from "../models/AccountsPayableModel.js";
+import PaymentModel from "../models/PaymentModel.js";
+import TaxReportModel from "../models/TaxReportModel.js";
+import ExpenseBudgetModel from "../models/ExpenseBudgetModel.js";
+import FinanceOperationsSummaryModel from "../models/FinanceOperationsSummaryModel.js";
+import DashboardAlertModel from "../models/DashboardAlertModel.js";
+import FinancialReportService, { AR_TERMINAL_STATUSES } from "./FinancialReportService.js";
+import { computeEBITDA } from "./FinancialAnalyticsService.js";
+import { isPayableTerminal } from "./AccountsPayableService.js";
+import CurrencyService from "./CurrencyService.js";
+import { getFinanceConfig } from "../utils/financeConfig.js";
 import CacheManager from "../utils/cacheManager.js";
 import { publishEvent } from "../utils/eventBus.js";
 import logger from "../utils/logger.js";
@@ -27,6 +40,7 @@ const startOfDay = (d = new Date()) => new Date(d.getFullYear(), d.getMonth(), d
 const endOfDay = (d = new Date()) => new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
 const safeDiv = (numerator, denominator, decimals = 2) =>
   denominator > 0 ? Number(((numerator / denominator) * 100).toFixed(decimals)) : 0;
+const roundCurrency = (value) => Math.round((Number(value) || 0) * 100) / 100;
 
 // ─────────────────────────────────────────────────────────────
 // KPI Engine — Single source of truth for all metrics
@@ -1067,6 +1081,237 @@ class KPIEngine {
   }
 
   // ═══════════════════════════════════════════════════════════
+  // FINANCE MODULE — KPI Computations (Finance Module Part 25 —
+  // Enterprise Financial Dashboard). Extends this same, existing,
+  // single-source-of-truth engine rather than standing up a parallel
+  // dashboard system — mirrors computeTravelMetrics/computeVisaMetrics'
+  // own "real parallel aggregations, zero hardcoding" shape exactly.
+  // ═══════════════════════════════════════════════════════════
+
+  /**
+   * Compute all Finance operational metrics from the database. Every
+   * number is a real aggregation/query against models already owned by
+   * prior Finance Parts (BankAccount, AR, AP, Ledger via
+   * FinancialReportService.getPeriodMovement, Currency, ExpenseBudget,
+   * Payment, TaxReport) — zero hardcoding, no fabricated figures.
+   */
+  static async computeFinanceMetrics({ tenantId }) {
+    if (mongoose.connection.readyState !== 1) return null;
+
+    const config = getFinanceConfig();
+    const now = new Date();
+    const dayStart = startOfDay(now);
+    const dayEnd = endOfDay(now);
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+
+    const [
+      bankStats,
+      arStats,
+      overdueReceivableCount,
+      payables,
+      periodMovement,
+      exposureResult,
+      largePayments,
+      taxReports,
+      budgets,
+      ebitdaAddBackAmounts,
+    ] = await Promise.all([
+      BankAccountModel.aggregate([
+        { $match: { tenantId, status: { $in: ["Active", "Verified"] } } },
+        { $group: { _id: null, totalBalance: { $sum: "$balances.current" }, accountCount: { $sum: 1 } } },
+      ]),
+      AccountsReceivableModel.aggregate([
+        { $match: { tenantId, status: { $nin: [...AR_TERMINAL_STATUSES] }, outstandingBalance: { $gt: 0 } } },
+        { $group: { _id: null, total: { $sum: "$outstandingBalance" }, count: { $sum: 1 } } },
+      ]),
+      AccountsReceivableModel.countDocuments({ tenantId, status: "Overdue" }),
+      AccountsPayableModel.find({ tenantId, outstandingBalance: { $gt: 0 } }).select("status outstandingBalance dueDate vendorName invoiceNumber").lean(),
+      FinancialReportService.getPeriodMovement(tenantId, dayStart, dayEnd, null, ["Revenue", "Expense"]),
+      CurrencyService.getCurrencyExposure(tenantId),
+      config.largePaymentThreshold > 0
+        ? PaymentModel.find({ tenantId, createdAt: { $gte: dayStart, $lte: dayEnd }, amount: { $gte: config.largePaymentThreshold } }).select("paymentNumber amount paymentType").lean()
+        : Promise.resolve([]),
+      config.taxDueThreshold > 0
+        ? TaxReportModel.find({ tenantId, generatedAt: { $gte: monthStart }, totalNetPayable: { $gte: config.taxDueThreshold } }).select("reportType totalNetPayable periodEnd").lean()
+        : Promise.resolve([]),
+      ExpenseBudgetModel.find({ tenantId }).select("scope scopeRef period allocatedAmount consumedAmount").lean(),
+      // Financial Analytics Platform Enhancements — Part 29. Real EBITDA
+      // add-back lookups, skipped entirely (no queries) when a tenant
+      // hasn't configured any of the four account codes.
+      (config.interestExpenseAccountCode || config.incomeTaxExpenseAccountCode || config.depreciationExpenseAccountCode || config.amortizationExpenseAccountCode)
+        ? Promise.all([
+            FinancialReportService.getAccountCodeMovement(tenantId, config.interestExpenseAccountCode, dayStart, dayEnd),
+            FinancialReportService.getAccountCodeMovement(tenantId, config.incomeTaxExpenseAccountCode, dayStart, dayEnd),
+            FinancialReportService.getAccountCodeMovement(tenantId, config.depreciationExpenseAccountCode, dayStart, dayEnd),
+            FinancialReportService.getAccountCodeMovement(tenantId, config.amortizationExpenseAccountCode, dayStart, dayEnd),
+          ])
+        : Promise.resolve([0, 0, 0, 0]),
+    ]);
+
+    const openPayables = payables.filter((p) => !isPayableTerminal(p.status));
+    const outstandingAP = roundCurrency(openPayables.reduce((sum, p) => sum + (p.outstandingBalance || 0), 0));
+    const overduePayables = openPayables.filter((p) => p.dueDate && new Date(p.dueDate) < now);
+
+    const todaysRevenue = roundCurrency(periodMovement.filter((r) => r.category === "Revenue").reduce((sum, r) => sum + r.netBalance, 0));
+    const todaysExpenses = roundCurrency(periodMovement.filter((r) => r.category === "Expense").reduce((sum, r) => sum + r.netBalance, 0));
+
+    const fxExposureTotal = roundCurrency((exposureResult?.exposure || []).reduce((sum, e) => sum + Math.abs(e.baseEquivalent || 0), 0));
+    const fxExposureLevel =
+      fxExposureTotal >= config.fxExposureHighThreshold ? "High" : fxExposureTotal >= config.fxExposureMediumThreshold ? "Medium" : "Low";
+
+    const exceededBudgets = budgets.filter((b) => b.consumedAmount > b.allocatedAmount);
+
+    const cashToday = roundCurrency(bankStats[0]?.totalBalance || 0);
+    const outstandingAR = roundCurrency(arStats[0]?.total || 0);
+
+    // No inventory/COGS concept exists in this ERP's chart of accounts, so
+    // gross profit and net profit collapse to the same figure here, and
+    // quick ratio (which excludes inventory) collapses to current ratio —
+    // documented, not fabricated as separately-derived numbers.
+    const currentAssets = roundCurrency(cashToday + outstandingAR);
+    const currentLiabilities = outstandingAP;
+    const workingCapital = roundCurrency(currentAssets - currentLiabilities);
+    const currentRatio = currentLiabilities > 0 ? Number((currentAssets / currentLiabilities).toFixed(2)) : null;
+
+    const metrics = {
+      cashToday,
+      bankBalance: cashToday,
+      bankAccountCount: bankStats[0]?.accountCount || 0,
+      outstandingAR,
+      outstandingReceivableCount: arStats[0]?.count || 0,
+      outstandingAP,
+      outstandingPayableCount: openPayables.length,
+      overdueReceivables: overdueReceivableCount,
+      overduePayables: overduePayables.length,
+      todaysRevenue,
+      todaysExpenses,
+      netCashFlowToday: roundCurrency(todaysRevenue - todaysExpenses),
+      fxExposureTotal,
+      fxExposureLevel,
+      fxBaseCurrency: exposureResult?.baseCurrency || null,
+      exceededBudgetCount: exceededBudgets.length,
+    };
+
+    // "EBITDA"/"Operating Margin"/"Operating Ratio" — Financial Analytics
+    // Platform Enhancements (Part 29). Same honest add-back/collapse
+    // discipline as computeFinancialRatios in FinancialAnalyticsService.js
+    // (Part 26) — EBITDA add-backs are real (0 for any unconfigured
+    // account code); Operating Margin/Ratio honestly collapse to Net
+    // Margin/Expense Ratio since no Operating vs Non-Operating account
+    // split exists in this Chart of Accounts.
+    const [interestAddBack, taxAddBack, depreciationAddBack, amortizationAddBack] = ebitdaAddBackAmounts;
+    const ebitda = computeEBITDA(metrics.netCashFlowToday, { interest: interestAddBack, tax: taxAddBack, depreciation: depreciationAddBack, amortization: amortizationAddBack });
+
+    const kpis = {
+      grossProfit: metrics.netCashFlowToday,
+      netProfit: metrics.netCashFlowToday,
+      ebitda,
+      ebitdaMargin: safeDiv(ebitda, todaysRevenue),
+      expenseRatio: safeDiv(todaysExpenses, todaysRevenue),
+      operatingMargin: safeDiv(metrics.netCashFlowToday, todaysRevenue),
+      operatingRatio: safeDiv(todaysExpenses, todaysRevenue),
+      workingCapital,
+      currentRatio,
+      quickRatio: currentRatio,
+    };
+
+    return {
+      metrics,
+      kpis,
+      largePayments,
+      taxReports,
+      overduePayableRecords: overduePayables,
+      exceededBudgets,
+    };
+  }
+
+  /**
+   * Real, deterministic threshold evaluation — no ML, no fabricated
+   * scoring. Returns alert descriptors only; persistence happens in
+   * refreshFinanceSummary.
+   */
+  static buildFinanceAlerts({ metrics, largePayments, taxReports, overduePayableRecords, exceededBudgets, config }) {
+    const alerts = [];
+
+    if (config.lowCashThreshold > 0 && metrics.cashToday < config.lowCashThreshold) {
+      alerts.push({ alertType: "LowCash", severity: "Critical", message: `Cash balance ${metrics.cashToday} is below the configured threshold ${config.lowCashThreshold}.`, value: metrics.cashToday, threshold: config.lowCashThreshold });
+    }
+    if (config.highExpenseDailyThreshold > 0 && metrics.todaysExpenses > config.highExpenseDailyThreshold) {
+      alerts.push({ alertType: "HighExpenses", severity: "Warning", message: `Today's expenses ${metrics.todaysExpenses} exceed the configured daily threshold ${config.highExpenseDailyThreshold}.`, value: metrics.todaysExpenses, threshold: config.highExpenseDailyThreshold });
+    }
+    for (const payment of largePayments) {
+      alerts.push({ alertType: "LargePayment", severity: "Warning", message: `Payment ${payment.paymentNumber} of ${payment.amount} exceeds the large-payment threshold.`, value: payment.amount, threshold: config.largePaymentThreshold, sourceType: "Payment", sourceId: payment._id });
+    }
+    if (metrics.overdueReceivables > 0) {
+      alerts.push({ alertType: "OverdueReceivable", severity: "Warning", message: `${metrics.overdueReceivables} receivable(s) are overdue.`, value: metrics.overdueReceivables, threshold: 0 });
+    }
+    for (const payable of overduePayableRecords) {
+      alerts.push({ alertType: "OverduePayable", severity: "Warning", message: `Payable ${payable.invoiceNumber || payable._id} to ${payable.vendorName || "vendor"} is overdue.`, value: payable.outstandingBalance, threshold: 0, sourceType: "AccountsPayable", sourceId: payable._id });
+    }
+    for (const budget of exceededBudgets) {
+      alerts.push({ alertType: "BudgetExceeded", severity: "Warning", message: `Budget for ${budget.scope} ${budget.period} exceeded: consumed ${budget.consumedAmount} of ${budget.allocatedAmount}.`, value: budget.consumedAmount, threshold: budget.allocatedAmount, sourceType: "ExpenseBudget", sourceId: budget._id });
+    }
+    if (metrics.netCashFlowToday < 0) {
+      alerts.push({ alertType: "NegativeCashFlow", severity: "Critical", message: `Net cash flow today is negative (${metrics.netCashFlowToday}).`, value: metrics.netCashFlowToday, threshold: 0 });
+    }
+    for (const report of taxReports) {
+      alerts.push({ alertType: "TaxDue", severity: "Warning", message: `${report.reportType} tax report shows a net payable of ${report.totalNetPayable}.`, value: report.totalNetPayable, threshold: config.taxDueThreshold, sourceType: "TaxReport", sourceId: report._id });
+    }
+
+    return alerts;
+  }
+
+  /**
+   * Build and persist the Finance operations summary for today, and
+   * raise/persist real threshold-crossing alerts. Mirrors
+   * refreshVisaSummary's own upsert + cache-invalidate + publish shape.
+   */
+  static async refreshFinanceSummary({ tenantId }) {
+    const result = await this.computeFinanceMetrics({ tenantId });
+    if (!result) return null;
+
+    const config = getFinanceConfig();
+    const { metrics, kpis, largePayments, taxReports, overduePayableRecords, exceededBudgets } = result;
+    const date = todayStr();
+
+    const alertDescriptors = this.buildFinanceAlerts({ metrics, largePayments, taxReports, overduePayableRecords, exceededBudgets, config });
+
+    const persistedAlerts = [];
+    for (const descriptor of alertDescriptors) {
+      const dedupeFilter = { tenantId, alertType: descriptor.alertType, status: "Active", triggeredAt: { $gte: startOfDay(new Date()) } };
+      if (descriptor.sourceId) dedupeFilter.sourceId = descriptor.sourceId;
+      else dedupeFilter.sourceId = null;
+
+      let alert = await DashboardAlertModel.findOne(dedupeFilter);
+      if (!alert) {
+        alert = await DashboardAlertModel.create({ tenantId, ...descriptor, status: "Active", triggeredAt: new Date() });
+        publishEvent("AlertTriggered", { tenantId, alertType: descriptor.alertType, severity: descriptor.severity, alertId: alert._id.toString() });
+      }
+      persistedAlerts.push(alert.toJSON ? alert.toJSON() : alert);
+    }
+
+    const summary = await FinanceOperationsSummaryModel.findOneAndUpdate(
+      { tenantId, summaryDate: date },
+      {
+        tenantId,
+        summaryDate: date,
+        metrics,
+        kpis,
+        alerts: persistedAlerts,
+        generatedAt: new Date(),
+        lastRefreshedAt: new Date(),
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+
+    await CacheManager.invalidatePattern(`finance-dashboard:*:${tenantId}*`);
+    publishEvent("DashboardRefreshed", { tenantId, module: "finance" });
+    publishEvent("KPICalculated", { tenantId, module: "finance" });
+
+    return summary;
+  }
+
+  // ═══════════════════════════════════════════════════════════
   // CROSS-MODULE — Refresh All
   // ═══════════════════════════════════════════════════════════
 
@@ -1077,6 +1322,7 @@ class KPIEngine {
     const results = await Promise.allSettled([
       this.refreshTravelSummary({ tenantId }),
       this.refreshVisaSummary({ tenantId }),
+      this.refreshFinanceSummary({ tenantId }),
     ]);
 
     const failures = results.filter((r) => r.status === "rejected");

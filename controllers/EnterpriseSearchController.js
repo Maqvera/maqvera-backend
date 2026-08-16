@@ -26,7 +26,11 @@ export const GlobalSearch = async (req, res) => {
       entityType,
       sort = "score",
       order = "desc",
-      country, embassy, visaType, status, officer, nationality, priority, severity, dateFrom, dateTo
+      country, embassy, visaType, status, officer, nationality, priority, severity, dateFrom, dateTo,
+      // Finance Module Part 28 — currency/category/complianceStatus
+      // facets, reusing the same real facets.* filtering mechanism
+      // SearchEngineService._computeGlobalSearch already applies.
+      currency, category, complianceStatus
     } = req.query;
 
     const parsedPage = Math.max(parseInt(page, 10), 1);
@@ -38,7 +42,7 @@ export const GlobalSearch = async (req, res) => {
       query: q,
       entityType,
       permissions: req.auth?.permissions || [],
-      filters: { country, embassy, visaType, status, officer, nationality, priority, severity, dateFrom, dateTo },
+      filters: { country, embassy, visaType, status, officer, nationality, priority, severity, dateFrom, dateTo, currency, category, complianceStatus },
       page: parsedPage,
       pageSize: parsedPageSize,
       sort,
