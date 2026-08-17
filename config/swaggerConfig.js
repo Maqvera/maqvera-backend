@@ -5,6 +5,11 @@ const options = {
     openapi: "3.0.0",
     info: {
       title: "Maqvera Backend API Documentation",
+      // Enterprise API Version Strategy (Improvement 8) governs the
+      // `/api/v1/...` URL segment itself; THIS number is the OpenAPI
+      // document's own version, bumped whenever this file's own contract
+      // changes materially — see docs/07-enterprise-standards/15-openapi-sdk.md
+      // "Versioned Documentation" and docs/changelog/README.md.
       version: "1.0.0",
       description: "Complete Interactive API Testing Suite for Maqvera Multi-Tenant Enterprise Platform",
       contact: {
@@ -31,11 +36,30 @@ const options = {
         },
       },
       schemas: {
+        // Enterprise Standard Error Contract (Improvement 4) — the REAL
+        // shape `utils/errorContract.js#buildErrorPayload` sends as
+        // `data` on every `sendStandardError` response, not the older,
+        // generic `{success,message,requestId}` shape below (kept as
+        // `SuccessResponse`/`GenericErrorResponse` for endpoints that
+        // predate the standard contract — see this schema's own "used by"
+        // note in docs/07-enterprise-standards/15-openapi-sdk.md).
         ErrorResponse: {
           type: "object",
           properties: {
             success: { type: "boolean", example: false },
-            message: { type: "string", example: "Error message details" },
+            message: { type: "string", example: "Payment already exists." },
+            data: {
+              type: "object",
+              properties: {
+                code: { type: "string", example: "PAYMENT_ALREADY_EXISTS", description: "Stable, catalog-backed error code — see utils/errorContract.js#ERROR_CATALOG." },
+                category: { type: "string", example: "Business", enum: ["Validation", "Business", "Authorization", "Authentication", "NotFound", "Conflict", "RateLimit", "Integration", "Infrastructure", "System"] },
+                severity: { type: "string", example: "Error", enum: ["Info", "Warning", "Error", "Critical"] },
+                httpStatus: { type: "integer", example: 409 },
+                correlationId: { type: "string", nullable: true, example: "corr-a1b2c3d4" },
+                timestamp: { type: "string", format: "date-time" },
+                details: { type: "object", nullable: true, description: "Present only for field-level validation failures or code-specific extra context; omitted (not null) otherwise." },
+              },
+            },
             requestId: { type: "string", example: "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d" },
           },
         },
@@ -46,6 +70,44 @@ const options = {
             message: { type: "string", example: "Operation completed successfully" },
             data: { type: "object" },
             requestId: { type: "string", example: "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d" },
+          },
+        },
+        // Enterprise Pagination Standard (Improvement 9) — the real
+        // envelope `utils/pagination.js`'s helpers return; any list
+        // endpoint built/touched under that standard returns exactly
+        // this shape inside `SuccessResponse.data`.
+        PaginatedResponse: {
+          type: "object",
+          properties: {
+            items: { type: "array", items: {} },
+            pagination: {
+              type: "object",
+              properties: {
+                total: { type: "integer", example: 137 },
+                page: { type: "integer", example: 1 },
+                pageSize: { type: "integer", example: 20 },
+                totalPages: { type: "integer", example: 7 },
+              },
+            },
+          },
+        },
+        // Enterprise Event Versioning Standard (Improvement 7) — the real
+        // envelope `utils/eventVersioning.js#publishVersionedEvent`
+        // constructs. Also the exact shape delivered as a Webhook
+        // payload's own `data` field (Improvement 14) for any event
+        // published through this path.
+        EnterpriseEventEnvelope: {
+          type: "object",
+          properties: {
+            eventId: { type: "string", format: "uuid" },
+            eventName: { type: "string", example: "InvoiceApproved" },
+            eventVersion: { type: "string", example: "1.0" },
+            occurredAt: { type: "string", format: "date-time" },
+            correlationId: { type: "string", nullable: true },
+            tenantId: { type: "string", nullable: true },
+            merchantAccountId: { type: "string", nullable: true },
+            source: { type: "string", example: "Finance Payments Platform" },
+            data: { type: "object", description: "Event-specific payload — shape varies per eventName/eventVersion." },
           },
         },
         SignupRequest: {
@@ -125,6 +187,16 @@ const options = {
           },
         },
       },
+      // Enterprise API Rate Limiting & Throttling Standard (Improvement
+      // 13) — the REAL headers `middleware/rateLimiter.js#enterpriseRateLimit`
+      // sets. Reusable via `headers: { "X-RateLimit-Limit": { $ref: "#/components/headers/RateLimitLimit" }, ... }`
+      // on any endpoint's response the middleware is actually mounted on.
+      headers: {
+        RateLimitLimit: { schema: { type: "integer" }, description: "The resolved limit for this request's scope/window." },
+        RateLimitRemaining: { schema: { type: "integer" }, description: "Requests remaining in the current window." },
+        RateLimitReset: { schema: { type: "integer" }, description: "Unix timestamp (seconds) when the current window resets." },
+        RetryAfter: { schema: { type: "integer" }, description: "Seconds to wait before retrying — present only on a 429 response." },
+      },
     },
     security: [
       {
@@ -144,6 +216,13 @@ const options = {
       { name: "Enterprise Search", description: "Cross-Module Global Search Index" },
       { name: "Reference Data", description: "Airports, Currencies & Countries Reference Lookup" },
       { name: "Notes & Audit Timeline", description: "Activity Audit Logs & Operational Notes" },
+      // Enterprise OpenAPI / Swagger Standard (Improvement 15) — real
+      // JSDoc-driven paths (config/swaggerConfig.js's own `apis` option
+      // scans routes/*.js) get their own tag(s), additive to the
+      // hand-authored `paths` object above. Only the flagship
+      // `POST /payments` endpoint uses this pattern so far — see
+      // docs/07-enterprise-standards/15-openapi-sdk.md "Adoption".
+      { name: "Finance — Payments", description: "Enterprise Payment Engine — gateway-integrated and manually-recorded payments" },
     ],
     paths: {
       // ===================== AUTHENTICATION =====================

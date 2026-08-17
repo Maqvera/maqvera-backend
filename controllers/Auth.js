@@ -10,6 +10,8 @@ import EmailVerificationTokenModel from "../models/EmailVerificationTokenmodel.j
 import PasswordResetTokenModel from "../models/PasswordResetTokenmodel.js";
 import TenantModel from "../models/Tenantmodel.js";
 import RoleModel from "../models/Rolemodel.js";
+import PlatformPlanModel from "../models/PlatformPlanModel.js";
+import PendingTenantSetupModel from "../models/PendingTenantSetupModel.js";
 import LoginHistoryModel from "../models/LoginHistoryModel.js";
 import TrustedDeviceModel from "../models/TrustedDeviceModel.js";
 import PasswordHistoryModel from "../models/PasswordHistoryModel.js";
@@ -20,6 +22,8 @@ import { authenticator } from "otplib";
 import { getAuthConfig } from "../utils/authConfig.js";
 import { ensureAdministratorRole } from "../utils/authDomainDefaults.js";
 import { validatePassword, recordPasswordHistory, getPasswordPolicy } from "../utils/passwordPolicy.js";
+import { getPlatformConfig } from "../utils/platformConfig.js";
+import { getStripeClient } from "../services/PaymentGatewayService.js";
 import CacheManager from "../utils/cacheManager.js";
 import { parseUserAgent } from "../utils/userAgentParser.js";
 import { resolveGeoLocation } from "../utils/geoLocation.js";
@@ -179,7 +183,10 @@ export const getRequestMeta = (req) => ({
   userAgent: req.header("User-Agent") || null,
 });
 
-const createAudit = async ({ action, outcome, reason, user, email, sessionId, requestId, ipAddress, device, browser, metadata }) => {
+// Exported (not just used internally) — Per-Tenant Payment Gateway
+// Integration's own `services/TenantProvisioningService.js` (PRD Issue
+// 12) reuses this exact real audit-writer rather than a second copy.
+export const createAudit = async ({ action, outcome, reason, user, email, sessionId, requestId, ipAddress, device, browser, metadata }) => {
   try {
     await AuditLogModel.create({
       action, outcome, reason,
@@ -253,7 +260,9 @@ const loadUserPreferences = async (userId) => {
   };
 };
 
-const issueEmailVerificationToken = async ({ user, requestId, ipAddress, deviceId, userAgent }) => {
+// Exported for the same reason as `createAudit` above — real reuse by
+// `services/TenantProvisioningService.js`, never a duplicated implementation.
+export const issueEmailVerificationToken = async ({ user, requestId, ipAddress, deviceId, userAgent }) => {
   await EmailVerificationTokenModel.updateMany({ userId: user._id, active: true }, { $set: { active: false } });
   const verificationToken = crypto.randomBytes(32).toString("hex");
   const tokenHash = hashVerificationToken(verificationToken);
@@ -404,15 +413,37 @@ export const Signup = async (Req, Res) => {
   }
 };
 
-// New-company self-registration: creates a real tenant + a shared
-// "Administrator" role (see utils/authDomainDefaults.js) + the tenant's
-// first admin user, in one call. This is the ONLY code path that creates a
-// TenantModel document at runtime — every other write path in the app
-// (Signup, AcceptUserInvitation) joins a tenant that already exists.
-export const SetupTenant = async (Req, Res) => {
+// Per-Tenant Payment Gateway Integration (PRD Issue 12) — "jab plan hit ho
+// tabhi phir tenant create hona chahiye... signup pay nahi hona chahiye."
+// REPLACES the old immediate `TenantModel.create(...)` behavior with a
+// real two-phase flow: this is Phase 1 only — validate + create a real
+// Stripe Checkout Session. No TenantModel/UserModel document is created
+// here anymore. Phase 2 (`controllers/PaymentWebhookController.js`'s own
+// `checkout.session.completed` handler) is now the ONLY code path that
+// creates a TenantModel document at runtime, via
+// `services/TenantProvisioningService.js` — the exact same real
+// tenant/role/user creation logic this function used to run inline,
+// extracted so both paths share one real implementation.
+//
+// This uses TravelHub's OWN plain Stripe account (`STRIPE_SECRET_KEY`,
+// via `services/PaymentGatewayService.js#getStripeClient` — the same
+// lazy singleton Issues 4/10 already use) — completely separate from the
+// Stripe CONNECT integration those issues built (the agency's OWN
+// account, for receiving the agency's OWN customers' payments). Deliberately
+// `mode: "payment"` (one-time), never `mode: "subscription"` — this
+// platform's own Enterprise Subscription Platform
+// (`services/TenantSubscriptionService.js`) already owns ALL recurring
+// billing decisions itself (its own renewal engine, grace period, retry
+// strategy) by charging a saved payment method on its own schedule
+// (`chargeAutoDebit`). A real Stripe-native subscription here would be a
+// second, competing recurring-billing engine that would eventually
+// double-charge the tenant — `setup_future_usage: "off_session"` instead
+// saves the card for that EXISTING engine's own future charges, so the
+// two compose correctly instead of colliding.
+export const SetupTenantIntent = async (Req, Res) => {
   const meta = getRequestMeta(Req);
   try {
-    const { companyName, tenantKey, username, email, password } = Req.body;
+    const { companyName, tenantKey, username, email, password, planId, billingCycle = "Monthly" } = Req.body;
 
     const existingTenant = await TenantModel.findOne({ tenantKey });
     if (existingTenant) {
@@ -427,36 +458,75 @@ export const SetupTenant = async (Req, Res) => {
       return sendError(Res, 422, "Password does not meet policy requirements.", meta.requestId, { errors });
     }
 
-    // No Mongoose session/transaction here — no write path in this codebase
-    // uses one (standalone MongoDB is assumed, not a replica set). Instead:
-    // create sequentially, and if a later step fails, compensate by deleting
-    // whatever was already created rather than leaving an orphaned tenant.
-    let tenant = null;
-    try {
-      tenant = await TenantModel.create({ tenantKey, name: companyName, status: "active" });
-      const role = await ensureAdministratorRole(tenant.tenantKey);
-
-      const hash = await bcrypt.hash(password, 10);
-      const user = await UserModel.create({
-        username, email, password: hash,
-        tenantId: tenant.tenantKey,
-        role: role.name,
-      });
-      await recordPasswordHistory(user._id, hash, "change", meta.requestId);
-      await issueEmailVerificationToken({ user, requestId: meta.requestId, ipAddress: meta.ipAddress, deviceId: meta.deviceId, userAgent: meta.userAgent });
-
-      await createAudit({ action: "tenant.setup", outcome: "success", user, requestId: meta.requestId, ipAddress: meta.ipAddress, device: meta.deviceId, browser: meta.userAgent, metadata: { tenantKey: tenant.tenantKey } });
-      publishEvent("TenantProvisioned", { tenantId: tenant.tenantKey, adminUserId: user._id.toString(), companyName: tenant.name, requestId: meta.requestId });
-
-      return sendSuccess(Res, 201, "Company registered successfully. Please check your email for the verification link.", {
-        id: user._id, username: user.username, email: user.email, tenantId: tenant.tenantKey,
-      }, meta.requestId);
-    } catch (innerError) {
-      if (tenant) await TenantModel.deleteOne({ _id: tenant._id }).catch(() => {});
-      throw innerError;
+    const platformConfig = getPlatformConfig();
+    if (!platformConfig.billingCycles.includes(billingCycle)) {
+      return sendError(Res, 400, `Invalid billingCycle "${billingCycle}".`, meta.requestId);
     }
+
+    const plan = await PlatformPlanModel.findOne({ _id: planId, isSellable: true }).lean();
+    if (!plan) {
+      return sendError(Res, 404, "Plan not found or not currently sellable.", meta.requestId);
+    }
+
+    // Same real pricing-key resolution `TenantSubscriptionService.createSubscription`
+    // uses ("HalfYearly" -> pricing.halfYearly, real camelCase — never a
+    // naive .toLowerCase()) — a small, deliberate 4-entry duplication
+    // rather than reaching into that service's own private internals.
+    const PRICING_KEY_BY_CYCLE = { Monthly: "monthly", Quarterly: "quarterly", HalfYearly: "halfYearly", Yearly: "yearly" };
+    const amount = plan.pricing?.[PRICING_KEY_BY_CYCLE[billingCycle] || billingCycle.toLowerCase()];
+    if (amount === undefined || amount === null) {
+      return sendError(Res, 400, `Plan "${plan.name}" does not offer a "${billingCycle}" billing cycle.`, meta.requestId);
+    }
+    if (!(amount > 0)) {
+      return sendError(Res, 400, "This endpoint is for paid plans only — a genuinely free plan needs no payment step.", meta.requestId);
+    }
+
+    const client = await getStripeClient();
+    if (!client) {
+      return sendError(Res, 500, "Payment processing is not configured.", meta.requestId);
+    }
+
+    const passwordHash = await bcrypt.hash(password, 10);
+    const setupToken = crypto.randomBytes(32).toString("hex");
+    const expiresAt = new Date(Date.now() + 30 * 60 * 1000);
+
+    let pending;
+    try {
+      pending = await PendingTenantSetupModel.create({ setupToken, companyName, tenantKey, username, email, passwordHash, planId: plan._id, billingCycle, expiresAt });
+    } catch (createError) {
+      if (createError.code === 11000) {
+        return sendError(Res, 409, "A setup is already in progress for this company identifier. Please complete or wait for it to expire before retrying.", meta.requestId);
+      }
+      throw createError;
+    }
+
+    const currency = (plan.pricing.currency || platformConfig.defaultCurrency || "USD").toLowerCase();
+    const session = await client.checkout.sessions.create({
+      mode: "payment",
+      customer_email: email,
+      line_items: [{
+        price_data: {
+          currency,
+          product_data: { name: `${plan.name} — ${billingCycle} Subscription` },
+          unit_amount: Math.round(amount * 100)
+        },
+        quantity: 1
+      }],
+      payment_intent_data: {
+        setup_future_usage: "off_session",
+        metadata: { setupToken }
+      },
+      metadata: { setupToken },
+      success_url: `${config.frontendUrl}/setup/complete?setup_token=${setupToken}`,
+      cancel_url: `${config.frontendUrl}/setup?status=cancelled`
+    });
+
+    pending.stripeCheckoutSessionId = session.id;
+    await pending.save();
+
+    return sendSuccess(Res, 200, "Checkout session created — complete payment to finish setting up your company.", { checkoutUrl: session.url }, meta.requestId);
   } catch (error) {
-    logger.error("SetupTenant error", { error: error.message });
+    logger.error("SetupTenantIntent error", { error: error.message });
     return sendError(Res, 500, "Something went wrong", meta.requestId);
   }
 };
@@ -464,11 +534,17 @@ export const SetupTenant = async (Req, Res) => {
 export const Login = async (Req, Res) => {
   try {
     const { email, password, rememberMe = false } = Req.body;
+    const requestedTenantKey = Req.body.tenantKey || Req.header("X-Tenant-Key") || Req.header("X-Tenant-ID") || null;
     const meta = getRequestMeta(Req);
 
-    const user = await UserModel.findOne({ email });
+    const userQuery = { email };
+    if (requestedTenantKey) {
+      userQuery.tenantId = requestedTenantKey;
+    }
+
+    const user = await UserModel.findOne(userQuery);
     if (!user) {
-      await recordLoginFailure({ reason: "invalid_credentials", email, meta });
+      await recordLoginFailure({ reason: "invalid_credentials", email, meta, metadata: { requestedTenantKey } });
       return sendError(Res, 401, "Invalid email or password.", meta.requestId);
     }
 

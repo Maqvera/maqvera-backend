@@ -12,6 +12,7 @@ import { requestLogger } from "./utils/logger.js";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler.js";
 import requestContext from "./middleware/requestContext.js";
 import swaggerUi from "swagger-ui-express";
+import { dump as dumpYaml } from "js-yaml";
 import { swaggerSpec } from "./config/swaggerConfig.js";
 
 import route from "./routes/Authroute.js";
@@ -41,10 +42,24 @@ import hotelDistributionRoute from "./routes/HotelDistributionRoutes.js";
 import visaRoute from "./routes/VisaRoutes.js";
 import visaDashboardRoute from "./routes/VisaDashboardRoutes.js";
 import referenceDataRoute from "./routes/ReferenceDataRoutes.js";
+import financeRoute from "./routes/FinanceRoutes.js";
+import subscriptionPlatformRoute from "./routes/SubscriptionPlatformRoutes.js";
+import subscriptionResourceRoute from "./routes/SubscriptionResourceRoutes.js";
+import merchantPlatformRoute from "./routes/MerchantPlatformRoutes.js";
+import organisationRoute from "./routes/OrganisationRoutes.js";
+import numberingRoute from "./routes/NumberingRoutes.js";
+import resilienceRoute from "./routes/ResilienceRoutes.js";
+import eventRegistryRoute from "./routes/EventRegistryRoutes.js";
+import apiVersionRegistryRoute from "./routes/ApiVersionRegistryRoutes.js";
+import rateLimitRoute from "./routes/RateLimitRoutes.js";
+import communicationRoute from "./routes/CommunicationRoutes.js";
+import paymentGatewayRoute from "./routes/PaymentGatewayRoutes.js";
+import paymentWebhookRoute from "./routes/PaymentWebhookRoutes.js";
 import DBconfig from "./config/DbConfig.js";
 import TravelOrchestrationEngine from "./services/TravelOrchestrationEngine.js";
 import VisaTimelineEventBus from "./services/VisaTimelineEventBus.js";
 import CustomerTimelineEventBus from "./services/CustomerTimelineEventBus.js";
+import PaymentNotificationListener from "./services/paymentNotificationListener.js";
 import CustomerStatisticsEngine from "./services/CustomerStatisticsEngine.js";
 import VisaAnalyticsEngine from "./services/VisaAnalyticsEngine.js";
 import CacheManager from "./utils/cacheManager.js";
@@ -60,6 +75,27 @@ import AIWorkflowRecoveryScheduler from "./services/aiWorkflowRecoveryScheduler.
 import AIContextExpiryScheduler from "./services/aiContextExpiryScheduler.js";
 import AIApprovalTimeoutScheduler from "./services/aiApprovalTimeoutScheduler.js";
 import AIObservabilityAlertScheduler from "./services/aiObservabilityAlertScheduler.js";
+import ReceivableOverdueScheduler from "./services/receivableOverdueScheduler.js";
+import AccountsReceivableService from "./services/AccountsReceivableService.js";
+import InvoiceService from "./services/InvoiceService.js";
+import RefundService from "./services/RefundService.js";
+import BankAccountService from "./services/BankAccountService.js";
+import CustomerCollectionService from "./services/CustomerCollectionService.js";
+import WebhookService from "./services/WebhookService.js";
+import CustomerCollectionScheduler from "./services/customerCollectionScheduler.js";
+import SubscriptionBillingScheduler from "./services/subscriptionBillingScheduler.js";
+import CurrencyRevaluationScheduler from "./services/currencyRevaluationScheduler.js";
+import TenantSubscriptionScheduler from "./services/tenantSubscriptionScheduler.js";
+import SubscriptionSuspensionEnforcementScheduler from "./services/subscriptionSuspensionEnforcementScheduler.js";
+import SubscriptionRenewalEngineScheduler from "./services/subscriptionRenewalEngineScheduler.js";
+import PaymentRetryEngineScheduler from "./services/paymentRetryEngineScheduler.js";
+import TaxRuleExpiryScheduler from "./services/taxRuleExpiryScheduler.js";
+import PricingRuleExpiryScheduler from "./services/pricingRuleExpiryScheduler.js";
+import ApprovalEscalationScheduler from "./services/approvalEscalationScheduler.js";
+import FinancialReportScheduler from "./services/financialReportScheduler.js";
+import AuditRetentionScheduler from "./services/auditRetentionScheduler.js";
+import WebhookRetryScheduler from "./services/webhookRetryScheduler.js";
+import RecurringJournalScheduler from "./services/recurringJournalScheduler.js";
 
 validateEnv();
 
@@ -74,10 +110,25 @@ const bootstrapEnterpriseServices = async () => {
   await IncidentSlaScheduler.init();
   await ReferenceDataScheduler.init();
   await FlightScheduleSyncScheduler.init();
+  await ReceivableOverdueScheduler.init();
+  await CustomerCollectionScheduler.init();
+  await SubscriptionBillingScheduler.init();
+  await CurrencyRevaluationScheduler.init();
+  await TaxRuleExpiryScheduler.init();
+  await PricingRuleExpiryScheduler.init();
+  await ApprovalEscalationScheduler.init();
+  await FinancialReportScheduler.init();
+  await AuditRetentionScheduler.init();
+  await WebhookRetryScheduler.init();
+  await RecurringJournalScheduler.init();
   await AIWorkflowRecoveryScheduler.init();
   await AIContextExpiryScheduler.init();
   await AIApprovalTimeoutScheduler.init();
   await AIObservabilityAlertScheduler.init();
+  await TenantSubscriptionScheduler.init();
+  await SubscriptionSuspensionEnforcementScheduler.init();
+  await SubscriptionRenewalEngineScheduler.init();
+  await PaymentRetryEngineScheduler.init();
 };
 
 const app = express();
@@ -85,6 +136,15 @@ const app = express();
 // Security & parsing (Disable CSP for Swagger UI compatibility)
 app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" }, contentSecurityPolicy: false }));
 app.use(compression());
+
+// Per-Tenant Payment Gateway Integration — Stripe webhook signature
+// verification needs the RAW, unparsed request body. Must be mounted
+// BEFORE the global `express.json()` below (or the raw body is gone by
+// the time the webhook route sees it, and signature verification always
+// fails) — `express.raw()` is scoped to exactly this one path, so every
+// other route's JSON body parsing is completely unaffected.
+app.use("/api/v1/webhooks", express.raw({ type: "application/json" }), paymentWebhookRoute);
+
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.use(cors({ origin: process.env.FRONTEND_URL || "http://localhost:5173", credentials: true }));
@@ -115,6 +175,19 @@ app.get("/health", async (req, res) => {
 // Swagger OpenAPI Documentation
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec, { explorer: true }));
 
+// Enterprise OpenAPI / Swagger / SDK Generation Standard (Enterprise
+// Architecture Hardening Phase, Improvement 15). "Every API should expose
+// /openapi.json or /openapi.yaml. This becomes the single source of
+// truth." Both serialize the SAME `swaggerSpec` object `/api-docs`
+// already renders — one real source, two formats, never a second,
+// hand-maintained copy. Public/unauthenticated, same as `/api-docs`
+// itself — the machine-readable contract is offered at the same access
+// level as its human-readable rendering.
+app.get("/openapi.json", (req, res) => res.status(200).json(swaggerSpec));
+app.get("/openapi.yaml", (req, res) => {
+  res.status(200).type("text/yaml").send(dumpYaml(swaggerSpec));
+});
+
 // Routes
 app.use("/api/v1/auth", route);
 app.use("/api/auth", route);
@@ -144,6 +217,20 @@ app.use("/api/v1/integrations/airlines", airlineIntegrationRoute);
 app.use("/api/v1/reference", referenceDataRoute);
 app.use("/api/v1", notesTimelineRoute);
 app.use("/api/v1", visaRoute);
+app.use("/api/v1", financeRoute);
+app.use("/api/v1/platform", subscriptionPlatformRoute);
+app.use("/api/v1/subscriptions", subscriptionResourceRoute);
+app.use("/api/v1", merchantPlatformRoute);
+app.use("/api/v1", organisationRoute);
+app.use("/api/v1/numbering", numberingRoute);
+app.use("/api/v1/resilience", resilienceRoute);
+app.use("/api/v1/event-registry", eventRegistryRoute);
+app.use("/api/v1/api-version-registry", apiVersionRegistryRoute);
+app.use("/api/v1/rate-limits", rateLimitRoute);
+app.use("/api/v1/communication", communicationRoute);
+app.use("/api/v1/emails", communicationRoute);
+app.use("/api/v1/sms", communicationRoute);
+app.use("/api/v1/payment-gateways", paymentGatewayRoute);
 
 // Error handling
 app.use(notFoundHandler);
@@ -157,7 +244,14 @@ const startServer = async () => {
     TravelOrchestrationEngine.init();
     VisaTimelineEventBus.init();
     CustomerTimelineEventBus.init();
+    PaymentNotificationListener.init();
     CustomerStatisticsEngine.init();
+    AccountsReceivableService.initEventListeners();
+    InvoiceService.initEventListeners();
+    RefundService.initEventListeners();
+    BankAccountService.initEventListeners();
+    CustomerCollectionService.initEventListeners();
+    WebhookService.initEventListeners();
     app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
   } catch (error) {
     console.error("Application bootstrap failed:", error.message);

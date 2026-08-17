@@ -1,5 +1,6 @@
 import express from "express";
 import authenticateAccessToken from "../middleware/authenticateAccessToken.js";
+import { requireFeature, subscriptionResponseHeaders } from "../middleware/subscriptionEnforcement.js";
 import validate, { bookingSchemas } from "../middleware/validateRequest.js";
 import rateLimit from "express-rate-limit";
 import {
@@ -46,6 +47,9 @@ const limiter = rateLimit({
 });
 
 router.use(authenticateAccessToken);
+// Enterprise Subscription Platform — see routes/FinanceRoutes.js's own doc comment.
+router.use(requireFeature("booking"));
+router.use(subscriptionResponseHeaders);
 
 // Dashboard & Search
 router.get("/dashboard", limiter, GetBookingDashboard);

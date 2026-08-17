@@ -17,6 +17,23 @@ const WARN_VARS = [
 const WARN_IF_MISSING = [
   { key: "FRONTEND_URL", name: "Frontend URL" },
   { key: "REDIS_URL", name: "Redis URL (cache will fall back to in-memory)" },
+  { key: "STRIPE_SECRET_KEY", name: "Stripe Secret Key (Stripe gateway payments will be unavailable)" },
+  { key: "TWILIO_ACCOUNT_SID", name: "Twilio Account SID (WhatsApp/SMS receipt delivery will be unavailable)" },
+  // Per-Tenant Payment Gateway Integration (Stripe Connect). Deliberately
+  // WARN, not CRITICAL — same treatment as STRIPE_SECRET_KEY directly
+  // above, for the same reason: Stripe is optional, per-tenant-opt-in
+  // infrastructure throughout this codebase (an agency that hasn't
+  // connected a payment account yet still uses the rest of the ERP fine),
+  // never something the whole app refuses to boot without. The real,
+  // hard failure for a genuinely missing signing secret happens at the
+  // point of use — `PaymentWebhookController` refuses to verify (and
+  // therefore refuses to process) any webhook if `STRIPE_WEBHOOK_SECRET`
+  // is unset, the same "throw a clear, honest error, never fabricate
+  // success" discipline `StripeGatewayAdapter._requireClient()` already
+  // established — not a boot-time gate that would break every
+  // Stripe-Connect-not-yet-configured deployment.
+  { key: "STRIPE_WEBHOOK_SECRET", name: "Stripe Webhook Signing Secret (Stripe webhook events will be rejected until this is set)" },
+  { key: "STRIPE_CONNECT_CLIENT_ID", name: "Stripe Connect OAuth Client ID (agencies will not be able to connect their own Stripe account)" },
 ];
 
 const isProduction = process.env.NODE_ENV === "production";

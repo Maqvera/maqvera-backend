@@ -3,6 +3,8 @@ import { sendError } from "../utils/apiResponse.js";
 import { getAuthConfig } from "../utils/authConfig.js";
 import RoleModel from "../models/Rolemodel.js";
 import CacheManager from "../utils/cacheManager.js";
+import TenantSubscriptionService from "../services/TenantSubscriptionService.js";
+import { recordEnforcementCheck } from "../utils/enforcementMetrics.js";
 
 const authConfig = getAuthConfig();
 
@@ -52,6 +54,46 @@ const authenticateAccessToken = async (req, res, next) => {
 
     req.auth = payload;
     req.accessToken = token;
+
+    // Enterprise Subscription Platform — "Auth -> Tenant Exists ->
+    // Subscription Active -> Permission -> Execute API." A short-lived
+    // access token remains cryptographically valid for its own remaining
+    // TTL even after a tenant is suspended (login/refresh already reject
+    // a suspended tenant — controllers/Auth.js — but neither of those
+    // runs again mid-token-lifetime); this is the one real per-request
+    // check that closes that window, cached briefly
+    // (TenantSubscriptionService.getEnforcementBlock) so it doesn't add a
+    // DB round trip to every request. Returns null (no-op) for any tenant
+    // with no TenantSubscriptionModel row at all — every tenant that
+    // predates this platform is completely unaffected.
+    if (payload.tenantId) {
+        // Enterprise Subscription Enforcement Middleware (Automation #6) —
+        // "Monitoring Dashboard... Average Middleware Time." Real,
+        // in-process timing around the one enforcement check itself, never
+        // the whole request — utils/enforcementMetrics.js.
+        const enforcementCheckStartedAt = Date.now();
+        try {
+            const block = await TenantSubscriptionService.getEnforcementBlock(payload.tenantId);
+            recordEnforcementCheck(Date.now() - enforcementCheckStartedAt, !!block);
+            if (block) {
+                // Enterprise Access Revocation Engine (Automation #5) /
+                // Enterprise Subscription Enforcement Middleware
+                // (Automation #6) — "Monitoring Dashboard... Blocked API
+                // Requests" + "Every blocked request MUST be audited."
+                // Real, fire-and-forget (never awaited — must never add
+                // latency to an already-blocked response).
+                TenantSubscriptionService.recordBlockedRequest(payload.tenantId, { endpoint: `${req.method} ${req.originalUrl}`, code: block.code });
+                return sendError(res, block.httpStatus, block.message, requestId, { code: block.code });
+            }
+        } catch (error) {
+            recordEnforcementCheck(Date.now() - enforcementCheckStartedAt, false);
+            // Fail OPEN on an enforcement-check error (e.g. a transient DB
+            // hiccup) — an availability bug in this platform must never
+            // itself become a reason every tenant gets locked out; the
+            // same "fail open" discipline middleware/idempotency.js
+            // already documents for its own store lookup.
+        }
+    }
 
     try {
         req.auth.permissions = await resolveRolePermissions(payload.tenantId, payload.role);

@@ -14,6 +14,7 @@ import { publishEvent } from "../utils/eventBus.js";
 import { createRequestId, getAccessTokenExpiresInSeconds } from "../utils/authTokens.js";
 import { getAuthConfig } from "../utils/authConfig.js";
 import { validatePassword, recordPasswordHistory } from "../utils/passwordPolicy.js";
+import { ensureTenantRole } from "../utils/authDomainDefaults.js";
 import { getRequestMeta, createSessionAndTokens } from "./Auth.js";
 import CacheManager from "../utils/cacheManager.js";
 import logger from "../utils/logger.js";
@@ -249,36 +250,54 @@ export const CreateUser = async (req, res) => {
       joiningDate
     } = req.body;
 
-    // departmentId is required: every employee belongs to Exactly One
-    // Department (Part 1, Organization Hierarchy) — EmployeeProfileModel's
-    // schema already enforces this, but validating it here turns a would-be
-    // 500 (Mongoose ValidationError) into a clean 422.
-    if (!firstName || !lastName || !email || !departmentId) {
-      return sendError(res, 422, "firstName, lastName, email, and departmentId are required.", requestId);
+    if (!email) {
+      return sendError(res, 422, "email is required.", requestId);
     }
+    const finalFirstName = (firstName && firstName.trim()) ? firstName.trim() : (email.split("@")[0] || "Team");
+    const finalLastName = (lastName && lastName.trim()) ? lastName.trim() : "Member";
 
-    const department = await DepartmentModel.findOne({ _id: departmentId, tenantId, status: "active" });
+    let department = null;
+    if (departmentId) {
+      if (mongoose.Types.ObjectId.isValid(departmentId)) {
+        department = await DepartmentModel.findOne({ _id: departmentId, tenantId, status: "active" });
+      }
+      if (!department) {
+        department = await DepartmentModel.findOne({ departmentKey: `${tenantId}-${departmentId.toLowerCase()}`, tenantId, status: "active" })
+          || await DepartmentModel.findOne({ name: new RegExp(`^${departmentId}$`, "i"), tenantId, status: "active" });
+      }
+    }
     if (!department) {
-      return sendError(res, 422, "Department not found or inactive.", requestId);
+      department = await DepartmentModel.findOneAndUpdate(
+        { tenantId, departmentKey: `${tenantId}-general` },
+        { tenantId, departmentKey: `${tenantId}-general`, name: "General", status: "active" },
+        { upsert: true, new: true }
+      );
     }
 
     let resolvedRoleIds = [];
 
     if (Array.isArray(roleIds) && roleIds.length > 0) {
       const validObjectIds = roleIds.filter((id) => mongoose.Types.ObjectId.isValid(id));
-      const foundRoles = await RoleModel.find({ _id: { $in: validObjectIds }, status: "active" });
+      const foundRoles = await RoleModel.find({ _id: { $in: validObjectIds }, tenantId, status: "active" });
       if (foundRoles.length !== roleIds.length) {
         return sendError(res, 422, "One or more roles do not exist or are inactive.", requestId);
       }
       resolvedRoleIds = foundRoles.map((r) => r._id);
     } else if (role) {
-      const rObj = await RoleModel.findOne({ tenantId, name: role, status: "active" });
+      let rObj = await RoleModel.findOne({ tenantId, name: new RegExp(`^${role.trim()}$`, "i"), status: "active" });
+      if (!rObj) {
+        rObj = await ensureTenantRole(tenantId, role);
+      }
       if (rObj) resolvedRoleIds = [rObj._id];
     }
 
-    // Every employee has One or More Roles (Part 1, Organization Hierarchy).
     if (resolvedRoleIds.length === 0) {
-      return sendError(res, 422, "At least one valid role is required.", requestId);
+      const defaultRoleName = (role && role.trim()) ? role.trim() : "User";
+      let roleDoc = await RoleModel.findOne({ tenantId, name: new RegExp(`^${defaultRoleName}$`, "i"), status: "active" });
+      if (!roleDoc) {
+        roleDoc = await ensureTenantRole(tenantId, defaultRoleName);
+      }
+      resolvedRoleIds = [roleDoc._id];
     }
 
     const existingUser = await UserModel.findOne({ tenantId, email });
@@ -301,8 +320,8 @@ export const CreateUser = async (req, res) => {
       departmentId: department._id,
       roleIds: resolvedRoleIds,
       employeeCode,
-      firstName,
-      lastName,
+      firstName: finalFirstName,
+      lastName: finalLastName,
       email,
       phone: phone || "N/A",
       designation: designation || null,
@@ -1143,13 +1162,28 @@ export const InviteUser = async (req, res) => {
       designation
     } = req.body;
 
-    if (!email || !firstName || !lastName || !departmentId) {
-      return sendError(res, 422, "Email, firstName, lastName, and departmentId are required.", requestId);
+    if (!email) {
+      return sendError(res, 422, "Email is required.", requestId);
     }
+    const finalFirstName = (firstName && firstName.trim()) ? firstName.trim() : (email.split("@")[0] || "Team");
+    const finalLastName = (lastName && lastName.trim()) ? lastName.trim() : "Member";
 
-    const department = await DepartmentModel.findOne({ _id: departmentId, tenantId, status: "active" });
+    let department = null;
+    if (departmentId) {
+      if (mongoose.Types.ObjectId.isValid(departmentId)) {
+        department = await DepartmentModel.findOne({ _id: departmentId, tenantId, status: "active" });
+      }
+      if (!department) {
+        department = await DepartmentModel.findOne({ departmentKey: `${tenantId}-${departmentId.toLowerCase()}`, tenantId, status: "active" })
+          || await DepartmentModel.findOne({ name: new RegExp(`^${departmentId}$`, "i"), tenantId, status: "active" });
+      }
+    }
     if (!department) {
-      return sendError(res, 422, "Department not found or inactive.", requestId);
+      department = await DepartmentModel.findOneAndUpdate(
+        { tenantId, departmentKey: `${tenantId}-general` },
+        { tenantId, departmentKey: `${tenantId}-general`, name: "General", status: "active" },
+        { upsert: true, new: true }
+      );
     }
 
     const existingUser = await UserModel.findOne({ tenantId, email });
@@ -1159,9 +1193,10 @@ export const InviteUser = async (req, res) => {
       return sendError(res, 409, "User with this email already exists in the organization.", requestId);
     }
 
-    const roleRecord = await RoleModel.findOne({ tenantId, name: role, status: "active" });
+    const targetRole = (role && role.trim()) ? role.trim() : "User";
+    let roleRecord = await RoleModel.findOne({ tenantId, name: new RegExp(`^${targetRole}$`, "i"), status: "active" });
     if (!roleRecord) {
-      return sendError(res, 422, `Role "${role}" does not exist or is inactive.`, requestId);
+      roleRecord = await ensureTenantRole(tenantId, targetRole);
     }
 
     let profile = existingProfile;
@@ -1172,8 +1207,8 @@ export const InviteUser = async (req, res) => {
         departmentId: department._id,
         roleIds: [roleRecord._id],
         employeeCode,
-        firstName,
-        lastName,
+        firstName: finalFirstName,
+        lastName: finalLastName,
         email,
         phone: phone || "N/A",
         designation: designation || null,
@@ -1333,10 +1368,12 @@ export const AcceptUserInvitation = async (req, res) => {
       if (rRecord) roleName = rRecord.name;
     }
 
-    const valErr = validatePassword(password, authConfig);
-    if (valErr) return sendError(res, 400, valErr, requestId);
+    const { valid, errors } = await validatePassword(password, profile.tenantId);
+    if (!valid) {
+      return sendError(res, 422, errors.length > 0 ? errors.join("; ") : "Password does not meet policy requirements.", requestId, { errors });
+    }
 
-    const hashedPassword = await bcrypt.hash(password, authConfig.bcryptSaltRounds);
+    const hashedPassword = await bcrypt.hash(password, authConfig.bcryptSaltRounds || 10);
     const user = await UserModel.create({
       username,
       email: profile.email,
@@ -1346,7 +1383,7 @@ export const AcceptUserInvitation = async (req, res) => {
       status: "active",
       emailVerified: true
     });
-    await recordPasswordHistory(user._id, hashedPassword, profile.tenantId);
+    await recordPasswordHistory(user._id, hashedPassword, "invitation_accepted", requestId);
 
     profile.identityId = user._id;
     profile.status = "active";

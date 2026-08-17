@@ -22,6 +22,23 @@ import TravelNoteModel from "../models/TravelNoteModel.js";
 import TravelItineraryModel from "../models/TravelItineraryModel.js";
 import TravelAttendanceModel from "../models/TravelAttendanceModel.js";
 import BookingTaskModel from "../models/BookingTaskModel.js";
+// Finance Module Part 28 — Enterprise Search's own real cross-module reach
+// into the Finance domain built across Parts 2-27, rather than a second,
+// parallel Finance-specific search system.
+import InvoiceModel from "../models/InvoiceModel.js";
+import PaymentModel from "../models/PaymentModel.js";
+import ReceiptModel from "../models/ReceiptModel.js";
+import JournalModel from "../models/JournalModel.js";
+import ChartOfAccountModel from "../models/ChartOfAccountModel.js";
+import VendorModel from "../models/VendorModel.js";
+import ExpenseModel from "../models/ExpenseModel.js";
+import BankAccountModel from "../models/BankAccountModel.js";
+import AuditEventModel from "../models/AuditEventModel.js";
+import FinancialReportModel from "../models/FinancialReportModel.js";
+// File 7 — Enterprise Multi-Currency & FX's own "Update Search Index" step.
+import CurrencyModel from "../models/CurrencyModel.js";
+import ExchangeRateModel from "../models/ExchangeRateModel.js";
+import CurrencyRevaluationModel from "../models/CurrencyRevaluationModel.js";
 import { publishEvent, subscribeEvent } from "../utils/eventBus.js";
 
 const MAX_PAGE_SIZE = Number.parseInt(process.env.ENTERPRISE_SEARCH_MAX_PAGE_SIZE || "100", 10) || 100;
@@ -161,6 +178,83 @@ class SearchEngineService {
       AttendanceRecorded: (p) => this.indexAttendance(p),
       BookingTaskCreated: (p) => this.indexTask(p),
       BookingTaskAssigned: (p) => this.indexTask(p),
+      // Finance Module Part 28. Every event name/payload id field below
+      // was read and verified directly against its own real publishEvent
+      // call site before being wired here (never guessed) — see
+      // docs/05-api/07-finance-api.md Part 28's own "Real event names,
+      // verified" section.
+      InvoiceCreated: (p) => this.indexInvoice(p),
+      InvoiceUpdated: (p) => this.indexInvoice(p),
+      InvoiceApproved: (p) => this.indexInvoice(p),
+      InvoiceIssued: (p) => this.indexInvoice(p),
+      InvoicePaid: (p) => this.indexInvoice(p),
+      InvoiceOverdue: (p) => this.indexInvoice(p),
+      InvoiceCancelled: (p) => this.indexInvoice(p),
+      InvoiceVoided: (p) => this.indexInvoice(p),
+      InvoiceClosed: (p) => this.indexInvoice(p),
+      PaymentCreated: (p) => this.indexPayment(p),
+      PaymentAuthorized: (p) => this.indexPayment(p),
+      PaymentCaptured: (p) => this.indexPayment(p),
+      PaymentAllocated: (p) => this.indexPayment(p),
+      PaymentReversed: (p) => this.indexPayment(p),
+      PaymentRefunded: (p) => this.indexPayment(p),
+      PaymentSettled: (p) => this.indexPayment(p),
+      ReceiptGenerated: (p) => this.indexReceipt(p),
+      ReceiptIssued: (p) => this.indexReceipt(p),
+      ReceiptDelivered: (p) => this.indexReceipt(p),
+      ReceiptCancelled: (p) => this.indexReceipt(p),
+      ReceiptReissued: (p) => Promise.all([this.indexReceipt({ ...p, receiptId: p.originalReceiptId }), this.indexReceipt({ ...p, receiptId: p.reissuedReceiptId })]),
+      JournalCreated: (p) => this.indexJournal(p),
+      JournalUpdated: (p) => this.indexJournal(p),
+      JournalApproved: (p) => this.indexJournal(p),
+      JournalRejected: (p) => this.indexJournal(p),
+      JournalCancelled: (p) => this.indexJournal(p),
+      JournalPosted: (p) => this.indexJournal(p),
+      JournalReversed: (p) => Promise.all([this.indexJournal({ ...p, journalId: p.originalJournalId }), this.indexJournal({ ...p, journalId: p.reversalJournalId })]),
+      // "Correction Journals" (File 2, Journal Platform Part 2) — same
+      // dual-reindex shape as JournalReversed above.
+      JournalCorrected: (p) => Promise.all([this.indexJournal({ ...p, journalId: p.originalJournalId }), this.indexJournal({ ...p, journalId: p.correctionJournalId })]),
+      // "Archiving Strategy" (File 2, Journal Platform Part 4).
+      JournalArchived: (p) => this.indexJournal(p),
+      JournalRestored: (p) => this.indexJournal(p),
+      AccountCreated: (p) => this.indexGLAccount(p),
+      AccountUpdated: (p) => this.indexGLAccount(p),
+      AccountHierarchyChanged: (p) => this.indexGLAccount(p),
+      AccountDeactivated: (p) => this.indexGLAccount(p),
+      AccountActivated: (p) => this.indexGLAccount(p),
+      AccountSuspended: (p) => this.indexGLAccount(p),
+      AccountArchived: (p) => this.indexGLAccount(p),
+      AccountMerged: (p) => Promise.all([this.indexGLAccount({ ...p, accountId: p.sourceAccountId }), this.indexGLAccount({ ...p, accountId: p.targetAccountId })]),
+      VendorCreated: (p) => this.indexVendor(p),
+      ExpenseCreated: (p) => this.indexExpense(p),
+      ExpenseSubmitted: (p) => this.indexExpense(p),
+      ExpenseApproved: (p) => this.indexExpense(p),
+      ExpenseRejected: (p) => this.indexExpense(p),
+      ExpenseReimbursed: (p) => this.indexExpense(p),
+      ExpenseClosed: (p) => this.indexExpense(p),
+      BankAccountCreated: (p) => this.indexBankAccountRecord(p),
+      BankAccountVerified: (p) => this.indexBankAccountRecord(p),
+      BankAccountActivated: (p) => this.indexBankAccountRecord(p),
+      BankAccountFrozen: (p) => this.indexBankAccountRecord(p),
+      BankAccountClosed: (p) => this.indexBankAccountRecord(p),
+      AuditEventStored: (p) => this.indexAuditEventRecord(p),
+      ReportGenerated: (p) => this.indexFinancialReport(p),
+      ReportArchived: (p) => this.indexFinancialReport(p),
+      // File 7 — Enterprise Multi-Currency & FX.
+      CurrencyCreated: (p) => this.indexCurrency(p),
+      CurrencyApproved: (p) => this.indexCurrency(p),
+      CurrencyActivated: (p) => this.indexCurrency(p),
+      CurrencySuspended: (p) => this.indexCurrency(p),
+      CurrencyArchived: (p) => this.indexCurrency(p),
+      CurrencyDeprecated: (p) => this.indexCurrency(p),
+      // File 7 Part 4 — "Search Integration... Exchange Rates... Revaluations."
+      // `ExchangeRateUpdated` now fires with a real `exchangeRateId` from
+      // every creation path — manual (createExchangeRate), approval
+      // (approveExchangeRate), AND automatic import (importRatesFromProvider,
+      // per-row, closing a real gap that only ever published the bulk
+      // `RateImported` summary before).
+      ExchangeRateUpdated: (p) => this.indexExchangeRate({ tenantId: p.tenantId, exchangeRateId: p.exchangeRateId }),
+      CurrencyRevalued: (p) => this.indexCurrencyRevaluation({ tenantId: p.tenantId, revaluationId: p.revaluationId }),
     };
     for (const [eventName, handler] of Object.entries(handlers)) {
       subscribeEvent(eventName, (payload) => queueMicrotask(() => handler(payload).catch((error) =>
@@ -433,6 +527,198 @@ class SearchEngineService {
     });
   }
 
+  // -- Finance Module Part 28 — real DB-backed indexers, same shape as
+  // every Travel/Visa indexer above (fetch the real current entity,
+  // soft-delete from the index when it's gone, map to indexEntity()'s
+  // real fields, gate visibility with the real, already-verified
+  // finance.*.read/audit.event.read permission key each entity's own
+  // controller already checks). --
+
+  static async indexInvoice({ tenantId, invoiceId }) {
+    if (!tenantId || !invoiceId) return;
+    const item = await InvoiceModel.findOne({ _id: invoiceId, tenantId }).lean();
+    if (!item) return this.removeEntity({ tenantId, entityType: "Invoice", entityId: invoiceId });
+    return this.indexEntity({ tenantId, entityType: "Invoice", entityId: item._id,
+      title: `${item.invoiceNumber} — ${item.customerName}`, description: `${item.status} · ${item.grandTotal} ${item.currency}`,
+      keywords: [item.invoiceNumber, item.customerName].filter(Boolean),
+      matchedFields: [{ field: "invoiceNumber", value: item.invoiceNumber }, { field: "customerName", value: item.customerName }].filter((f) => f.value),
+      module: "Finance", status: item.status, navigationUrl: `/finance/invoices/${item._id}`, permissionsRequired: ["finance.invoice.read"],
+      facets: { status: item.status, currency: item.currency, category: "Invoice" },
+    });
+  }
+
+  static async indexPayment({ tenantId, paymentId }) {
+    if (!tenantId || !paymentId) return;
+    const item = await PaymentModel.findOne({ _id: paymentId, tenantId }).lean();
+    if (!item) return this.removeEntity({ tenantId, entityType: "Payment", entityId: paymentId });
+    return this.indexEntity({ tenantId, entityType: "Payment", entityId: item._id,
+      title: `${item.paymentNumber} — ${item.amount} ${item.currency}`, description: `${item.paymentType} · ${item.paymentMethod} · ${item.status}`,
+      keywords: [item.paymentNumber, item.reference, item.paymentMethod].filter(Boolean),
+      matchedFields: [{ field: "paymentNumber", value: item.paymentNumber }, { field: "reference", value: item.reference }].filter((f) => f.value),
+      module: "Finance", status: item.status, navigationUrl: `/finance/payments/${item._id}`, permissionsRequired: ["finance.payment.read"],
+      facets: { status: item.status, currency: item.currency, category: "Payment" },
+    });
+  }
+
+  static async indexReceipt({ tenantId, receiptId }) {
+    if (!tenantId || !receiptId) return;
+    const item = await ReceiptModel.findOne({ _id: receiptId, tenantId }).lean();
+    if (!item) return this.removeEntity({ tenantId, entityType: "Receipt", entityId: receiptId });
+    return this.indexEntity({ tenantId, entityType: "Receipt", entityId: item._id,
+      title: `${item.receiptNumber} — ${item.amount} ${item.currency}`, description: `Receipt for payment ${item.paymentNumber} · ${item.status}`,
+      keywords: [item.receiptNumber, item.paymentNumber].filter(Boolean),
+      matchedFields: [{ field: "receiptNumber", value: item.receiptNumber }, { field: "paymentNumber", value: item.paymentNumber }].filter((f) => f.value),
+      module: "Finance", status: item.status, navigationUrl: `/finance/receipts/${item._id}`, permissionsRequired: ["finance.receipt.read"],
+      facets: { status: item.status, currency: item.currency, category: "Receipt" },
+    });
+  }
+
+  static async indexJournal({ tenantId, journalId }) {
+    if (!tenantId || !journalId) return;
+    const item = await JournalModel.findOne({ _id: journalId, tenantId }).lean();
+    if (!item) return this.removeEntity({ tenantId, entityType: "JournalEntry", entityId: journalId });
+    // "Read Model Design" (File 2, Journal Platform Part 4, item 47) —
+    // approvalStatus added to the facets of this codebase's own real,
+    // already-working read-model mechanism (SearchIndexModel, Part 28).
+    // Inlined rather than importing JournalService.deriveApprovalStatus
+    // here to avoid adding a second circular reference on top of the
+    // existing JournalService <-> SearchEngineService one (Part 40) — this
+    // is the exact same real derivation, just duplicated as four lines
+    // rather than cross-imported for one pure function.
+    const approvalStatus = ["Approved", "Posted", "Archived"].includes(item.status)
+      ? "Approved"
+      : (item.status === "Draft" ? "NotSubmitted" : item.status === "Pending Approval" ? "PendingApproval" : item.status);
+    return this.indexEntity({ tenantId, entityType: "JournalEntry", entityId: item._id,
+      title: `${item.journalNumber} — ${item.journalType}`, description: item.description || `${item.status} · ${item.debitTotal} ${item.currency}`,
+      keywords: [item.journalNumber, item.referenceNumber, item.description].filter(Boolean),
+      matchedFields: [{ field: "journalNumber", value: item.journalNumber }, { field: "referenceNumber", value: item.referenceNumber }].filter((f) => f.value),
+      module: "Finance", status: item.status, navigationUrl: `/finance/journals/${item._id}`, permissionsRequired: ["finance.journal.read"],
+      facets: { status: item.status, currency: item.currency, category: "JournalEntry", approvalStatus },
+    });
+  }
+
+  static async indexGLAccount({ tenantId, accountId }) {
+    if (!tenantId || !accountId) return;
+    const item = await ChartOfAccountModel.findOne({ _id: accountId, tenantId }).lean();
+    if (!item) return this.removeEntity({ tenantId, entityType: "GLAccount", entityId: accountId });
+    return this.indexEntity({ tenantId, entityType: "GLAccount", entityId: item._id,
+      title: `${item.accountCode} — ${item.name}`, description: `${item.category} · ${item.type} · ${item.status}`,
+      // "Alias Search" (Part 36) — real, additional searchable names.
+      keywords: [item.accountCode, item.name, ...(item.aliases || []), ...(item.tags || [])].filter(Boolean),
+      matchedFields: [{ field: "accountCode", value: item.accountCode }, { field: "name", value: item.name }].filter((f) => f.value),
+      module: "Finance", status: item.status, navigationUrl: `/finance/accounts/${item._id}`, permissionsRequired: ["finance.account.read"],
+      // "Deferred Revenue" (Part 37) — real, filterable facet when set.
+      facets: { status: item.status, currency: item.currency, category: item.category, deferredRevenueType: item.revenueRecognition?.deferredRevenueType || null },
+    });
+  }
+
+  static async indexVendor({ tenantId, vendorId }) {
+    if (!tenantId || !vendorId) return;
+    const item = await VendorModel.findOne({ _id: vendorId, tenantId }).lean();
+    if (!item) return this.removeEntity({ tenantId, entityType: "Vendor", entityId: vendorId });
+    return this.indexEntity({ tenantId, entityType: "Vendor", entityId: item._id,
+      title: item.name, description: `${item.contactEmail || ""} · ${item.status}`.trim(),
+      keywords: [item.name, item.contactEmail, item.contactPhone].filter(Boolean),
+      matchedFields: [{ field: "name", value: item.name }, { field: "contactEmail", value: item.contactEmail }].filter((f) => f.value),
+      module: "Finance", status: item.status, navigationUrl: `/finance/vendors/${item._id}`, permissionsRequired: ["finance.vendor.read"],
+      facets: { status: item.status, currency: item.currency, category: "Vendor" },
+    });
+  }
+
+  static async indexExpense({ tenantId, expenseId }) {
+    if (!tenantId || !expenseId) return;
+    const item = await ExpenseModel.findOne({ _id: expenseId, tenantId }).lean();
+    if (!item) return this.removeEntity({ tenantId, entityType: "Expense", entityId: expenseId });
+    return this.indexEntity({ tenantId, entityType: "Expense", entityId: item._id,
+      title: `${item.expenseNumber} — ${item.employeeName || "Employee"}`, description: `${item.category} · ${item.amount} ${item.currency} · ${item.status}`,
+      keywords: [item.expenseNumber, item.employeeName, item.category, item.description].filter(Boolean),
+      matchedFields: [{ field: "expenseNumber", value: item.expenseNumber }, { field: "employeeName", value: item.employeeName }].filter((f) => f.value),
+      module: "Finance", status: item.status, navigationUrl: `/finance/expenses/${item._id}`, permissionsRequired: ["finance.expense.read"],
+      facets: { status: item.status, currency: item.currency, category: item.category },
+    });
+  }
+
+  static async indexBankAccountRecord({ tenantId, bankAccountId }) {
+    if (!tenantId || !bankAccountId) return;
+    const item = await BankAccountModel.findOne({ _id: bankAccountId, tenantId }).lean();
+    if (!item) return this.removeEntity({ tenantId, entityType: "BankAccount", entityId: bankAccountId });
+    return this.indexEntity({ tenantId, entityType: "BankAccount", entityId: item._id,
+      title: `${item.bankAccountCode} — ${item.accountName}`, description: `${item.bankName} ····${item.accountNumberLast4 || ""} · ${item.status}`,
+      keywords: [item.bankAccountCode, item.accountName, item.bankName].filter(Boolean),
+      matchedFields: [{ field: "bankAccountCode", value: item.bankAccountCode }, { field: "accountName", value: item.accountName }].filter((f) => f.value),
+      module: "Finance", status: item.status, navigationUrl: `/finance/bank-accounts/${item._id}`, permissionsRequired: ["finance.bankaccount.read"],
+      facets: { status: item.status, currency: item.currency, category: "BankAccount" },
+    });
+  }
+
+  static async indexAuditEventRecord({ tenantId, eventId }) {
+    if (!tenantId || !eventId) return;
+    const item = await AuditEventModel.findOne({ _id: eventId, tenantId }).lean();
+    if (!item) return this.removeEntity({ tenantId, entityType: "AuditEvent", entityId: eventId });
+    return this.indexEntity({ tenantId, entityType: "AuditEvent", entityId: item._id,
+      title: `[${item.category}] ${item.action}${item.entityType ? ` — ${item.entityType}` : ""}`, description: `${item.module} · ${item.complianceStatus}`,
+      keywords: [item.action, item.module, item.category, item.entityType, item.entityId].filter(Boolean),
+      matchedFields: [{ field: "action", value: item.action }, { field: "module", value: item.module }].filter((f) => f.value),
+      module: item.module || "Audit", status: item.status, navigationUrl: `/finance/audit-events/${item._id}`, permissionsRequired: ["audit.event.read"],
+      facets: { status: item.status, category: item.category, severity: item.severity, complianceStatus: item.complianceStatus },
+    });
+  }
+
+  static async indexFinancialReport({ tenantId, reportId }) {
+    if (!tenantId || !reportId) return;
+    const item = await FinancialReportModel.findOne({ _id: reportId, tenantId }).lean();
+    if (!item) return this.removeEntity({ tenantId, entityType: "FinancialReport", entityId: reportId });
+    return this.indexEntity({ tenantId, entityType: "FinancialReport", entityId: item._id,
+      title: `${item.reportType}${item.period ? ` — ${item.period}` : ""}`, description: `${item.status} · Generated ${new Date(item.generatedAt).toISOString().slice(0, 10)}`,
+      keywords: [item.reportType, item.period].filter(Boolean),
+      matchedFields: [{ field: "reportType", value: item.reportType }, { field: "period", value: item.period }].filter((f) => f.value),
+      module: "Finance", status: item.status, navigationUrl: `/finance/financial-reports/${item._id}`, permissionsRequired: ["finance.report.read"],
+      facets: { status: item.status, currency: item.currency, category: item.reportType },
+    });
+  }
+
+  /** File 7 — Enterprise Multi-Currency & FX's own "Update Search Index" workflow step for `POST /currencies`. */
+  static async indexCurrency({ tenantId, currencyId }) {
+    if (!tenantId || !currencyId) return;
+    const item = await CurrencyModel.findOne({ _id: currencyId, tenantId }).lean();
+    if (!item) return this.removeEntity({ tenantId, entityType: "Currency", entityId: currencyId });
+    return this.indexEntity({ tenantId, entityType: "Currency", entityId: item._id,
+      title: `${item.currencyCode} — ${item.name}`, description: `${item.currencyType || "Transaction"} · ${item.status}${item.isBaseCurrency ? " · Base Currency" : ""}${item.isReportingCurrency ? " · Reporting Currency" : ""}`,
+      keywords: [item.currencyCode, item.name, item.isoNumericCode].filter(Boolean),
+      matchedFields: [{ field: "currencyCode", value: item.currencyCode }, { field: "name", value: item.name }].filter((f) => f.value),
+      module: "Finance", status: item.status, navigationUrl: `/finance/currencies/${item._id}`, permissionsRequired: ["finance.currency.read"],
+      facets: { status: item.status, currency: item.currencyCode, category: item.currencyType },
+    });
+  }
+
+  /** File 7 Part 4 — "Search Integration... Exchange Rates... Rate Versions... Providers." */
+  static async indexExchangeRate({ tenantId, exchangeRateId }) {
+    if (!tenantId || !exchangeRateId) return;
+    const item = await ExchangeRateModel.findOne({ _id: exchangeRateId, tenantId }).lean();
+    if (!item) return this.removeEntity({ tenantId, entityType: "ExchangeRate", entityId: exchangeRateId });
+    return this.indexEntity({ tenantId, entityType: "ExchangeRate", entityId: item._id,
+      title: `${item.fromCurrency} → ${item.toCurrency} (v${item.version})`, description: `${item.rate} · ${item.rateType} · ${item.provider} · ${item.approvalStatus || "Activated"}`,
+      keywords: [item.fromCurrency, item.toCurrency, item.provider, item.rateType].filter(Boolean),
+      matchedFields: [{ field: "fromCurrency", value: item.fromCurrency }, { field: "toCurrency", value: item.toCurrency }].filter((f) => f.value),
+      module: "Finance", status: item.approvalStatus || "Activated", navigationUrl: `/finance/exchange-rates/${item._id}`, permissionsRequired: ["finance.currency.read"],
+      facets: { status: item.approvalStatus, currency: item.toCurrency, category: item.rateType, provider: item.provider },
+    });
+  }
+
+  /** File 7 Part 4 — "Search Integration... Revaluations." */
+  static async indexCurrencyRevaluation({ tenantId, revaluationId }) {
+    if (!tenantId || !revaluationId) return;
+    const item = await CurrencyRevaluationModel.findOne({ _id: revaluationId, tenantId }).lean();
+    if (!item) return this.removeEntity({ tenantId, entityType: "CurrencyRevaluation", entityId: revaluationId });
+    return this.indexEntity({ tenantId, entityType: "CurrencyRevaluation", entityId: item._id,
+      title: `${item.targetType} — ${item.currencyCode} → ${item.baseCurrencyCode}`, description: `${item.gainLossType || "No movement"} · ${item.gainLossAmount} ${item.baseCurrencyCode} · ${new Date(item.revaluationDate).toISOString().slice(0, 10)}`,
+      keywords: [item.targetType, item.currencyCode, item.baseCurrencyCode].filter(Boolean),
+      matchedFields: [{ field: "targetType", value: item.targetType }, { field: "currencyCode", value: item.currencyCode }].filter((f) => f.value),
+      module: "Finance", status: item.gainLossType || "None", navigationUrl: `/finance/currency-revaluations/${item._id}`, permissionsRequired: ["finance.currency.read"],
+      facets: { status: item.gainLossType, currency: item.currencyCode, category: item.targetType },
+    });
+  }
+
   static async globalSearch({ tenantId, query = "", entityType, permissions = [], filters = {}, page = 1, pageSize = 20, sort = "score", order = "desc" }) {
     const safePage = Math.max(Number.parseInt(page, 10) || 1, 1);
     const safePageSize = Math.min(Math.max(Number.parseInt(pageSize, 10) || 20, 1), MAX_PAGE_SIZE);
@@ -460,7 +746,12 @@ class SearchEngineService {
     const filter = { tenantId, isSoftDeleted: false };
     if (entityType) filter.entityType = { $in: normalizeArray(entityType) };
     filter.$or = [{ permissionsRequired: { $size: 0 } }, { permissionsRequired: { $in: permissionList } }];
-    for (const key of ["country", "embassy", "visaType", "status", "officer", "nationality", "priority", "severity"]) {
+    // "currency"/"category"/"complianceStatus" — Finance Module Part 28's
+    // own facet additions (Invoice/Payment/BankAccount/Vendor currency;
+    // GLAccount/Expense/FinancialReport category; AuditEvent compliance
+    // status), reusing this same real facets.* filtering mechanism rather
+    // than a parallel Finance-specific filter path.
+    for (const key of ["country", "embassy", "visaType", "status", "officer", "nationality", "priority", "severity", "currency", "category", "complianceStatus"]) {
       if (filters[key]) filter[`facets.${key}`] = { $in: normalizeArray(filters[key]) };
     }
     if (filters.dateFrom || filters.dateTo) {
@@ -631,7 +922,8 @@ class SearchEngineService {
   static async rebuildIndexForTenant({ tenantId }) {
     if (!tenantId) return { indexed: 0 };
 
-    const [visaCases, travelers, documents, submissions, appointments, passports, incidents] = await Promise.all([
+    const [visaCases, travelers, documents, submissions, appointments, passports, incidents,
+      invoices, payments, receipts, journals, accounts, vendors, expenses, bankAccounts, auditEvents, reports, currencies, exchangeRates, revaluations] = await Promise.all([
       VisaCaseModel.find({ tenantId, isSoftDeleted: { $ne: true } }).select("_id").lean(),
       CustomerModel.find({ tenantId, status: { $ne: "archived" } }).select("_id").lean(),
       EnterpriseDocumentModel.find({ tenantId, isSoftDeleted: { $ne: true } }).select("_id").lean(),
@@ -639,6 +931,20 @@ class SearchEngineService {
       VisaAppointmentModel.find({ tenantId, isSoftDeleted: { $ne: true } }).select("_id").lean(),
       PassportTrackingModel.find({ tenantId }).select("_id").lean(),
       TravelIncidentManagementModel.find({ tenantId, isSoftDeleted: { $ne: true } }).select("_id").lean(),
+      // Finance Module Part 28.
+      InvoiceModel.find({ tenantId }).select("_id").lean(),
+      PaymentModel.find({ tenantId }).select("_id").lean(),
+      ReceiptModel.find({ tenantId }).select("_id").lean(),
+      JournalModel.find({ tenantId }).select("_id").lean(),
+      ChartOfAccountModel.find({ tenantId }).select("_id").lean(),
+      VendorModel.find({ tenantId }).select("_id").lean(),
+      ExpenseModel.find({ tenantId }).select("_id").lean(),
+      BankAccountModel.find({ tenantId }).select("_id").lean(),
+      AuditEventModel.find({ tenantId, status: "Active" }).select("_id").lean(),
+      FinancialReportModel.find({ tenantId }).select("_id").lean(),
+      CurrencyModel.find({ tenantId }).select("_id").lean(),
+      ExchangeRateModel.find({ tenantId }).select("_id").lean(),
+      CurrencyRevaluationModel.find({ tenantId }).select("_id").lean(),
     ]);
 
     const tasks = [
@@ -649,6 +955,19 @@ class SearchEngineService {
       ...appointments.map((r) => () => this.indexAppointment({ tenantId, appointmentId: r._id })),
       ...passports.map((r) => () => this.indexPassport({ tenantId, passportId: r._id })),
       ...incidents.map((r) => () => this.indexIncident({ tenantId, incidentId: r._id })),
+      ...invoices.map((r) => () => this.indexInvoice({ tenantId, invoiceId: r._id })),
+      ...payments.map((r) => () => this.indexPayment({ tenantId, paymentId: r._id })),
+      ...receipts.map((r) => () => this.indexReceipt({ tenantId, receiptId: r._id })),
+      ...journals.map((r) => () => this.indexJournal({ tenantId, journalId: r._id })),
+      ...accounts.map((r) => () => this.indexGLAccount({ tenantId, accountId: r._id })),
+      ...vendors.map((r) => () => this.indexVendor({ tenantId, vendorId: r._id })),
+      ...expenses.map((r) => () => this.indexExpense({ tenantId, expenseId: r._id })),
+      ...bankAccounts.map((r) => () => this.indexBankAccountRecord({ tenantId, bankAccountId: r._id })),
+      ...auditEvents.map((r) => () => this.indexAuditEventRecord({ tenantId, eventId: r._id })),
+      ...reports.map((r) => () => this.indexFinancialReport({ tenantId, reportId: r._id })),
+      ...currencies.map((r) => () => this.indexCurrency({ tenantId, currencyId: r._id })),
+      ...exchangeRates.map((r) => () => this.indexExchangeRate({ tenantId, exchangeRateId: r._id })),
+      ...revaluations.map((r) => () => this.indexCurrencyRevaluation({ tenantId, revaluationId: r._id })),
     ];
 
     const BATCH_SIZE = 25;
@@ -660,7 +979,12 @@ class SearchEngineService {
     const entityCounts = {
       visaCases: visaCases.length, travelers: travelers.length, documents: documents.length,
       embassySubmissions: submissions.length, appointments: appointments.length,
-      passports: passports.length, incidents: incidents.length
+      passports: passports.length, incidents: incidents.length,
+      invoices: invoices.length, payments: payments.length, receipts: receipts.length,
+      journals: journals.length, accounts: accounts.length, vendors: vendors.length,
+      expenses: expenses.length, bankAccounts: bankAccounts.length,
+      auditEvents: auditEvents.length, reports: reports.length, currencies: currencies.length,
+      exchangeRates: exchangeRates.length, revaluations: revaluations.length
     };
     publishEvent("SearchRebuilt", { tenantId, indexed: tasks.length, entityCounts });
     return { indexed: tasks.length, entityCounts };
