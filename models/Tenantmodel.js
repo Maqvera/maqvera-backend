@@ -30,7 +30,27 @@ const TenantSchema = new mongoose.Schema({
     suspensionReason: {
         type: String,
         default: null
-    }
+    },
+    // Per-Tenant Payment Gateway Integration — the agency's OWN connected
+    // payment account(s), so a customer's payment lands directly in the
+    // agency's own merchant account, never in a Maqvera-owned one. Array
+    // (not a single field) so Stripe today and HyperPay/PayPal later need
+    // no schema migration. Distinct from `TenantBillingAccountModel`
+    // (Enterprise Subscription Platform) — that model holds the agency's
+    // OWN payment method for paying MAQVERA's subscription fee; this field
+    // holds the agency's connected account for RECEIVING their own
+    // customers' payments. Never confuse the two.
+    paymentGateways: [{
+        provider: { type: String, enum: ["stripe", "hyperpay", "paypal"], required: true },
+        // e.g. Stripe's acct_xxx — never a bank account or card number.
+        accountId: { type: String, required: true },
+        status: { type: String, enum: ["pending", "connected", "disconnected"], default: "pending" },
+        // Stripe Connect: whether the account can actually accept charges/receive payouts yet.
+        chargesEnabled: { type: Boolean, default: false },
+        payoutsEnabled: { type: Boolean, default: false },
+        connectedAt: { type: Date, default: null },
+        disconnectedAt: { type: Date, default: null }
+    }]
 }, {
     timestamps: true,
     // Real optimistic locking on the one field that decides whether an

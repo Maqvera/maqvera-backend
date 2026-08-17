@@ -180,7 +180,14 @@ export const getPlatformConfig = () => {
     // (HR/CRM/Inventory/Projects/...) is real, deliberate, incremental
     // Adoption work (Enterprise Subscription Enforcement Middleware,
     // Automation #6), not guessed at here.
-    featureKeys: parseStringList(process.env.PLATFORM_FEATURE_KEYS_JSON, ['finance', 'hr', 'crm', 'inventory', 'projects', 'visa', 'booking', 'aiAssistant', 'advancedAnalytics', 'apiAccess']),
+    // "paymentGatewayConnect" — Per-Tenant Payment Gateway Integration
+    // (Stripe Connect, PRD Issue 11). Gated via the same real
+    // `requireFeature` mounted on `routes/PaymentGatewayRoutes.js`. Unset
+    // on any given plan's own `features` map defaults to ALLOWED
+    // (`checkFeatureAccess`'s own "undefined key never silently blocks"
+    // rule) — adding the key here only makes it a real, recognized,
+    // admin-editable toggle; it does not itself restrict any plan.
+    featureKeys: parseStringList(process.env.PLATFORM_FEATURE_KEYS_JSON, ['finance', 'hr', 'crm', 'inventory', 'projects', 'visa', 'booking', 'aiAssistant', 'advancedAnalytics', 'apiAccess', 'paymentGatewayConnect']),
 
     supportLevels: parseStringList(process.env.PLATFORM_SUPPORT_LEVELS_JSON, ['Community', 'Standard', 'Priority', 'Dedicated']),
     backupFrequencies: parseStringList(process.env.PLATFORM_BACKUP_FREQUENCIES_JSON, ['Daily', 'Weekly', 'Monthly']),

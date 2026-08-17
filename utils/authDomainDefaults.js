@@ -29,6 +29,12 @@ export const DEFAULT_PERMISSIONS = [
   { key: "bookings.create", description: "Create booking records (plural alias)" },
   { key: "bookings.update", description: "Update booking records (plural alias)" },
   { key: "bookings.delete", description: "Delete booking records (plural alias)" },
+  // Per-Tenant Payment Gateway Integration — the agency's OWN connected
+  // Stripe (later HyperPay/PayPal) account, distinct from `finance.payment.*`
+  // below (the Enterprise Payment Engine's own AR/AP payment recording).
+  { key: "payments.connect", description: "Connect the tenant's own payment gateway account (e.g. Stripe Connect OAuth)" },
+  { key: "payments.disconnect", description: "Disconnect the tenant's own connected payment gateway account" },
+  { key: "payments.view", description: "View the tenant's own connected payment gateway accounts (masked account id)" },
   { key: "travel.read", description: "Read travel plan records" },
   { key: "travel.write", description: "Create/update travel plan records" },
   { key: "travel_plans.read", description: "Read travel plan records (alias)" },
@@ -283,6 +289,39 @@ export const ensureAdministratorRole = async (tenantId) => {
   return RoleModel.findOneAndUpdate(
     { tenantId, name: ADMINISTRATOR_ROLE_NAME },
     { tenantId, name: ADMINISTRATOR_ROLE_NAME, permissions: administratorPermissions, description: "Full administrative access to every module.", isSystemRole: true, status: "active" },
+    { upsert: true, new: true }
+  );
+};
+
+/**
+ * Generic counterpart to `ensureAdministratorRole` above, for an
+ * ARBITRARY role name (e.g. `controllers/UserController.js`'s own
+ * create-user/invite flows, which accept a free-text `role` field) —
+ * ensures a `RoleModel` document exists for this tenant + name, creating
+ * a minimal one if not. Deliberately NEVER grants the full Administrator
+ * permission set for an arbitrary/unrecognized name (that would be a real
+ * privilege-escalation bug: any caller supplying an arbitrary role string
+ * would otherwise get full admin rights) — routes to `ensureAdministratorRole`
+ * only when the name genuinely IS "Administrator" (case-insensitive),
+ * otherwise creates a real, safe, empty-permission starting point a
+ * tenant admin must deliberately grant permissions to via
+ * `RoleController.js`. `$setOnInsert` (not a full replace, unlike
+ * `ensureAdministratorRole`'s own re-sync-to-defaults behavior) — a
+ * second caller inviting another user under the same already-customized
+ * role name must never silently wipe that role back to zero permissions.
+ */
+export const ensureTenantRole = async (tenantId, roleName) => {
+  if (!tenantId) throw new Error("tenantId is required to provision a role.");
+  const trimmedName = (roleName || "").trim();
+  if (!trimmedName) throw new Error("roleName is required to provision a role.");
+
+  if (trimmedName.toLowerCase() === ADMINISTRATOR_ROLE_NAME.toLowerCase()) {
+    return ensureAdministratorRole(tenantId);
+  }
+
+  return RoleModel.findOneAndUpdate(
+    { tenantId, name: trimmedName },
+    { $setOnInsert: { tenantId, name: trimmedName, permissions: [], description: `Auto-provisioned role: ${trimmedName}.`, isSystemRole: false, status: "active" } },
     { upsert: true, new: true }
   );
 };

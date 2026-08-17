@@ -74,6 +74,16 @@ export const authSchemas = {
     username: Joi.string().trim().min(2).max(100).required(),
     email,
     password,
+    // Per-Tenant Payment Gateway Integration (PRD Issue 12) — a real
+    // plan selection is now required at signup; the tenant itself is
+    // only created once payment for this plan actually completes.
+    // Inline ObjectId pattern (not the later-declared `objectIdRef` const
+    // below in this file) — `authSchemas` is a plain object evaluated
+    // immediately at module load, top to bottom, not a lazy Proxy like
+    // `paymentGatewaySchemas`; referencing `objectIdRef` here would throw
+    // a real "Cannot access before initialization" error at import time.
+    planId: Joi.string().trim().pattern(/^[0-9a-fA-F]{24}$/).required().messages({ "string.pattern.base": "planId must be a valid id." }),
+    billingCycle: Joi.string().trim().optional(),
   }),
 
   login: Joi.object({
@@ -847,6 +857,32 @@ export const paymentSchemas = new Proxy({}, {
   get(_target, prop) {
     if (PAYMENT_SCHEMA_KEYS.has(prop)) {
       return buildPaymentSchemas()[prop];
+    }
+    return undefined;
+  }
+});
+
+// Per-Tenant Payment Gateway Integration (Stripe Connect). Deliberately a
+// SEPARATE export from `paymentSchemas` directly above — that one is
+// Finance's own Accounts Receivable payment-recording module; this one
+// validates the new agency-connects-their-own-Stripe-account routes.
+// Reusing the `paymentSchemas` name would silently collide with an
+// already-live export.
+const PAYMENT_GATEWAY_SCHEMA_KEYS = new Set(["disconnectGateway", "createCheckout"]);
+
+const buildPaymentGatewaySchemas = () => ({
+  disconnectGateway: Joi.object({
+    provider: Joi.string().trim().valid("stripe", "hyperpay", "paypal").default("stripe")
+  }),
+  createCheckout: Joi.object({
+    bookingId: objectIdRef.required()
+  })
+});
+
+export const paymentGatewaySchemas = new Proxy({}, {
+  get(_target, prop) {
+    if (PAYMENT_GATEWAY_SCHEMA_KEYS.has(prop)) {
+      return buildPaymentGatewaySchemas()[prop];
     }
     return undefined;
   }

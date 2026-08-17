@@ -30,6 +30,24 @@ export const getRefreshTokenExpiryDate = (rememberMe = false) => {
   return expiry;
 };
 
+// Per-Tenant Payment Gateway Integration — the Stripe Connect OAuth
+// "state" parameter. Reuses the same real access-token secret (no new
+// credential needed) with its own dedicated `type` claim, the same
+// discipline already established above for access vs. refresh tokens —
+// this token is never valid as either. A short (10-minute) expiry since
+// it only needs to survive the redirect round-trip to Stripe and back.
+export const createStripeConnectStateToken = (tenantId) => {
+  return jwt.sign({ tenantId, type: "stripe_connect_state" }, authConfig.accessTokenSecret, { expiresIn: "10m" });
+};
+
+/** Throws on an invalid/expired/wrong-type token — the caller (the OAuth callback, which has no `req.auth` to fall back on) must treat any failure here as "reject the callback," never guess a tenant identity. */
+export const verifyStripeConnectStateToken = (token) => {
+  const payload = jwt.verify(token, authConfig.accessTokenSecret);
+  if (payload.type !== "stripe_connect_state") throw new Error("Invalid state token type.");
+  if (!payload.tenantId) throw new Error("State token is missing tenantId.");
+  return payload;
+};
+
 export const getAccessTokenExpiresInSeconds = () => {
   const match = authConfig.accessTokenExpiresIn.match(/^(\d+)([smhd])$/);
   if (!match) return 900;

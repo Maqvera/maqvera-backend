@@ -1,6 +1,6 @@
 import express from "express";
 import {
-  Signup, SetupTenant, Login, Forgetpassword, Changepassword, Logout, Refresh, Me, Resetpassword,
+  Signup, SetupTenantIntent, Login, Forgetpassword, Changepassword, Logout, Refresh, Me, Resetpassword,
   SendEmailVerification, VerifyEmail, ListSessions, RevokeSession, LogoutAll,
   SetupMfa, VerifyMfaSetup, CompleteMfaLogin, DisableMfa, MfaStatus, GetSecurityCenter,
   UpdatePreferences, GetPreferences, GetLoginHistory, GetSecurityEvents,
@@ -27,7 +27,12 @@ const limiter = rateLimit({
 // AUTH
 // =====================
 route.post("/signup", limiter, validate(authSchemas.signup), Signup);
-route.post("/setup", limiter, validate(authSchemas.setupTenant), SetupTenant);
+// Per-Tenant Payment Gateway Integration (PRD Issue 12) — this endpoint's
+// own contract changed: it now creates a real Stripe Checkout Session
+// (returns `{ checkoutUrl }`) instead of the company/account immediately.
+// The real TenantModel/UserModel creation now happens only once payment
+// completes, via the `checkout.session.completed` webhook.
+route.post("/setup", limiter, validate(authSchemas.setupTenant), SetupTenantIntent);
 route.post("/login", limiter, validate(authSchemas.login), Login);
 route.post("/logout", authenticateAccessToken, validate(authSchemas.logout), Logout);
 route.post("/refresh", limiter, validate(authSchemas.refresh), Refresh);

@@ -53,10 +53,13 @@ import eventRegistryRoute from "./routes/EventRegistryRoutes.js";
 import apiVersionRegistryRoute from "./routes/ApiVersionRegistryRoutes.js";
 import rateLimitRoute from "./routes/RateLimitRoutes.js";
 import communicationRoute from "./routes/CommunicationRoutes.js";
+import paymentGatewayRoute from "./routes/PaymentGatewayRoutes.js";
+import paymentWebhookRoute from "./routes/PaymentWebhookRoutes.js";
 import DBconfig from "./config/DbConfig.js";
 import TravelOrchestrationEngine from "./services/TravelOrchestrationEngine.js";
 import VisaTimelineEventBus from "./services/VisaTimelineEventBus.js";
 import CustomerTimelineEventBus from "./services/CustomerTimelineEventBus.js";
+import PaymentNotificationListener from "./services/paymentNotificationListener.js";
 import CustomerStatisticsEngine from "./services/CustomerStatisticsEngine.js";
 import VisaAnalyticsEngine from "./services/VisaAnalyticsEngine.js";
 import CacheManager from "./utils/cacheManager.js";
@@ -133,6 +136,15 @@ const app = express();
 // Security & parsing (Disable CSP for Swagger UI compatibility)
 app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" }, contentSecurityPolicy: false }));
 app.use(compression());
+
+// Per-Tenant Payment Gateway Integration — Stripe webhook signature
+// verification needs the RAW, unparsed request body. Must be mounted
+// BEFORE the global `express.json()` below (or the raw body is gone by
+// the time the webhook route sees it, and signature verification always
+// fails) — `express.raw()` is scoped to exactly this one path, so every
+// other route's JSON body parsing is completely unaffected.
+app.use("/api/v1/webhooks", express.raw({ type: "application/json" }), paymentWebhookRoute);
+
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.use(cors({ origin: process.env.FRONTEND_URL || "http://localhost:5173", credentials: true }));
@@ -218,6 +230,7 @@ app.use("/api/v1/rate-limits", rateLimitRoute);
 app.use("/api/v1/communication", communicationRoute);
 app.use("/api/v1/emails", communicationRoute);
 app.use("/api/v1/sms", communicationRoute);
+app.use("/api/v1/payment-gateways", paymentGatewayRoute);
 
 // Error handling
 app.use(notFoundHandler);
@@ -231,6 +244,7 @@ const startServer = async () => {
     TravelOrchestrationEngine.init();
     VisaTimelineEventBus.init();
     CustomerTimelineEventBus.init();
+    PaymentNotificationListener.init();
     CustomerStatisticsEngine.init();
     AccountsReceivableService.initEventListeners();
     InvoiceService.initEventListeners();
