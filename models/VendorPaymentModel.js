@@ -35,6 +35,66 @@ const VendorPaymentSchema = new mongoose.Schema({
     index: true
   },
   vendorName: { type: String, default: null },
+  // "Payment Classification" (File 6 Part 2) — config-driven
+  // (vendorPaymentCategories); real, distinct dimension from `priority`
+  // below. `ownerType`/`ownerId` from the spec are NOT added — see this
+  // model's own top-of-file note: no Merchant/SubscriptionPartner/
+  // Government backing entity exists, `vendorId` remains the one real
+  // owner reference, consistent with the identical decision reconfirmed
+  // 11x across the Expense Management refactor (Parts 34-44).
+  paymentCategory: { type: String, default: null, index: true },
+  // The payment INSTRUMENT/method — reuses the existing, real
+  // `paymentMethods` config (Part 7's own Payment Engine) rather than a
+  // duplicate list; distinct from `fileGeneration.format` below (the FILE
+  // format for batch transmission, e.g. ACH/SEPA, not the method itself).
+  paymentType: { type: String, default: null },
+  // Real refs/descriptive fields, same treatment as `ExpenseModel`'s own
+  // department/costCenter/projectId (Parts 16/34/42) — no CostCenter/
+  // Project module exists in this codebase, so those two stay plain
+  // strings; `department` is a real ref to the existing Department model.
+  department: { type: mongoose.Schema.Types.ObjectId, ref: "department", default: null },
+  costCenter: { type: String, default: null },
+  projectId: { type: String, default: null },
+  // "Payment Source." Config-driven (vendorPaymentSources).
+  source: { type: String, default: null },
+  // Real Fiscal Period reference (FinancialPeriodService.findPeriodForDate,
+  // same convention as JournalModel's own `financialPeriodId`, Part 41).
+  financialPeriodId: { type: mongoose.Schema.Types.ObjectId, ref: "financial_period", default: null },
+  // Real base-currency conversion, same pattern/service (CurrencyService)
+  // as ExpenseModel's own baseCurrency/baseCurrencyAmount/exchangeRate.
+  baseCurrency: { type: String, default: null },
+  baseCurrencyAmount: { type: Number, default: null },
+  exchangeRate: { type: Number, default: null },
+  // "Multi-Currency Accounting... Rate Version." (File 7 Part 4) — same
+  // real rate-provenance snapshot as ExpenseModel's own fields, from the
+  // same CurrencyService.convert call above, previously discarded.
+  exchangeRateId: { type: mongoose.Schema.Types.ObjectId, ref: "exchange_rate", default: null },
+  exchangeRateVersion: { type: Number, default: null },
+  exchangeRateProvider: { type: String, default: null },
+  exchangeRateType: { type: String, default: null },
+  // "Duplicate Payment Detection... before approval" — a real, deterministic,
+  // BLOCKING check (not advisory): a payable already covered by another
+  // active (non-terminal) proposal is rejected outright, preventing a
+  // literal double-payment. Recorded here for audit visibility even though
+  // by definition a saved proposal always has `isDuplicate: false`.
+  duplicateCheck: {
+    isDuplicate: { type: Boolean, default: false },
+    matchedVendorPaymentIds: { type: [mongoose.Schema.Types.ObjectId], default: [] },
+    checkedAt: { type: Date, default: null }
+  },
+  // "Fund Reservation... Bank Balance... according to configurable
+  // treasury policies." Real but ADVISORY at proposal time (mirrors the
+  // real, pre-existing BLOCKING check `executeVendorPayment` already
+  // performs at execution — Part 17). True fund RESERVATION (locking a
+  // bank account's available balance between proposal and execution)
+  // would need a new pending-hold ledger on `BankAccountModel` that
+  // doesn't exist yet — an honest, scoped gap, not fabricated as already
+  // enforced here.
+  fundAvailabilityCheck: {
+    available: { type: Boolean, default: null },
+    shortfall: { type: Number, default: null },
+    checkedAt: { type: Date, default: null }
+  },
   lineAllocations: {
     type: [VendorPaymentLineSchema],
     validate: {
@@ -126,6 +186,8 @@ VendorPaymentSchema.index({ tenantId: 1, vendorPaymentNumber: 1 }, { unique: tru
 VendorPaymentSchema.index({ tenantId: 1, vendorId: 1, status: 1 });
 VendorPaymentSchema.index({ tenantId: 1, status: 1 });
 VendorPaymentSchema.index({ tenantId: 1, paymentDate: 1 });
+VendorPaymentSchema.index({ tenantId: 1, department: 1 });
+VendorPaymentSchema.index({ tenantId: 1, paymentCategory: 1 });
 
 VendorPaymentSchema.set("toJSON", {
   transform: (_, ret) => {

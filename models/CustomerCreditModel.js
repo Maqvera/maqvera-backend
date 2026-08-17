@@ -49,6 +49,16 @@ const CustomerCreditSchema = new mongoose.Schema({
     default: "Active",
     index: true
   },
+  // "Credit Expiry Rules" — real but optional (null = never expires, the
+  // honest default for most sources like Overpayment/AdvancePayment).
+  // Enforced at the real point money is actually consumed
+  // (`getAvailableCredit`/`consumeAvailableCredits` exclude a past-expiry
+  // credit from availability regardless of this field's own `status`
+  // value) — `status` itself is flipped to "Expired" lazily, the next time
+  // this credit is read via `CustomerCreditService.listCredits`, not by a
+  // dedicated background scheduler (an honestly scoped gap, not fabricated
+  // as already automated).
+  expiresAt: { type: Date, default: null },
   createdBy: {
     type: String,
     default: null

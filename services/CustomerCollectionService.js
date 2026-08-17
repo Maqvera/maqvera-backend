@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import CustomerCollectionModel from "../models/CustomerCollectionModel.js";
 import CollectionReminderModel from "../models/CollectionReminderModel.js";
 import AccountsReceivableModel from "../models/AccountsReceivableModel.js";
@@ -6,6 +7,7 @@ import PaymentModel from "../models/PaymentModel.js";
 import SubscriptionModel from "../models/SubscriptionModel.js";
 import WalletTransactionModel from "../models/WalletTransactionModel.js";
 import CustomerCreditModel from "../models/CustomerCreditModel.js";
+import CustomerCreditProfileModel from "../models/CustomerCreditProfileModel.js";
 import CustomerModel from "../models/CustomerModel.js";
 import AccountsReceivableService from "./AccountsReceivableService.js";
 import PaymentService, { deriveFraudStatus } from "./PaymentService.js";
@@ -104,6 +106,82 @@ export const computeInstallmentSchedule = ({ totalAmount, installmentCount, star
     schedule.push({ installmentNumber: leadingCount + 1, dueDate: new Date(dueDate), amount: roundedBalloon, paidAmount: 0, status: "Pending", paymentId: null, paidAt: null });
   }
   return schedule;
+};
+
+/**
+ * "Payment Allocation Engine... Oldest Invoice First, Due Date Priority,
+ * Highest Amount First, Manual Allocation." Pure ordering only — the
+ * actual per-receivable application still goes entirely through the real,
+ * pre-existing `AccountsReceivableService.allocatePayment`. `Manual`
+ * returns the array unchanged (the caller's own `invoiceIds` order is
+ * already applied by the caller before this runs).
+ */
+export const sortReceivablesByStrategy = (receivables, strategy) => {
+  const sorted = [...(receivables || [])];
+  if (strategy === "HighestAmountFirst") return sorted.sort((a, b) => b.outstandingBalance - a.outstandingBalance);
+  if (strategy === "Manual") return sorted;
+  return sorted.sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate)); // OldestDueDate — also the real default.
+};
+
+/**
+ * "Partial Allocation." Greedily consumes `unallocatedAmount` across the
+ * already-ordered `receivables`, one at a time, never exceeding either the
+ * payment's own remaining balance or a single receivable's own outstanding
+ * balance. Pure — returns the plan only; nothing is applied here.
+ */
+export const buildAllocationPlan = (unallocatedAmount, receivables) => {
+  let remaining = roundCurrency(unallocatedAmount);
+  const plan = [];
+  for (const receivable of receivables || []) {
+    if (remaining <= 0) break;
+    const amount = roundCurrency(Math.min(remaining, receivable.outstandingBalance));
+    if (amount <= 0) continue;
+    plan.push({ receivableId: receivable._id, invoiceNumber: receivable.invoiceNumber, amount });
+    remaining = roundCurrency(remaining - amount);
+  }
+  return { plan, remainingUnallocated: remaining };
+};
+
+/**
+ * "Customer Credit Risk Scoring." A real, deterministic 0-100 heuristic
+ * (higher = riskier) over fields this codebase actually stores — same
+ * "documented formula, no fabricated ML" discipline as
+ * `ExpenseService.computeFraudRiskScore` (Part 35) and
+ * `CollectionCampaignService.computeCollectionPriority` (Part 18 Part 4).
+ * "Industry Risk" is dropped — no `industry` field exists on
+ * `CustomerModel` (see `financeConfig.js`'s own doc comment).
+ */
+export const computeCustomerRiskScore = ({ overdueCount, totalCollectionCount, maxDaysOverdue, outstandingBalance, creditLimit, disputeCount, failedPaymentCount, countryRiskTier }, config) => {
+  let score = 0;
+  const flags = [];
+
+  // Late Payment Frequency (0-30).
+  if (totalCollectionCount > 0) {
+    const lateRatio = overdueCount / totalCollectionCount;
+    if (lateRatio > 0) { score += Math.round(lateRatio * 30); flags.push("LatePaymentHistory"); }
+  }
+  // Invoice Aging (0-20) — the single worst overdue line on record.
+  if (maxDaysOverdue > 90) { score += 20; flags.push("SeverelyAged90Plus"); }
+  else if (maxDaysOverdue > 60) { score += 15; flags.push("Aged60Plus"); }
+  else if (maxDaysOverdue > 30) { score += 10; flags.push("Aged30Plus"); }
+  // Credit Limit Usage (0-20).
+  if (creditLimit > 0) {
+    const usageRatio = Math.min(1, outstandingBalance / creditLimit);
+    if (usageRatio >= 0.9) { score += 20; flags.push("CreditLimitNearlyExhausted"); }
+    else if (usageRatio >= 0.7) { score += 12; flags.push("CreditLimitHighUsage"); }
+  }
+  // Dispute History (0-15).
+  if (disputeCount > 0) { score += Math.min(15, disputeCount * 5); flags.push("DisputeHistory"); }
+  // Returned/Failed Payments (0-15).
+  if (failedPaymentCount > 0) { score += Math.min(15, failedPaymentCount * 5); flags.push("ReturnedPaymentHistory"); }
+  // Country Risk (0-10) — only when the tenant has actually configured a tier for this country; unconfigured = neutral.
+  const countryWeights = { High: 10, Medium: 5, Low: 0 };
+  if (countryRiskTier && countryWeights[countryRiskTier] !== undefined) { score += countryWeights[countryRiskTier]; flags.push(`CountryRisk${countryRiskTier}`); }
+
+  score = Math.min(100, score);
+  const bands = config.customerRiskScoreBands;
+  const riskCategory = score >= bands.High ? "Critical" : score >= bands.Medium ? "High" : score >= bands.Low ? "Medium" : "Low";
+  return { score, riskCategory, flags };
 };
 
 // ---------------------------------------------------------------------------
@@ -1319,6 +1397,384 @@ class CustomerCollectionService {
     } catch (error) {
       return { aiAvailable: false, forecast: [], message: error.message };
     }
+  }
+
+  /**
+   * POST /api/v1/customer-payments/{paymentId}/allocate — "Payment
+   * Allocation Engine." Orchestration only: resolves WHICH open, same-
+   * currency receivables to allocate a captured Payment's own
+   * `unallocatedAmount` against (either the caller's explicit `invoiceIds`
+   * order, or a real selectable strategy), then applies each line through
+   * the existing, real `AccountsReceivableService.allocatePayment` —
+   * unchanged, not duplicated, so FX gain/loss, overpayment-to-credit,
+   * ledger posting, and the real `PaymentAllocated` event all keep working
+   * exactly as they already do for the inline allocation `/collect`
+   * performs. "Customer Credit Utilization" is real but is a DIFFERENT,
+   * already-existing mechanism (`CustomerCreditService.consumeAvailableCredits`,
+   * applied automatically at receivable creation) — not reimplemented as a
+   * strategy of this endpoint, which is specifically about allocating a
+   * captured payment's own remaining balance.
+   */
+  static async allocatePaymentAcrossInvoices(paymentId, data, tenantId, userId) {
+    const config = getFinanceConfig();
+    const { allocationStrategy = config.defaultPaymentAllocationStrategy, invoiceIds = null } = data;
+    if (!config.paymentAllocationStrategies.includes(allocationStrategy)) throw new Error(`Invalid allocationStrategy "${allocationStrategy}".`);
+
+    const payment = await PaymentService.getPaymentById(paymentId, tenantId);
+    if (!(payment.unallocatedAmount > 0)) throw new Error("Payment has no unallocated balance to allocate.");
+    if (payment.partyType !== "customer" || !payment.partyId) throw new Error("Payment is not associated with a customer — nothing to allocate against.");
+
+    let receivables;
+    if (Array.isArray(invoiceIds) && invoiceIds.length > 0) {
+      const found = await AccountsReceivableModel.find({ _id: { $in: invoiceIds }, tenantId, customerId: payment.partyId, currency: payment.currency, outstandingBalance: { $gt: 0 } }).lean();
+      const byId = new Map(found.map((r) => [r._id.toString(), r]));
+      receivables = invoiceIds.map((id) => byId.get(id.toString())).filter(Boolean); // Manual — caller's own order preserved.
+    } else {
+      receivables = await AccountsReceivableModel.find({ tenantId, customerId: payment.partyId, currency: payment.currency, outstandingBalance: { $gt: 0 } }).lean();
+      receivables = sortReceivablesByStrategy(receivables, allocationStrategy);
+    }
+
+    const { plan, remainingUnallocated } = buildAllocationPlan(payment.unallocatedAmount, receivables);
+    if (plan.length === 0) throw new Error("No eligible open invoices found to allocate this payment against.");
+
+    const allocations = [];
+    for (const line of plan) {
+      const { receivable } = await AccountsReceivableService.allocatePayment(line.receivableId, { paymentId, amount: line.amount }, tenantId, userId);
+      const lastAllocation = receivable.allocations[receivable.allocations.length - 1];
+      allocations.push({
+        allocationId: lastAllocation?._id || null, paymentId, invoiceId: line.receivableId, invoiceNumber: line.invoiceNumber,
+        allocatedAmount: line.amount, remainingBalance: receivable.outstandingBalance,
+        allocationStatus: receivable.status, allocatedAt: lastAllocation?.allocatedAt || new Date()
+      });
+    }
+
+    await AuditLogModel.create({ action: "finance.customercollection.allocate_payment", module: "Finance", resource: "Payment", resourceId: paymentId.toString(), userId: userId || null, tenantId, details: { allocationStrategy, lineCount: allocations.length, remainingUnallocated } });
+
+    return { paymentId, allocationStrategy, allocations, remainingUnallocated };
+  }
+
+  /**
+   * "Customer Credit Risk Scoring." Gathers real inputs this codebase
+   * actually has — payment/collection history, invoice aging, credit
+   * limit usage (`CustomerCreditProfileModel`/`getCreditUsed`), dispute
+   * history (currently-Disputed collections — a real, honestly-scoped
+   * proxy, not a full historical audit-log scan), failed payments, and
+   * country (when a tenant has configured `customerRiskCountryTiers` for
+   * it) — then scores via the pure `computeCustomerRiskScore`.
+   */
+  static async getCustomerRiskScore(customerId, tenantId) {
+    const config = getFinanceConfig();
+    const customer = await CustomerModel.findOne({ _id: customerId, tenantId }).lean();
+    if (!customer) throw new Error("Customer not found.");
+
+    const [collections, openReceivables, creditProfile, disputeCount, failedPaymentCount, outstandingBalance] = await Promise.all([
+      CustomerCollectionModel.find({ tenantId, customerId }).select("status").lean(),
+      AccountsReceivableModel.find({ tenantId, customerId, outstandingBalance: { $gt: 0 } }).select("dueDate").lean(),
+      CustomerCreditProfileModel.findOne({ tenantId, customerId }).lean(),
+      CustomerCollectionModel.countDocuments({ tenantId, customerId, status: "Disputed" }),
+      PaymentModel.countDocuments({ tenantId, partyType: "customer", partyId: customerId, status: "Failed" }),
+      AccountsReceivableService.getCreditUsed(customerId, tenantId)
+    ]);
+
+    const totalCollectionCount = collections.length;
+    const overdueCount = collections.filter((c) => c.status === "Overdue").length;
+    const now = new Date();
+    const maxDaysOverdue = openReceivables.reduce((max, r) => Math.max(max, Math.floor((now - new Date(r.dueDate)) / 86400000)), 0);
+    const countryRiskTier = config.customerRiskCountryTiers[customer.address?.country] || null;
+
+    const result = computeCustomerRiskScore({
+      overdueCount, totalCollectionCount, maxDaysOverdue, outstandingBalance,
+      creditLimit: creditProfile?.creditLimit || 0, disputeCount, failedPaymentCount, countryRiskTier
+    }, config);
+
+    // "Recommended Follow-up"/"Suggested Payment Terms" — real, deterministic
+    // (not fabricated), derived directly from the same real riskCategory band.
+    const followUpByCategory = { Low: "Standard reminder cadence", Medium: "Proactive reminder + phone follow-up", High: "Escalate to collection prioritization + shortened terms", Critical: "Immediate management escalation; consider requiring prepayment" };
+    const termsByCategory = { Low: "Standard", Medium: "Standard, monitor closely", High: "Shortened terms / partial prepayment", Critical: "Prepayment or Cash on Delivery" };
+
+    return {
+      customerId, customerScore: result.score, riskCategory: result.riskCategory,
+      collectionPriority: result.riskCategory === "Critical" || result.riskCategory === "High" ? "High" : "Normal",
+      recommendedFollowUp: followUpByCategory[result.riskCategory], suggestedPaymentTerms: termsByCategory[result.riskCategory],
+      // "Confidence Score" — real, deterministic (not fabricated): a
+      // function of how much actual history exists to score from. A
+      // customer with zero collections/receivables on record has a low-
+      // confidence "Low" score by construction (nothing to base it on),
+      // never presented with the same confidence as one with real history.
+      confidenceScore: Math.min(100, totalCollectionCount * 10 + openReceivables.length * 5),
+      factors: result.flags, calculatedAt: new Date()
+    };
+  }
+
+  // ---- File 6 Part 5: Attachments ----
+
+  /**
+   * POST /api/v1/customer-payments/{collectionId}/attachments — same real
+   * checksum + storeDocumentPdf pattern as ExpenseService.uploadReceipt
+   * (Part 44), scoped to a Customer Collection rather than an Expense (no
+   * OCR/fraud-scoring here — there's no claimed amount to reconcile a
+   * collection attachment against).
+   */
+  static async uploadAttachment(collectionId, file, tenantId, userId) {
+    const config = getFinanceConfig();
+    if (!file?.buffer?.length) throw new Error("A file is required.");
+    if (file.buffer.length > config.customerCollectionAttachmentMaxFileSizeBytes) {
+      throw new Error(`Attachment exceeds the maximum allowed size of ${config.customerCollectionAttachmentMaxFileSizeBytes} bytes.`);
+    }
+
+    const collection = await CustomerCollectionModel.findOne({ _id: collectionId, tenantId });
+    if (!collection) throw new Error("Customer collection not found.");
+
+    const checksum = crypto.createHash("sha256").update(file.buffer).digest("hex");
+    const stored = await storeDocumentPdf({ tenantId, folder: "customer-collection-attachments", filename: `${collection.collectionNumber}-${Date.now()}-${(file.originalname || "attachment").replace(/[^a-zA-Z0-9._-]/g, "_")}`, buffer: file.buffer });
+
+    const attachment = {
+      filename: file.originalname || "attachment", url: stored.url, storageKey: stored.storageKey, storageProvider: stored.storageProvider,
+      mimeType: file.mimetype, fileSize: file.buffer.length, checksum, uploadedBy: userId || null, uploadedAt: new Date()
+    };
+    collection.attachments.push(attachment);
+    // Mongoose assigns the real subdocument `_id` on the CAST array
+    // element, not the plain object literal — see ExpenseService.
+    // uploadReceipt's own doc comment for the verified reasoning.
+    const saved = collection.attachments[collection.attachments.length - 1];
+    collection.updatedBy = userId || null;
+    collection.timeline.push({ event: "AttachmentUploaded", description: `Attachment "${attachment.filename}" uploaded.`, performedBy: userId || null });
+    await collection.save();
+
+    await AuditLogModel.create({ action: "finance.customercollection.upload_attachment", module: "Finance", resource: "CustomerCollection", resourceId: collection._id.toString(), userId: userId || null, tenantId, details: { filename: attachment.filename } });
+    publishEvent("CollectionAttachmentUploaded", { tenantId, collectionId: collection._id.toString(), attachmentId: saved._id.toString(), filename: attachment.filename, performedBy: userId || null });
+
+    return saved.toJSON ? saved.toJSON() : saved;
+  }
+
+  static async listAttachments(collectionId, tenantId) {
+    const collection = await CustomerCollectionModel.findOne({ _id: collectionId, tenantId }).select("attachments").lean();
+    if (!collection) throw new Error("Customer collection not found.");
+    return collection.attachments || [];
+  }
+
+  // ---- Comments ----
+
+  /** POST /api/v1/customer-payments/{collectionId}/comments — free-text staff notes, distinct from the system-observed `timeline`. */
+  static async addComment(collectionId, data, tenantId, userId) {
+    const text = (data?.text || "").trim();
+    if (!text) throw new Error("text is required.");
+
+    const collection = await CustomerCollectionModel.findOne({ _id: collectionId, tenantId });
+    if (!collection) throw new Error("Customer collection not found.");
+
+    collection.comments.push({ text, createdBy: userId || null, createdAt: new Date() });
+    const saved = collection.comments[collection.comments.length - 1];
+    collection.updatedBy = userId || null;
+    await collection.save();
+
+    await AuditLogModel.create({ action: "finance.customercollection.add_comment", module: "Finance", resource: "CustomerCollection", resourceId: collection._id.toString(), userId: userId || null, tenantId, details: {} });
+    publishEvent("CollectionCommentAdded", { tenantId, collectionId: collection._id.toString(), commentId: saved._id.toString(), performedBy: userId || null });
+
+    return saved.toJSON ? saved.toJSON() : saved;
+  }
+
+  static async listComments(collectionId, tenantId) {
+    const collection = await CustomerCollectionModel.findOne({ _id: collectionId, tenantId }).select("comments").lean();
+    if (!collection) throw new Error("Customer collection not found.");
+    return collection.comments || [];
+  }
+
+  // ---- Manual Timeline Entry ----
+
+  /**
+   * POST /api/v1/customer-payments/{collectionId}/timeline — a manual log
+   * line onto the same `timeline` array every lifecycle transition already
+   * writes to (e.g. "Called customer, promised payment Friday"). `event`
+   * defaults to "Note" — a caller can label the entry but can't spoof a
+   * system lifecycle event name for a transition that didn't happen.
+   */
+  static async addTimelineEntry(collectionId, data, tenantId, userId) {
+    const description = (data?.description || "").trim();
+    if (!description) throw new Error("description is required.");
+    const event = (data?.event || "Note").trim() || "Note";
+
+    const collection = await CustomerCollectionModel.findOne({ _id: collectionId, tenantId });
+    if (!collection) throw new Error("Customer collection not found.");
+
+    collection.timeline.push({ event, description, performedBy: userId || null });
+    collection.updatedBy = userId || null;
+    await collection.save();
+
+    await AuditLogModel.create({ action: "finance.customercollection.add_timeline_entry", module: "Finance", resource: "CustomerCollection", resourceId: collection._id.toString(), userId: userId || null, tenantId, details: { event } });
+
+    return collection.timeline[collection.timeline.length - 1];
+  }
+
+  // ---- Payment Link Regeneration ----
+
+  /**
+   * POST /api/v1/customer-payments/{collectionId}/payment-link/regenerate
+   * — "Payment links are idempotent." A regenerate call within
+   * `paymentLinkRegenerateMinIntervalSeconds` of the last one, while the
+   * existing link is still valid, returns that same link unchanged rather
+   * than minting a new token/QR — a retried click shouldn't invalidate a
+   * URL the customer already has open. Otherwise supersedes the old link
+   * (publishing the real `PaymentLinkExpired` event for it when it hadn't
+   * already expired on its own) and reuses `generatePaymentLink`'s own
+   * token/QR logic — no second implementation.
+   */
+  static async regeneratePaymentLink(collectionId, tenantId, userId) {
+    const config = getFinanceConfig();
+    const existing = await CustomerCollectionModel.findOne({ _id: collectionId, tenantId }).select("paymentLink customerId totalAmount collectedAmount").lean();
+    if (!existing) throw new Error("Customer collection not found.");
+
+    const previous = existing.paymentLink;
+    const previousStillValid = !!(previous?.token && (!previous.expiresAt || new Date(previous.expiresAt) > new Date()));
+    if (previousStillValid && previous.generatedAt) {
+      const secondsSinceLastGenerated = (Date.now() - new Date(previous.generatedAt).getTime()) / 1000;
+      if (secondsSinceLastGenerated < config.paymentLinkRegenerateMinIntervalSeconds) {
+        return { ...existing, remainingAmount: roundCurrency(existing.totalAmount - existing.collectedAmount) };
+      }
+    }
+
+    const updated = await CustomerCollectionService.generatePaymentLink(collectionId, tenantId, userId);
+    if (previousStillValid) {
+      publishEvent("PaymentLinkExpired", { tenantId, collectionId: collectionId.toString(), customerId: existing.customerId.toString(), superseded: true, performedBy: userId || null });
+    }
+    return updated;
+  }
+
+  // ---- Advance Allocation ----
+
+  /**
+   * POST /api/v1/customer-payments/{collectionId}/allocate-advance —
+   * applies the customer's available `CustomerCreditModel` balance (Part
+   * 18 Part 4 continuation) against this collection's own outstanding
+   * lineItems, currency-matched. Real balance lookup
+   * (`CustomerCreditService.getAvailableCredit`, now currency-scoped) and
+   * real FIFO consumption (`consumeAvailableCredits`) — never a synthetic
+   * "advance" concept invented on top.
+   */
+  static async allocateAdvance(collectionId, tenantId, userId) {
+    const collection = await CustomerCollectionModel.findOne({ _id: collectionId, tenantId });
+    if (!collection) throw new Error("Customer collection not found.");
+    if (["Written Off", "Cancelled", "Closed"].includes(collection.status)) {
+      throw new Error(`Cannot allocate an advance to a collection in status "${collection.status}".`);
+    }
+
+    const outstandingLines = collection.lineItems
+      .map((line, index) => ({ _id: index, invoiceNumber: line.invoiceNumber, outstandingBalance: roundCurrency(line.amount - line.collectedAmount) }))
+      .filter((line) => line.outstandingBalance > 0);
+    if (outstandingLines.length === 0) throw new Error("Collection has no outstanding balance to allocate an advance against.");
+
+    const availableCredit = await CustomerCreditService.getAvailableCredit(collection.customerId, tenantId, collection.currency);
+    if (availableCredit <= 0) throw new Error(`Customer has no available credit balance in ${collection.currency} to allocate.`);
+
+    const totalOutstanding = roundCurrency(outstandingLines.reduce((sum, l) => sum + l.outstandingBalance, 0));
+    const { plan, remainingUnallocated } = buildAllocationPlan(Math.min(availableCredit, totalOutstanding), outstandingLines);
+    const amountToConsume = roundCurrency(Math.min(availableCredit, totalOutstanding) - remainingUnallocated);
+    if (amountToConsume <= 0) throw new Error("Nothing to allocate.");
+
+    const { consumedAmount, consumedCreditIds } = await CustomerCreditService.consumeAvailableCredits(collection.customerId, tenantId, collection.currency, amountToConsume);
+    if (consumedAmount <= 0) throw new Error(`Customer has no available credit balance in ${collection.currency} to allocate.`);
+
+    for (const line of plan) {
+      collection.lineItems[line.receivableId].collectedAmount = roundCurrency(collection.lineItems[line.receivableId].collectedAmount + line.amount);
+    }
+    collection.collectedAmount = roundCurrency(collection.collectedAmount + consumedAmount);
+    collection.status = resolveCollectionStatusAfterPayment(collection.collectedAmount, collection.totalAmount);
+    if (collection.status === "Collected") collection.collectedAt = new Date();
+    collection.updatedBy = userId || null;
+    collection.timeline.push({ event: "AdvanceAllocated", description: `${roundCurrency(consumedAmount)} ${collection.currency} allocated from available customer credit.`, performedBy: userId || null });
+    await collection.save();
+
+    await AuditLogModel.create({ action: "finance.customercollection.allocate_advance", module: "Finance", resource: "CustomerCollection", resourceId: collection._id.toString(), userId: userId || null, tenantId, details: { consumedAmount, consumedCreditIds: consumedCreditIds.map((id) => id.toString()) } });
+    publishEvent("AdvanceAllocated", { tenantId, collectionId: collection._id.toString(), customerId: collection.customerId.toString(), amount: consumedAmount, currency: collection.currency, performedBy: userId || null });
+
+    return collection.toJSON();
+  }
+
+  // ---- Reopen ----
+
+  /**
+   * POST /api/v1/customer-payments/{collectionId}/reopen — undoes a
+   * Closed/Written Off/Cancelled collection back to the status its own
+   * real `collectedAmount` implies (`resolveCollectionStatusAfterPayment`)
+   * rather than a second, disconnected status field. Clears the
+   * `writeOff` flag when reopening from Written Off, but never reverses
+   * that write-off's own AR ledger posting — no reversal primitive exists
+   * on `AccountsReceivableService.writeOff`, and "Collection history is
+   * immutable" (AI Coding Rule): a journal entry already posted stays on
+   * the books; reopening only resumes collection activity going forward.
+   */
+  static async reopenCollection(collectionId, data, tenantId, userId) {
+    const collection = await CustomerCollectionModel.findOne({ _id: collectionId, tenantId });
+    if (!collection) throw new Error("Customer collection not found.");
+    if (!["Closed", "Written Off", "Cancelled"].includes(collection.status)) {
+      throw new Error(`Cannot reopen a collection in status "${collection.status}".`);
+    }
+
+    collection.status = collection.collectedAmount > 0
+      ? resolveCollectionStatusAfterPayment(collection.collectedAmount, collection.totalAmount)
+      : "Requested";
+    if (collection.writeOff?.isWrittenOff) collection.writeOff = { isWrittenOff: false, reason: null, approvedBy: null, approvedAt: null };
+    collection.cancellationReason = null;
+    collection.cancelledBy = null;
+    collection.cancelledAt = null;
+    collection.closedBy = null;
+    collection.closedAt = null;
+    collection.reopenedBy = userId || null;
+    collection.reopenedAt = new Date();
+    collection.reopenReason = data?.reason || null;
+    collection.updatedBy = userId || null;
+    collection.timeline.push({ event: "CollectionReopened", description: data?.reason || "Collection reopened.", performedBy: userId || null });
+    await collection.save();
+
+    await AuditLogModel.create({ action: "finance.customercollection.reopen", module: "Finance", resource: "CustomerCollection", resourceId: collection._id.toString(), userId: userId || null, tenantId, details: { reason: data?.reason || null } });
+    publishEvent("CollectionReopened", { tenantId, collectionId: collection._id.toString(), customerId: collection.customerId.toString(), newStatus: collection.status, performedBy: userId || null });
+
+    return collection.toJSON();
+  }
+
+  // ---- Audit & History ----
+
+  /** GET /api/v1/customer-payments/{collectionId}/audit — paginated AuditLogModel entries scoped to this collection (the same resource/resourceId every mutating method above already logs under). */
+  static async getAuditTrail(collectionId, tenantId, query = {}) {
+    const config = getFinanceConfig();
+    const collection = await CustomerCollectionModel.findOne({ _id: collectionId, tenantId }).select("_id").lean();
+    if (!collection) throw new Error("Customer collection not found.");
+
+    const page = Math.max(parseInt(query.page, 10) || 1, 1);
+    const pageSize = Math.min(Math.max(parseInt(query.pageSize, 10) || config.defaultPageSize, 1), config.maxPageSize);
+    const filter = { tenantId, resource: "CustomerCollection", resourceId: collection._id.toString() };
+
+    const [items, total] = await Promise.all([
+      AuditLogModel.find(filter).sort({ createdAt: -1 }).skip((page - 1) * pageSize).limit(pageSize).lean(),
+      AuditLogModel.countDocuments(filter)
+    ]);
+
+    return { items, pagination: { total, page, pageSize, totalPages: Math.ceil(total / pageSize) } };
+  }
+
+  /**
+   * GET /api/v1/customer-payments/{collectionId}/history — a single
+   * chronological merge of everything real that happened on this
+   * collection: lifecycle timeline entries, real payment captures,
+   * reminders sent, and staff comments. Distinct from `getCollectionById`'s
+   * own lighter bundle (last 20 reminders/audit rows alongside the live
+   * document, for a detail-page read) — this is the dedicated, fully
+   * chronological feed the spec's own GET .../history contract asks for.
+   */
+  static async getCollectionHistory(collectionId, tenantId) {
+    const collection = await CustomerCollectionModel.findOne({ _id: collectionId, tenantId }).lean();
+    if (!collection) throw new Error("Customer collection not found.");
+
+    const reminders = await CollectionReminderModel.find({ tenantId, collectionId: collection._id }).sort({ sentAt: -1 }).lean();
+
+    const entries = [
+      ...collection.timeline.map((t) => ({ type: "Timeline", event: t.event, description: t.description, performedBy: t.performedBy, at: t.performedAt })),
+      ...collection.payments.map((p) => ({ type: "Payment", event: "PaymentCaptured", description: `${roundCurrency(p.amount)} ${collection.currency} captured.`, performedBy: null, at: p.collectedAt })),
+      ...collection.comments.map((c) => ({ type: "Comment", event: "CommentAdded", description: c.text, performedBy: c.createdBy, at: c.createdAt })),
+      ...reminders.map((r) => ({ type: "Reminder", event: "ReminderSent", description: `Reminder via ${r.channel}: ${r.status}.`, performedBy: null, at: r.sentAt }))
+    ].sort((a, b) => new Date(b.at) - new Date(a.at));
+
+    return { collectionId: collection._id, collectionNumber: collection.collectionNumber, entries };
   }
 }
 

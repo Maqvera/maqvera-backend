@@ -226,6 +226,21 @@ export const listExchangeRates = async (req, res) => {
   }
 };
 
+export const getExchangeRate = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "finance.currency.read", "finance.read")) return sendError(res, 403, "Permission denied.", requestId);
+
+    const exchangeRate = await CurrencyService.getExchangeRateById(req.params.exchangeRateId, scope.tenantId);
+    return sendSuccess(res, 200, "Exchange rate retrieved successfully.", exchangeRate, requestId);
+  } catch (error) {
+    console.error("getExchangeRate error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to retrieve exchange rate.", requestId);
+  }
+};
+
 export const importExchangeRates = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
@@ -258,6 +273,42 @@ export const convertCurrency = async (req, res) => {
     return sendSuccess(res, 200, "Currency converted successfully.", result, requestId);
   } catch (error) {
     console.error("convertCurrency error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to convert currency.", requestId);
+  }
+};
+
+/**
+ * POST /api/v1/currency/convert — File 7 Part 3's own literal endpoint
+ * contract, distinct from the pre-existing GET /currencies/convert
+ * (kept working unchanged for its own callers). Always identifies a real
+ * `source` (defaulting to "Custom" for a direct API-initiated conversion
+ * with no specific business document behind it) so `CurrencyService.convert`
+ * always persists a real `CurrencyConversionModel` row — this Part's own
+ * "Create Historical Snapshot" workflow step is mandatory here, not the
+ * opt-in behavior the older GET endpoint deliberately kept.
+ */
+export const convertCurrencyViaApi = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "finance.currency.read", "finance.read")) return sendError(res, 403, "Permission denied.", requestId);
+    const userId = req.auth?.userId || req.auth?.id || null;
+    const correlationId = req.header("Correlation-ID") || null;
+    const { fromCurrency, toCurrency, amount, conversionDate, rateType, source = "Custom" } = req.body;
+
+    const result = await CurrencyService.convert(amount, fromCurrency, toCurrency, scope.tenantId, {
+      asOfDate: conversionDate, rateType, source, correlationId, userId
+    });
+
+    return sendSuccess(res, 200, "Currency converted successfully.", {
+      originalAmount: amount, originalCurrency: fromCurrency.toUpperCase(),
+      convertedAmount: result.convertedAmount, convertedCurrency: toCurrency.toUpperCase(),
+      exchangeRate: result.rate, rateVersion: result.rateVersion, rateSource: result.rateProvider, rateType: result.rateType,
+      historicalSnapshotId: result.conversionId || result.rateId, conversionTimestamp: new Date()
+    }, requestId);
+  } catch (error) {
+    console.error("convertCurrencyViaApi error:", error);
     return sendError(res, statusFromError(error), error.message || "Failed to convert currency.", requestId);
   }
 };
@@ -327,5 +378,21 @@ export const getCurrencyExposure = async (req, res) => {
   } catch (error) {
     console.error("getCurrencyExposure error:", error);
     return sendError(res, statusFromError(error), error.message || "Failed to retrieve currency exposure.", requestId);
+  }
+};
+
+/** GET /api/v1/currencies/dashboard — File 7 Part 4's own "Read Models" section. */
+export const getCurrencyDashboard = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "finance.currency.read", "finance.read")) return sendError(res, 403, "Permission denied.", requestId);
+
+    const result = await CurrencyService.getCurrencyDashboard(scope.tenantId);
+    return sendSuccess(res, 200, "Currency dashboard retrieved successfully.", result, requestId);
+  } catch (error) {
+    console.error("getCurrencyDashboard error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to retrieve currency dashboard.", requestId);
   }
 };

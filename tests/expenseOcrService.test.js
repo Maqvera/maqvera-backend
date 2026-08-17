@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { extractAmountFromText, extractDateFromText, extractVendorFromText } from "../services/ExpenseOcrService.js";
+import { extractAmountFromText, extractDateFromText, extractVendorFromText, extractReceiptNumberFromText } from "../services/ExpenseOcrService.js";
 
 test("extractAmountFromText prefers a labeled Total over a Subtotal line (regression: 'Subtotal' contains 'total' as a substring)", () => {
   const text = "Subtotal: 100.00\nTax: 15.00\nTotal: 115.00";
@@ -44,4 +44,16 @@ test("extractVendorFromText returns the first non-empty line", () => {
 test("extractVendorFromText returns null for empty text", () => {
   assert.equal(extractVendorFromText(""), null);
   assert.equal(extractVendorFromText(null), null);
+});
+
+test("extractReceiptNumberFromText recognizes labeled Receipt/Invoice/Order/Ref numbers", () => {
+  assert.equal(extractReceiptNumberFromText("Receipt #INV-45382\nTotal: 350.00"), "INV-45382");
+  assert.equal(extractReceiptNumberFromText("Invoice No: 998877"), "998877");
+  assert.equal(extractReceiptNumberFromText("Order Number ABC123"), "ABC123");
+});
+
+test("extractReceiptNumberFromText returns null when no labeled number exists", () => {
+  assert.equal(extractReceiptNumberFromText("Thank you for shopping with us"), null);
+  assert.equal(extractReceiptNumberFromText(""), null);
+  assert.equal(extractReceiptNumberFromText(null), null);
 });

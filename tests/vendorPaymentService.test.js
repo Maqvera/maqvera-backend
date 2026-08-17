@@ -14,7 +14,9 @@ import {
   isVendorPaymentHoldable,
   isVendorPaymentReleasable,
   isVendorPaymentSchedulable,
-  isVendorPaymentExecutable
+  isVendorPaymentExecutable,
+  findDuplicatePayablePayments,
+  checkFundAvailability
 } from "../services/VendorPaymentService.js";
 
 test("isValidIban accepts real, well-known valid IBANs (MOD-97-10 checksum)", () => {
@@ -27,6 +29,30 @@ test("isValidIban rejects a tampered checksum digit and malformed input", () => 
   assert.equal(isValidIban("GB29NWBK60161331926818"), false);
   assert.equal(isValidIban("NOTANIBAN"), false);
   assert.equal(isValidIban(""), false);
+});
+
+test("findDuplicatePayablePayments flags an existing active proposal covering the same payable", () => {
+  const existing = [
+    { vendorPaymentNumber: "VPY-2027-000001", lineAllocations: [{ payableId: "p1" }, { payableId: "p2" }] },
+    { vendorPaymentNumber: "VPY-2027-000002", lineAllocations: [{ payableId: "p3" }] }
+  ];
+  assert.deepEqual(findDuplicatePayablePayments(["p2"], existing), [existing[0]]);
+  assert.deepEqual(findDuplicatePayablePayments(["p9"], existing), []);
+  assert.deepEqual(findDuplicatePayablePayments(["p1", "p3"], existing), existing);
+});
+
+test("findDuplicatePayablePayments returns empty when no active proposals exist", () => {
+  assert.deepEqual(findDuplicatePayablePayments(["p1"], []), []);
+});
+
+test("checkFundAvailability reports no shortfall when the balance covers the total", () => {
+  assert.deepEqual(checkFundAvailability(1000, 500), { available: true, shortfall: 0 });
+  assert.deepEqual(checkFundAvailability(500, 500), { available: true, shortfall: 0 });
+});
+
+test("checkFundAvailability computes a real shortfall when the balance is insufficient", () => {
+  assert.deepEqual(checkFundAvailability(300, 500), { available: false, shortfall: 200 });
+  assert.deepEqual(checkFundAvailability(null, 500), { available: false, shortfall: 500 });
 });
 
 test("isValidSwiftBic accepts real 8 and 11 character formats", () => {

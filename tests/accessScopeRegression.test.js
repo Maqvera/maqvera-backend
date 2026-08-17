@@ -117,6 +117,12 @@ const MIGRATED_TO_ACCESS_SCOPE = [
   "controllers/FinancialDashboardController.js",
   "controllers/FinancialAnalyticsController.js",
   "controllers/AuditComplianceController.js",
+  "controllers/OrganisationController.js",
+  "controllers/NumberGeneratorController.js",
+  "controllers/ResilienceController.js",
+  "controllers/EventRegistryController.js",
+  "controllers/ApiVersionRegistryController.js",
+  "controllers/RateLimitController.js",
 ];
 
 // Guards the bug found and fixed in VisaDashboardController.js: API/dashboard

@@ -35,6 +35,10 @@ import ExpenseModel from "../models/ExpenseModel.js";
 import BankAccountModel from "../models/BankAccountModel.js";
 import AuditEventModel from "../models/AuditEventModel.js";
 import FinancialReportModel from "../models/FinancialReportModel.js";
+// File 7 — Enterprise Multi-Currency & FX's own "Update Search Index" step.
+import CurrencyModel from "../models/CurrencyModel.js";
+import ExchangeRateModel from "../models/ExchangeRateModel.js";
+import CurrencyRevaluationModel from "../models/CurrencyRevaluationModel.js";
 import { publishEvent, subscribeEvent } from "../utils/eventBus.js";
 
 const MAX_PAGE_SIZE = Number.parseInt(process.env.ENTERPRISE_SEARCH_MAX_PAGE_SIZE || "100", 10) || 100;
@@ -236,6 +240,21 @@ class SearchEngineService {
       AuditEventStored: (p) => this.indexAuditEventRecord(p),
       ReportGenerated: (p) => this.indexFinancialReport(p),
       ReportArchived: (p) => this.indexFinancialReport(p),
+      // File 7 — Enterprise Multi-Currency & FX.
+      CurrencyCreated: (p) => this.indexCurrency(p),
+      CurrencyApproved: (p) => this.indexCurrency(p),
+      CurrencyActivated: (p) => this.indexCurrency(p),
+      CurrencySuspended: (p) => this.indexCurrency(p),
+      CurrencyArchived: (p) => this.indexCurrency(p),
+      CurrencyDeprecated: (p) => this.indexCurrency(p),
+      // File 7 Part 4 — "Search Integration... Exchange Rates... Revaluations."
+      // `ExchangeRateUpdated` now fires with a real `exchangeRateId` from
+      // every creation path — manual (createExchangeRate), approval
+      // (approveExchangeRate), AND automatic import (importRatesFromProvider,
+      // per-row, closing a real gap that only ever published the bulk
+      // `RateImported` summary before).
+      ExchangeRateUpdated: (p) => this.indexExchangeRate({ tenantId: p.tenantId, exchangeRateId: p.exchangeRateId }),
+      CurrencyRevalued: (p) => this.indexCurrencyRevaluation({ tenantId: p.tenantId, revaluationId: p.revaluationId }),
     };
     for (const [eventName, handler] of Object.entries(handlers)) {
       subscribeEvent(eventName, (payload) => queueMicrotask(() => handler(payload).catch((error) =>
@@ -658,6 +677,48 @@ class SearchEngineService {
     });
   }
 
+  /** File 7 — Enterprise Multi-Currency & FX's own "Update Search Index" workflow step for `POST /currencies`. */
+  static async indexCurrency({ tenantId, currencyId }) {
+    if (!tenantId || !currencyId) return;
+    const item = await CurrencyModel.findOne({ _id: currencyId, tenantId }).lean();
+    if (!item) return this.removeEntity({ tenantId, entityType: "Currency", entityId: currencyId });
+    return this.indexEntity({ tenantId, entityType: "Currency", entityId: item._id,
+      title: `${item.currencyCode} — ${item.name}`, description: `${item.currencyType || "Transaction"} · ${item.status}${item.isBaseCurrency ? " · Base Currency" : ""}${item.isReportingCurrency ? " · Reporting Currency" : ""}`,
+      keywords: [item.currencyCode, item.name, item.isoNumericCode].filter(Boolean),
+      matchedFields: [{ field: "currencyCode", value: item.currencyCode }, { field: "name", value: item.name }].filter((f) => f.value),
+      module: "Finance", status: item.status, navigationUrl: `/finance/currencies/${item._id}`, permissionsRequired: ["finance.currency.read"],
+      facets: { status: item.status, currency: item.currencyCode, category: item.currencyType },
+    });
+  }
+
+  /** File 7 Part 4 — "Search Integration... Exchange Rates... Rate Versions... Providers." */
+  static async indexExchangeRate({ tenantId, exchangeRateId }) {
+    if (!tenantId || !exchangeRateId) return;
+    const item = await ExchangeRateModel.findOne({ _id: exchangeRateId, tenantId }).lean();
+    if (!item) return this.removeEntity({ tenantId, entityType: "ExchangeRate", entityId: exchangeRateId });
+    return this.indexEntity({ tenantId, entityType: "ExchangeRate", entityId: item._id,
+      title: `${item.fromCurrency} → ${item.toCurrency} (v${item.version})`, description: `${item.rate} · ${item.rateType} · ${item.provider} · ${item.approvalStatus || "Activated"}`,
+      keywords: [item.fromCurrency, item.toCurrency, item.provider, item.rateType].filter(Boolean),
+      matchedFields: [{ field: "fromCurrency", value: item.fromCurrency }, { field: "toCurrency", value: item.toCurrency }].filter((f) => f.value),
+      module: "Finance", status: item.approvalStatus || "Activated", navigationUrl: `/finance/exchange-rates/${item._id}`, permissionsRequired: ["finance.currency.read"],
+      facets: { status: item.approvalStatus, currency: item.toCurrency, category: item.rateType, provider: item.provider },
+    });
+  }
+
+  /** File 7 Part 4 — "Search Integration... Revaluations." */
+  static async indexCurrencyRevaluation({ tenantId, revaluationId }) {
+    if (!tenantId || !revaluationId) return;
+    const item = await CurrencyRevaluationModel.findOne({ _id: revaluationId, tenantId }).lean();
+    if (!item) return this.removeEntity({ tenantId, entityType: "CurrencyRevaluation", entityId: revaluationId });
+    return this.indexEntity({ tenantId, entityType: "CurrencyRevaluation", entityId: item._id,
+      title: `${item.targetType} — ${item.currencyCode} → ${item.baseCurrencyCode}`, description: `${item.gainLossType || "No movement"} · ${item.gainLossAmount} ${item.baseCurrencyCode} · ${new Date(item.revaluationDate).toISOString().slice(0, 10)}`,
+      keywords: [item.targetType, item.currencyCode, item.baseCurrencyCode].filter(Boolean),
+      matchedFields: [{ field: "targetType", value: item.targetType }, { field: "currencyCode", value: item.currencyCode }].filter((f) => f.value),
+      module: "Finance", status: item.gainLossType || "None", navigationUrl: `/finance/currency-revaluations/${item._id}`, permissionsRequired: ["finance.currency.read"],
+      facets: { status: item.gainLossType, currency: item.currencyCode, category: item.targetType },
+    });
+  }
+
   static async globalSearch({ tenantId, query = "", entityType, permissions = [], filters = {}, page = 1, pageSize = 20, sort = "score", order = "desc" }) {
     const safePage = Math.max(Number.parseInt(page, 10) || 1, 1);
     const safePageSize = Math.min(Math.max(Number.parseInt(pageSize, 10) || 20, 1), MAX_PAGE_SIZE);
@@ -862,7 +923,7 @@ class SearchEngineService {
     if (!tenantId) return { indexed: 0 };
 
     const [visaCases, travelers, documents, submissions, appointments, passports, incidents,
-      invoices, payments, receipts, journals, accounts, vendors, expenses, bankAccounts, auditEvents, reports] = await Promise.all([
+      invoices, payments, receipts, journals, accounts, vendors, expenses, bankAccounts, auditEvents, reports, currencies, exchangeRates, revaluations] = await Promise.all([
       VisaCaseModel.find({ tenantId, isSoftDeleted: { $ne: true } }).select("_id").lean(),
       CustomerModel.find({ tenantId, status: { $ne: "archived" } }).select("_id").lean(),
       EnterpriseDocumentModel.find({ tenantId, isSoftDeleted: { $ne: true } }).select("_id").lean(),
@@ -881,6 +942,9 @@ class SearchEngineService {
       BankAccountModel.find({ tenantId }).select("_id").lean(),
       AuditEventModel.find({ tenantId, status: "Active" }).select("_id").lean(),
       FinancialReportModel.find({ tenantId }).select("_id").lean(),
+      CurrencyModel.find({ tenantId }).select("_id").lean(),
+      ExchangeRateModel.find({ tenantId }).select("_id").lean(),
+      CurrencyRevaluationModel.find({ tenantId }).select("_id").lean(),
     ]);
 
     const tasks = [
@@ -901,6 +965,9 @@ class SearchEngineService {
       ...bankAccounts.map((r) => () => this.indexBankAccountRecord({ tenantId, bankAccountId: r._id })),
       ...auditEvents.map((r) => () => this.indexAuditEventRecord({ tenantId, eventId: r._id })),
       ...reports.map((r) => () => this.indexFinancialReport({ tenantId, reportId: r._id })),
+      ...currencies.map((r) => () => this.indexCurrency({ tenantId, currencyId: r._id })),
+      ...exchangeRates.map((r) => () => this.indexExchangeRate({ tenantId, exchangeRateId: r._id })),
+      ...revaluations.map((r) => () => this.indexCurrencyRevaluation({ tenantId, revaluationId: r._id })),
     ];
 
     const BATCH_SIZE = 25;
@@ -916,7 +983,8 @@ class SearchEngineService {
       invoices: invoices.length, payments: payments.length, receipts: receipts.length,
       journals: journals.length, accounts: accounts.length, vendors: vendors.length,
       expenses: expenses.length, bankAccounts: bankAccounts.length,
-      auditEvents: auditEvents.length, reports: reports.length
+      auditEvents: auditEvents.length, reports: reports.length, currencies: currencies.length,
+      exchangeRates: exchangeRates.length, revaluations: revaluations.length
     };
     publishEvent("SearchRebuilt", { tenantId, indexed: tasks.length, entityCounts });
     return { indexed: tasks.length, entityCounts };

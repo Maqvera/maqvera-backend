@@ -664,7 +664,37 @@ export const getFinanceConfig = () => {
     // per §3 of the standing master instructions — the spec's own "Branch
     // Match"/"Branch Isolation"/`branch` query param are dropped; see
     // docs/05-api/07-finance-api.md Part 16.
-    expenseCategories: parseStringList(process.env.EXPENSE_CATEGORIES_JSON, ['Travel', 'Visa', 'Meals', 'Accommodation', 'Fuel', 'Transportation', 'Air Tickets', 'Office Supplies', 'Marketing', 'Training', 'Utilities', 'IT Equipment', 'Subscriptions', 'Software Licenses', 'Cloud Services', 'Medical', 'Insurance', 'Employee Benefit', 'Customer Entertainment', 'Custom']),
+    // Expanded again in Part 44 ("Enterprise Expense Categories... Level 2
+    // Examples") — 21 new real classification labels (Office/Merchant/
+    // Subscription/Corporate-Operating spend types this config previously
+    // had no string for), grouped by `expenseCategoryHierarchy` below.
+    // "Merchant"/"Subscription" categories are pure classification labels
+    // here, same as `Subscriptions`/`Cloud Services` already were — never
+    // implying a Merchant/Subscription owner entity exists (none does; see
+    // Part 34's original resolution).
+    expenseCategories: parseStringList(process.env.EXPENSE_CATEGORIES_JSON, [
+      'Travel', 'Visa', 'Meals', 'Accommodation', 'Fuel', 'Transportation', 'Air Tickets', 'Office Supplies', 'Marketing', 'Training', 'Utilities', 'IT Equipment', 'Subscriptions', 'Software Licenses', 'Cloud Services', 'Medical', 'Insurance', 'Employee Benefit', 'Customer Entertainment', 'Custom',
+      'Stationery', 'Furniture', 'Rent', 'Internet', 'Legal', 'Accounting Fees', 'Security', 'Maintenance', 'Equipment',
+      'Merchant Incentive', 'Settlement Fee', 'Merchant Marketing', 'Merchant Onboarding', 'Merchant Refund Cost',
+      'Cloud Hosting', 'AI API Cost', 'SMS Provider', 'Email Provider', 'Monitoring Tools', 'Domain & SSL', 'SaaS License'
+    ]),
+    // "Expense Categories... configurable hierarchy... Level 1 -> Level 2"
+    // (Part 44) — a real, config-driven, 2-level grouping over the flat
+    // `expenseCategories` list above. Optional on the expense itself (see
+    // `categoryGroup` on `ExpenseModel`) — every pre-existing caller that
+    // only ever sent a flat `category` keeps working unchanged.
+    expenseCategoryHierarchy: parseJson(process.env.EXPENSE_CATEGORY_HIERARCHY_JSON, {
+      Travel: ['Travel', 'Visa', 'Meals', 'Accommodation', 'Fuel', 'Transportation', 'Air Tickets'],
+      Office: ['Office Supplies', 'Stationery', 'Furniture', 'Rent', 'Utilities', 'Internet'],
+      IT: ['IT Equipment', 'Cloud Services', 'Software Licenses'],
+      Marketing: ['Marketing', 'Customer Entertainment'],
+      HR: ['Training', 'Employee Benefit', 'Medical'],
+      Finance: ['Insurance', 'Accounting Fees'],
+      Operations: ['Security', 'Maintenance', 'Equipment', 'Legal'],
+      Merchant: ['Merchant Incentive', 'Settlement Fee', 'Merchant Marketing', 'Merchant Onboarding', 'Merchant Refund Cost'],
+      Subscription: ['Subscriptions', 'Cloud Hosting', 'AI API Cost', 'SMS Provider', 'Email Provider', 'Monitoring Tools', 'Domain & SSL', 'SaaS License'],
+      Custom: ['Custom']
+    }),
     // "Expense Type" — a real, separate dimension from `category` above
     // (Enterprise Expense Management Refactor Part 2's own request example
     // sends both `expenseCategory` and `expenseType` on the same request).
@@ -750,6 +780,11 @@ export const getFinanceConfig = () => {
     // discipline as every other optional account code in this module.
     expenseReimbursementPayableAccountCode: process.env.EXPENSE_REIMBURSEMENT_PAYABLE_ACCOUNT_CODE || null,
     expenseRecoverableTaxAccountCode: process.env.EXPENSE_RECOVERABLE_TAX_ACCOUNT_CODE || null,
+    // Enterprise Expense Management Refactor Part 3/4 — "Export"/"Bulk
+    // Operations" real safety bounds (never unbounded memory use / an
+    // unbounded loop of writes from a single request).
+    expenseExportMaxRows: parseInt(process.env.EXPENSE_EXPORT_MAX_ROWS || '5000', 10),
+    expenseBulkActionMaxItems: parseInt(process.env.EXPENSE_BULK_ACTION_MAX_ITEMS || '200', 10),
 
     // Enterprise Vendor Payments — Finance Module Part 17. "Payment Engine
     // moves money. Vendor Payment Platform decides which vendor, which
@@ -792,6 +827,21 @@ export const getFinanceConfig = () => {
     // anywhere in this codebase (same category of deferral as Part 14's
     // excluded Open Banking API).
     businessDaySkipWeekends: parseBoolean(process.env.VENDOR_PAYMENT_BUSINESS_DAY_SKIP_WEEKENDS, true),
+    // Enterprise Vendor Payments Refactor (File 6 Part 2) — "Payment
+    // Category." Only `InvoicePayment` is real for `POST /vendor-payments`
+    // (this endpoint pays against Accounts Payable invoices);
+    // `AdvancePayment` is listed for the real, pre-existing
+    // `createVendorAdvance` path (Part 17), which deliberately bypasses
+    // this proposal/approval pipeline entirely (a real-time payment +
+    // credit, not a scheduled proposal) and is unchanged by this Part.
+    vendorPaymentCategories: parseStringList(process.env.VENDOR_PAYMENT_CATEGORIES_JSON, ['InvoicePayment', 'AdvancePayment']),
+    defaultVendorPaymentCategory: process.env.DEFAULT_VENDOR_PAYMENT_CATEGORY || 'InvoicePayment',
+    // "Payment Source." Merchant Portal/Subscription Portal dropped — no
+    // such portals exist anywhere in this codebase (same discipline as
+    // Expense's own `expenseSources`... except Expense never got this
+    // field; Vendor Payment does here, closing that same real gap first).
+    vendorPaymentSources: parseStringList(process.env.VENDOR_PAYMENT_SOURCES_JSON, ['Finance Portal', 'Accounts Payable', 'API', 'Import', 'Workflow Engine', 'Automation', 'Background Job']),
+    defaultVendorPaymentSource: process.env.DEFAULT_VENDOR_PAYMENT_SOURCE || 'API',
 
     // Enterprise Customer Payments — Finance Module Part 18. "The Customer
     // Collection Platform manages the collection strategy. The Payment
@@ -877,6 +927,42 @@ export const getFinanceConfig = () => {
     // `creditNoteIds`/`debitNoteIds`.
     collectionSources: parseStringList(process.env.COLLECTION_SOURCES_JSON, ['Sales Invoice', 'Subscription Invoice', 'Membership Renewal', 'Marketplace Order', 'POS Sale', 'Project Billing', 'Training Fee', 'Visa Fee', 'Rental Invoice', 'Deposit', 'Wallet Recharge', 'Manual Receivable', 'Custom Source']),
     defaultCollectionSource: process.env.DEFAULT_COLLECTION_SOURCE || 'Sales Invoice',
+    // "Payment Allocation Engine" (Part 18 Part 6/File 3 continuation) —
+    // real, selectable strategies for `POST /customer-payments/{paymentId}
+    // /allocate`. "Due Date Priority" collapses into `OldestDueDate` (same
+    // real sort key — the two names describe the identical ordering, not
+    // two different ones); `Manual` means the caller's own `invoiceIds`
+    // order is used as-is, no re-sorting.
+    paymentAllocationStrategies: parseStringList(process.env.PAYMENT_ALLOCATION_STRATEGIES_JSON, ['OldestDueDate', 'HighestAmountFirst', 'Manual']),
+    defaultPaymentAllocationStrategy: process.env.DEFAULT_PAYMENT_ALLOCATION_STRATEGY || 'OldestDueDate',
+    // "Customer Credit Balance Management... Credit Expiry Rules." A real,
+    // optional expiry window applied at credit creation when not
+    // explicitly overridden per credit; 0 = never expires (default — most
+    // credit sources like Overpayment/AdvancePayment have no natural
+    // expiry unless a tenant configures one).
+    customerCreditDefaultExpiryDays: parseInt(process.env.CUSTOMER_CREDIT_DEFAULT_EXPIRY_DAYS || '0', 10),
+    // "Customer Credit Risk Scoring" — real, deterministic 0-100 heuristic
+    // (see `computeCustomerRiskScore`), never a fabricated ML classifier.
+    // "Industry Risk" is dropped entirely — no `industry` field exists
+    // anywhere on `CustomerModel` to score against (unlike `country`,
+    // which is real). `customerRiskCountryTiers` defaults to empty — this
+    // session has no real country-risk-assessment authority to seed
+    // country tiers with (same "not fabricated" discipline as Part 36's
+    // undeclared industry chart-of-account templates); an unconfigured
+    // country contributes zero (neutral), never a guessed risk weight.
+    customerRiskCountryTiers: parseJson(process.env.CUSTOMER_RISK_COUNTRY_TIERS_JSON, {}),
+    customerRiskScoreBands: parseJson(process.env.CUSTOMER_RISK_SCORE_BANDS_JSON, { Low: 25, Medium: 50, High: 75 }),
+    // File 6 Part 5 — "Attachment/comments/timeline APIs." Same
+    // memoryStorage-multer + storeDocumentPdf pattern as
+    // expenseReceiptMaxFileSizeBytes (ExpenseController.uploadReceiptFile),
+    // its own dedicated knob rather than reusing Expense's.
+    customerCollectionAttachmentMaxFileSizeBytes: parseInt(process.env.CUSTOMER_COLLECTION_ATTACHMENT_MAX_FILE_SIZE_BYTES || `${10 * 1024 * 1024}`, 10),
+    // "Payment links are idempotent." (AI Coding Rule) — a link
+    // regenerated within this window of its last generation returns the
+    // existing still-valid link instead of minting a new token/QR, so a
+    // retried "regenerate" click doesn't invalidate a link the customer
+    // already opened seconds ago. 0 = always mint a new one.
+    paymentLinkRegenerateMinIntervalSeconds: parseInt(process.env.PAYMENT_LINK_REGENERATE_MIN_INTERVAL_SECONDS || '30', 10),
     // "Payment Intent Lifecycle: Created, Pending, Waiting Customer,
     // Authorized, Captured, Cancelled, Expired, Failed, Refunded,
     // Disputed, Chargeback." A Payment Intent is the pre-money-movement
@@ -978,7 +1064,16 @@ export const getFinanceConfig = () => {
     ]),
     webhookSubscriptionStatuses: parseStringList(process.env.WEBHOOK_SUBSCRIPTION_STATUSES_JSON, ['Active', 'Suspended', 'Disabled']),
     defaultWebhookSubscriptionStatus: process.env.DEFAULT_WEBHOOK_SUBSCRIPTION_STATUS || 'Active',
-    webhookDeliveryStatuses: parseStringList(process.env.WEBHOOK_DELIVERY_STATUSES_JSON, ['Pending', 'Delivered', 'Failed', 'Abandoned']),
+    // Enterprise Webhook Standard (Enterprise Architecture Hardening
+    // Phase, Improvement 14). 'Retrying' and 'DeadLetterQueue' are the
+    // real, new long-horizon states — 'Failed' stays as the honest label
+    // for "the immediate short-burst retry (webhookRetryMaxAttempts) is
+    // exhausted but the long-horizon schedule hasn't started/finished
+    // yet" is never actually persisted as a terminal state anymore (see
+    // WebhookService's own _finalizeDeliveryOutcome); 'Abandoned' is real,
+    // distinct terminal status for a delivery whose subscription stopped
+    // being Active while a long-horizon retry was still pending.
+    webhookDeliveryStatuses: parseStringList(process.env.WEBHOOK_DELIVERY_STATUSES_JSON, ['Pending', 'Delivered', 'Failed', 'Retrying', 'DeadLetterQueue', 'Abandoned']),
     // "Retry Engine... Exponential Backoff, Retry Limits." Reuses the
     // already-real utils/retryWithBackoff.js (its own RETRY_MAX_ATTEMPTS/
     // RETRY_BASE_DELAY_MS env vars) for the actual backoff math — these
@@ -991,6 +1086,21 @@ export const getFinanceConfig = () => {
     // Real circuit breaker — see WebhookSubscriptionModel's own doc
     // comment on `consecutiveFailureCount`.
     webhookAutoSuspendFailureThreshold: parseInt(process.env.WEBHOOK_AUTO_SUSPEND_FAILURE_THRESHOLD || '20', 10),
+    // Enterprise Webhook Standard (Improvement 14). "Retry Policy... 1
+    // Minute -> 5 Minutes -> 15 Minutes -> 30 Minutes -> 1 Hour -> 6 Hours
+    // -> 24 Hours -> Dead Letter Queue." The real LONG-horizon schedule —
+    // distinct from webhookRetryMaxAttempts/webhookRetryBaseDelayMs above,
+    // which is the short, immediate, same-request burst (seconds, not
+    // hours) attempted before a delivery is ever handed to this schedule.
+    // Each entry is a real, separate scheduled attempt (WebhookRetryScheduler),
+    // never a blocking in-process sleep — sleeping a worker for 24 hours
+    // would be dishonest infrastructure. Exhausting every entry here moves
+    // the delivery to a real Dead Letter Queue row (genuine reuse of
+    // Improvement 6's own DeadLetterQueueModel).
+    webhookLongRetryScheduleSeconds: parseJson(process.env.WEBHOOK_LONG_RETRY_SCHEDULE_SECONDS_JSON, [60, 300, 900, 1800, 3600, 21600, 86400]),
+    // How often WebhookRetryScheduler sweeps for due 'Retrying' deliveries.
+    webhookRetryPollCron: process.env.WEBHOOK_RETRY_POLL_CRON_SCHEDULE || '* * * * *',
+    webhookRetryPollBatchSize: parseInt(process.env.WEBHOOK_RETRY_POLL_BATCH_SIZE || '100', 10),
 
     // "Payment Retry Engine... Gateway Timeout Retry, Temporary Failure
     // Retry, Exponential Backoff, Retry Limits." Reuses the already-real
@@ -1136,7 +1246,12 @@ export const getFinanceConfig = () => {
     // already-shipped models (BankAccountModel/AccountsReceivableModel/
     // AccountsPayableModel/TreasuryInvestmentModel) with no schema changes
     // needed to any of them.
-    fxRevaluationTargets: parseStringList(process.env.FX_REVALUATION_TARGETS_JSON, ['BankAccount', 'AccountsReceivable', 'AccountsPayable', 'TreasuryInvestment']),
+    // File 7 Part 3 — "Revaluation Engine... Cash Accounts... Loans." Two
+    // more real targets added the same way TreasuryInvestment was: read
+    // live balances directly off their own already-shipped models
+    // (CashLocationModel.balance, TreasuryDebtModel.outstandingBalance),
+    // no schema changes needed to either.
+    fxRevaluationTargets: parseStringList(process.env.FX_REVALUATION_TARGETS_JSON, ['BankAccount', 'AccountsReceivable', 'AccountsPayable', 'TreasuryInvestment', 'CashLocation', 'TreasuryDebt']),
     fxRevaluationCron: process.env.FX_REVALUATION_CRON_SCHEDULE || '0 1 1 * *',
     // FX Gain/Loss journal posting — skipped until both are configured,
     // same "skip ledger posting until configured" fallback used for every
@@ -1147,6 +1262,11 @@ export const getFinanceConfig = () => {
     // unconfigured (null) by default, same skip-until-configured fallback;
     // the revaluation record itself is still created either way.
     treasuryInvestmentControlAccountCode: process.env.TREASURY_INVESTMENT_CONTROL_ACCOUNT_CODE || null,
+    // TreasuryDebt's own control account (File 7 Part 3) — same
+    // skip-until-configured fallback. CashLocation needs no equivalent
+    // here — it already carries its own per-record `glAccountCode`, the
+    // same real pattern BankAccount's own revaluation block already uses.
+    treasuryDebtControlAccountCode: process.env.TREASURY_DEBT_CONTROL_ACCOUNT_CODE || null,
     fxLossAccountCode: process.env.FX_LOSS_ACCOUNT_CODE || null,
 
     // Enterprise Tax Engine — Finance Module Part 20. "A real ERP never

@@ -12,7 +12,8 @@
     "seed:visa-workflow": "node scripts/seedVisaWorkflowDefinition.js",
     "seed:incident-policy": "node scripts/seedIncidentPolicy.js",
     "seed:timeline-policy": "node scripts/seedTimelinePolicy.js",
-    "seed:chart-templates": "node scripts/seedChartTemplates.js"
+    "seed:chart-templates": "node scripts/seedChartTemplates.js",
+    "generate:openapi": "node scripts/generateOpenApiArtifacts.js"
   },
   "keywords": [],
   "author": "",
@@ -26,6 +27,7 @@
     "cloudinary": "^1.41.3",
     "compression": "^1.8.1",
     "cors": "^2.8.5",
+    "cron-parser": "^5.10.0",
     "csv-parse": "^7.0.2",
     "dotenv": "^17.2.3",
     "exceljs": "^4.4.0",
@@ -37,6 +39,7 @@
     "html-to-text": "^10.0.0",
     "ioredis": "^5.11.1",
     "joi": "^18.2.3",
+    "js-yaml": "^5.3.0",
     "jsonwebtoken": "^9.0.2",
     "luxon": "^3.7.2",
     "mammoth": "^1.12.0",
@@ -60,5 +63,8 @@
     "twilio": "^6.0.2",
     "uuid": "^13.0.0",
     "winston": "^3.19.0"
+  },
+  "devDependencies": {
+    "openapi-typescript": "^7.13.0"
   }
 }

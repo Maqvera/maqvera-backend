@@ -1,5 +1,6 @@
 import express from "express";
 import authenticateAccessToken from "../middleware/authenticateAccessToken.js";
+import { requireFeature, subscriptionResponseHeaders } from "../middleware/subscriptionEnforcement.js";
 import validate, { customerSchemas } from "../middleware/validateRequest.js";
 import rateLimit from "express-rate-limit";
 import {
@@ -59,6 +60,11 @@ const limiter = rateLimit({
 });
 
 router.use(authenticateAccessToken);
+// Enterprise Subscription Platform — "Refactor Pattern 1... CRM Enabled?
+// YES -> Continue." See routes/FinanceRoutes.js's own doc comment for
+// the full reasoning; Customer is this codebase's real CRM-domain module.
+router.use(requireFeature("crm"));
+router.use(subscriptionResponseHeaders);
 
 // Fast search & merge operations
 router.get("/search", limiter, SearchCustomers);

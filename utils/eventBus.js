@@ -2,6 +2,7 @@ import { EventEmitter } from "events";
 import mongoose from "mongoose";
 import { v4 as uuidv4 } from "uuid";
 import DomainEventModel from "../models/DomainEventModel.js";
+import { getCorrelationId } from "./correlationContext.js";
 
 const eventBus = new EventEmitter();
 const outboxEnabled = !["false", "0", "off", "no"].includes(String(process.env.EVENT_OUTBOX_ENABLED || "true").toLowerCase());
@@ -22,7 +23,18 @@ export const subscribeAllEvents = (listener) => {
 export const publishEvent = (eventName, payload = {}) => {
     const eventId = payload.eventId || uuidv4();
     const occurredAt = new Date();
-    const eventPayload = { ...payload, eventId, occurredAt: payload.occurredAt || occurredAt };
+    // Enterprise Correlation & Traceability Standard — "Every published
+    // event MUST include the Correlation-ID." An explicit
+    // `payload.correlationId` always wins (a caller propagating a DIFFERENT
+    // request's correlationId on purpose, e.g. a scheduler replaying a
+    // stored event, is a deliberate choice); otherwise this falls back to
+    // the CURRENT request's correlationId via AsyncLocalStorage
+    // (utils/correlationContext.js) — real for every one of this
+    // codebase's existing `publishEvent(...)` call sites automatically,
+    // with zero changes to any of them. Outside any request context (a
+    // cron scheduler) this is honestly `null`, never fabricated.
+    const correlationId = payload.correlationId || getCorrelationId() || null;
+    const eventPayload = { ...payload, eventId, correlationId, occurredAt: payload.occurredAt || occurredAt };
 
     // Persist a replayable event record when the database is available. Event
     // delivery remains non-blocking for existing command handlers.

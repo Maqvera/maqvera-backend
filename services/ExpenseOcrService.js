@@ -55,6 +55,19 @@ export const extractVendorFromText = (text) => {
   return lines.length > 0 ? lines[0].slice(0, 200) : null;
 };
 
+// "OCR Information... Receipt Number" (Enterprise Expense Management
+// Refactor Part 4/4). Same heuristic discipline as the other extractors
+// above — a labeled "Receipt/Invoice/Order/Ref #" line, not a formal
+// grammar (receipt numbering formats vary too widely to parse exhaustively).
+const RECEIPT_NUMBER_REGEX = /(?:receipt|invoice|order|ref(?:erence)?)\s*(?:#|no\.?|number)?[:\s]*([A-Z0-9][A-Z0-9\-\/]{2,24})/i;
+
+/** Prefers a labeled "Receipt #"/"Invoice No"/"Order #"/"Ref" value. */
+export const extractReceiptNumberFromText = (text) => {
+  if (!text) return null;
+  const match = text.match(RECEIPT_NUMBER_REGEX);
+  return match ? match[1].trim() : null;
+};
+
 // ---------------------------------------------------------------------------
 // Service — real OCR (tesseract.js for images), real text extraction
 // (pdf-parse for text-based PDFs, already installed for AI Knowledge
@@ -91,7 +104,7 @@ class ExpenseOcrService {
     try {
       const extraction = await ExpenseOcrService._extractText(buffer, mimeType);
       if (!extraction) {
-        return { status: "Skipped", extractedText: null, extractedAmount: null, extractedDate: null, extractedVendor: null, confidence: null, processedAt: new Date() };
+        return { status: "Skipped", extractedText: null, extractedAmount: null, extractedDate: null, extractedVendor: null, extractedReceiptNumber: null, confidence: null, processedAt: new Date() };
       }
       const { text, confidence } = extraction;
       return {
@@ -100,11 +113,12 @@ class ExpenseOcrService {
         extractedAmount: extractAmountFromText(text),
         extractedDate: extractDateFromText(text),
         extractedVendor: extractVendorFromText(text),
+        extractedReceiptNumber: extractReceiptNumberFromText(text),
         confidence,
         processedAt: new Date()
       };
     } catch (error) {
-      return { status: "Failed", extractedText: null, extractedAmount: null, extractedDate: null, extractedVendor: null, confidence: null, processedAt: new Date(), error: error.message };
+      return { status: "Failed", extractedText: null, extractedAmount: null, extractedDate: null, extractedVendor: null, extractedReceiptNumber: null, confidence: null, processedAt: new Date(), error: error.message };
     }
   }
 }

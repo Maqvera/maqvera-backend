@@ -38,8 +38,16 @@ class StripeGatewayAdapter extends BaseGatewayAdapter {
     return client;
   }
 
-  /** Creates a PaymentIntent with manual capture — the "Authorized" step. */
-  async authorize({ amount, currency, reference, paymentMethodId }) {
+  /**
+   * Creates a PaymentIntent with manual capture — the "Authorized" step.
+   * `idempotencyKey`, when supplied, is passed as Stripe's own real
+   * request-level idempotency option — Enterprise Payment Retry Strategy
+   * (Automation #3) generates one deterministic key per (renewal, attempt
+   * number), so a crash-and-safe-re-invoke of the exact same retry attempt
+   * can never double-charge at the gateway, even if this codebase's own
+   * DB-level atomic claim already prevented a concurrent double-process.
+   */
+  async authorize({ amount, currency, reference, paymentMethodId, idempotencyKey = null }) {
     const client = await this._requireClient();
     try {
       const intent = await client.paymentIntents.create({
@@ -49,7 +57,7 @@ class StripeGatewayAdapter extends BaseGatewayAdapter {
         description: reference || undefined,
         payment_method: paymentMethodId || undefined,
         confirm: !!paymentMethodId
-      });
+      }, idempotencyKey ? { idempotencyKey } : undefined);
       const authorized = intent.status === "requires_capture" || intent.status === "requires_confirmation" || intent.status === "requires_payment_method";
       return {
         status: authorized ? "Authorized" : "Failed",
@@ -144,6 +152,18 @@ class StripeGatewayAdapter extends BaseGatewayAdapter {
       });
     }
     return { payouts };
+  }
+
+  /**
+   * Real Stripe Customer creation — Enterprise Subscription Platform's own
+   * Billing Account setup (TenantBillingAccountModel.stripeCustomerId).
+   * Same "throw when unconfigured, never fabricate an id" discipline as
+   * every other method here.
+   */
+  async createCustomer({ email, name, metadata = {} }) {
+    const client = await this._requireClient();
+    const customer = await client.customers.create({ email, name, metadata });
+    return { customerId: customer.id, rawResponse: customer };
   }
 
   async checkHealth() {

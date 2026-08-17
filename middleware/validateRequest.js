@@ -1,7 +1,10 @@
 import Joi from "joi";
-import { sendError } from "../utils/apiResponse.js";
 import { getBookingConfig } from "../utils/bookingConfig.js";
 import { getFinanceConfig } from "../utils/financeConfig.js";
+import { getPlatformConfig } from "../utils/platformConfig.js";
+import { getOrganisationConfig } from "../utils/organisationConfig.js";
+import { getNumberingConfig } from "../utils/numberingConfig.js";
+import { AppError, sendStandardError, fieldDetailsFromJoiError } from "../utils/errorContract.js";
 
 const getBookingValidationValues = () => {
   const bookingConfig = getBookingConfig();
@@ -29,8 +32,16 @@ const validate = (schema, property = "body") => {
   return (req, res, next) => {
     const { error, value } = schema.validate(req[property], { abortEarly: false, stripUnknown: true });
     if (error) {
+      // Standard Error Contract (Enterprise Architecture Hardening Phase,
+      // Improvement 4) — "Validation errors MUST include field-level
+      // details." The top-level `message` stays the exact same joined
+      // string every existing caller of this central `validate()` has
+      // always received (nothing that reads only `message` sees any
+      // change); `data.details` is the real, new, additive field-level
+      // array the previous version never provided at all.
       const messages = error.details.map((d) => d.message).join("; ");
-      return sendError(res, 400, messages, req.requestId);
+      const appError = new AppError("VALIDATION_FAILED", { message: messages, details: fieldDetailsFromJoiError(error) });
+      return sendStandardError(res, appError, req.requestId);
     }
     req[property] = value;
     next();
@@ -1438,6 +1449,9 @@ const buildExpenseSchemas = () => {
       department: objectIdRef.optional().allow(null, ""),
       projectId: Joi.string().trim().optional().allow(null, ""),
       costCenter: Joi.string().trim().optional().allow(null, ""),
+      // "Profit Centre filtering" (Part 3/4) — same plain descriptive-
+      // string treatment as costCenter (no ProfitCenterModel exists).
+      profitCenter: Joi.string().trim().optional().allow(null, ""),
       // Purely descriptive organizational labels — never used for tenant/
       // access scoping. See Part 34's own reconciliation of the "Business
       // Unit"/"Branch" hierarchy onto this codebase's real architecture.
@@ -1457,6 +1471,10 @@ const buildExpenseSchemas = () => {
         percentage: Joi.number().greater(0).max(100).required()
       })).optional(),
       category: Joi.string().trim().valid(...config.expenseCategories).required(),
+      // "Configurable Expense Category Hierarchy... Level 1" (Part 44) —
+      // optional; validated against `category` (Level 2) in the service
+      // layer, not here (Joi only shapes valid Level-1 keys).
+      categoryGroup: Joi.string().trim().valid(...Object.keys(config.expenseCategoryHierarchy)).optional().allow(null, ""),
       expenseType: Joi.string().trim().valid(...config.expenseTypes).optional(),
       amount: Joi.number().greater(0).optional(),
       currency: Joi.string().trim().valid(...config.supportedCurrencies).required(),
@@ -1474,6 +1492,7 @@ const buildExpenseSchemas = () => {
 
     updateExpense: Joi.object({
       category: Joi.string().trim().valid(...config.expenseCategories).optional(),
+      categoryGroup: Joi.string().trim().valid(...Object.keys(config.expenseCategoryHierarchy)).optional().allow(null, ""),
       expenseType: Joi.string().trim().valid(...config.expenseTypes).optional(),
       amount: Joi.number().greater(0).optional(),
       currency: Joi.string().trim().valid(...config.supportedCurrencies).optional(),
@@ -1482,6 +1501,7 @@ const buildExpenseSchemas = () => {
       department: objectIdRef.optional().allow(null, ""),
       projectId: Joi.string().trim().optional().allow(null, ""),
       costCenter: Joi.string().trim().optional().allow(null, ""),
+      profitCenter: Joi.string().trim().optional().allow(null, ""),
       businessUnit: Joi.string().trim().max(200).optional().allow(null, ""),
       branch: Joi.string().trim().max(200).optional().allow(null, ""),
       tags: Joi.array().items(Joi.string().trim().max(50)).max(20).optional(),
@@ -1500,6 +1520,15 @@ const buildExpenseSchemas = () => {
 
     verifyReceipt: Joi.object({
       status: Joi.string().trim().valid("Verified", "Duplicate", "Rejected").required(),
+      notes: Joi.string().trim().max(1000).optional().allow(null, "")
+    }),
+
+    // "OCR Information... Manual Corrections" (Part 4/4).
+    correctOcr: Joi.object({
+      amount: Joi.number().greater(0).optional().allow(null),
+      vendor: Joi.string().trim().max(200).optional().allow(null, ""),
+      date: Joi.date().optional().allow(null),
+      receiptNumber: Joi.string().trim().max(50).optional().allow(null, ""),
       notes: Joi.string().trim().max(1000).optional().allow(null, "")
     }),
 
@@ -1532,11 +1561,44 @@ const buildExpenseSchemas = () => {
       period: Joi.string().trim().pattern(/^\d{4}(-\d{2})?$/).required().messages({ "string.pattern.base": 'period must be "YYYY" or "YYYY-MM".' }),
       currency: Joi.string().trim().valid(...config.supportedCurrencies).required(),
       allocatedAmount: Joi.number().min(0).required()
+    }),
+
+    // ---- Bulk Operations (Enterprise Expense Management Refactor Part 3/4) ----
+    // `expenseIds` cap mirrors `expenseBulkActionMaxItems`; the service
+    // layer re-checks the same bound (Joi only shapes the request shape).
+    bulkIds: Joi.object({
+      expenseIds: Joi.array().items(objectIdRef).min(1).max(config.expenseBulkActionMaxItems).required()
+    }),
+
+    bulkApprove: Joi.object({
+      expenseIds: Joi.array().items(objectIdRef).min(1).max(config.expenseBulkActionMaxItems).required(),
+      notes: Joi.string().trim().max(1000).optional().allow(null, "")
+    }),
+
+    bulkReject: Joi.object({
+      expenseIds: Joi.array().items(objectIdRef).min(1).max(config.expenseBulkActionMaxItems).required(),
+      reason: Joi.string().trim().max(1000).optional().allow(null, "")
+    }),
+
+    bulkTag: Joi.object({
+      expenseIds: Joi.array().items(objectIdRef).min(1).max(config.expenseBulkActionMaxItems).required(),
+      tags: Joi.array().items(Joi.string().trim().max(50)).min(1).max(20).required()
+    }),
+
+    bulkComment: Joi.object({
+      expenseIds: Joi.array().items(objectIdRef).min(1).max(config.expenseBulkActionMaxItems).required(),
+      text: Joi.string().trim().min(1).max(1000).required()
+    }),
+
+    bulkAssignReviewer: Joi.object({
+      expenseIds: Joi.array().items(objectIdRef).min(1).max(config.expenseBulkActionMaxItems).required(),
+      reviewerId: objectIdRef.required(),
+      notes: Joi.string().trim().max(1000).optional().allow(null, "")
     })
   };
 };
 
-const EXPENSE_SCHEMA_KEYS = new Set(["createExpense", "updateExpense", "verifyReceipt", "approve", "reject", "returnExpense", "cancel", "reimburse", "createBudget"]);
+const EXPENSE_SCHEMA_KEYS = new Set(["createExpense", "updateExpense", "verifyReceipt", "correctOcr", "approve", "reject", "returnExpense", "cancel", "reimburse", "createBudget", "bulkIds", "bulkApprove", "bulkReject", "bulkTag", "bulkComment", "bulkAssignReviewer"]);
 
 export const expenseSchemas = new Proxy({}, {
   get(_target, prop) {
@@ -1572,7 +1634,15 @@ const buildVendorPaymentSchemas = () => {
       paymentDate: Joi.date().required(),
       bankAccountId: objectIdRef.required(),
       vendorBankAccountId: objectIdRef.optional().allow(null, ""),
-      priority: Joi.string().trim().optional().allow(null, "")
+      priority: Joi.string().trim().optional().allow(null, ""),
+      // "Payment Classification" (File 6 Part 2) — all optional; the
+      // pre-Part-2 request shape (vendorId/invoiceIds/paymentDate/
+      // bankAccountId only) keeps working unchanged.
+      paymentType: Joi.string().trim().valid(...config.paymentMethods).optional().allow(null, ""),
+      department: objectIdRef.optional().allow(null, ""),
+      costCenter: Joi.string().trim().optional().allow(null, ""),
+      projectId: Joi.string().trim().optional().allow(null, ""),
+      source: Joi.string().trim().valid(...config.vendorPaymentSources).optional().allow(null, "")
     }),
 
     reject: Joi.object({
@@ -1736,11 +1806,31 @@ const buildCustomerCollectionSchemas = () => {
       currency: Joi.string().trim().valid(...config.supportedCurrencies).required(),
       sourceType: Joi.string().trim().valid(...config.customerDepositSourceTypes).required(),
       paymentMethod: Joi.string().trim().optional().allow(null, "")
+    }),
+
+    // "Payment Allocation Engine" (Part 18 continuation).
+    allocatePayment: Joi.object({
+      allocationStrategy: Joi.string().trim().valid(...config.paymentAllocationStrategies).optional(),
+      invoiceIds: Joi.array().items(objectIdRef).min(1).optional()
+    }),
+
+    // File 6 Part 5.
+    addComment: Joi.object({
+      text: Joi.string().trim().min(1).max(2000).required()
+    }),
+
+    addTimelineEntry: Joi.object({
+      description: Joi.string().trim().min(1).max(2000).required(),
+      event: Joi.string().trim().max(100).optional().allow(null, "")
+    }),
+
+    reopen: Joi.object({
+      reason: Joi.string().trim().max(1000).optional().allow(null, "")
     })
   };
 };
 
-const CUSTOMER_COLLECTION_SCHEMA_KEYS = new Set(["createCollectionRequest", "collectPayment", "captureAuthorizedPayment", "createInstallmentPlan", "rescheduleInstallment", "cancelInstallmentPlan", "sendReminder", "dispute", "writeOff", "cancel", "createDeposit"]);
+const CUSTOMER_COLLECTION_SCHEMA_KEYS = new Set(["createCollectionRequest", "collectPayment", "captureAuthorizedPayment", "createInstallmentPlan", "rescheduleInstallment", "cancelInstallmentPlan", "sendReminder", "dispute", "writeOff", "cancel", "createDeposit", "allocatePayment", "addComment", "addTimelineEntry", "reopen"]);
 
 export const customerCollectionSchemas = new Proxy({}, {
   get(_target, prop) {
@@ -1964,11 +2054,26 @@ const buildCurrencySchemas = () => {
 
     runRevaluation: Joi.object({
       revaluationDate: Joi.date().optional()
+    }),
+
+    // File 7 Part 3 — POST /api/v1/currency/convert. `merchantId`/
+    // `companyId` from the spec's own request example are accepted but
+    // never validated/used — no Merchant model, and Company is already
+    // Tenant (see this Part's own doc section).
+    convert: Joi.object({
+      merchantId: Joi.string().trim().optional().allow(null, ""),
+      companyId: Joi.string().trim().optional().allow(null, ""),
+      fromCurrency: Joi.string().trim().uppercase().length(3).required(),
+      toCurrency: Joi.string().trim().uppercase().length(3).required(),
+      amount: Joi.number().greater(0).required(),
+      conversionDate: Joi.date().optional(),
+      rateType: Joi.string().trim().valid(...config.exchangeRateTypes, "auto").optional(),
+      source: Joi.string().trim().valid(...config.conversionSources).optional()
     })
   };
 };
 
-const CURRENCY_SCHEMA_KEYS = new Set(["createCurrency", "suspend", "createExchangeRate", "rejectExchangeRate", "importRates", "runRevaluation"]);
+const CURRENCY_SCHEMA_KEYS = new Set(["createCurrency", "suspend", "createExchangeRate", "rejectExchangeRate", "importRates", "runRevaluation", "convert"]);
 
 export const currencySchemas = new Proxy({}, {
   get(_target, prop) {
@@ -3153,5 +3258,355 @@ export const customerSchemas = {
     duplicateCustomerId: Joi.string().trim().min(1).max(100).required()
   })
 };
+
+// Enterprise Subscription Platform — same env-driven Proxy pattern as
+// currencySchemas/customerCollectionSchemas above, so plan-tier/billing-cycle
+// validity stays config-driven rather than hardcoded here.
+const buildPlatformSchemas = () => {
+  const config = getPlatformConfig();
+  return {
+    createPlan: Joi.object({
+      planCode: Joi.string().trim().min(1).max(30).required(),
+      name: Joi.string().trim().min(1).max(150).required(),
+      tier: Joi.string().trim().valid(...config.planTiers).required(),
+      description: Joi.string().trim().max(1000).optional().allow(null, ""),
+      pricing: Joi.object({
+        currency: Joi.string().trim().optional(),
+        monthly: Joi.number().min(0).optional().allow(null),
+        quarterly: Joi.number().min(0).optional().allow(null),
+        yearly: Joi.number().min(0).optional().allow(null)
+      }).optional(),
+      limits: Joi.object({
+        maxUsers: Joi.number().integer().min(0).optional().allow(null),
+        maxStorageGB: Joi.number().min(0).optional().allow(null),
+        maxApiCallsPerDay: Joi.number().integer().min(0).optional().allow(null),
+        maxProjects: Joi.number().integer().min(0).optional().allow(null),
+        maxEmployees: Joi.number().integer().min(0).optional().allow(null),
+        aiCreditsPerMonth: Joi.number().integer().min(0).optional().allow(null)
+      }).optional(),
+      features: Joi.object().pattern(Joi.string(), Joi.boolean()).optional(),
+      trialDays: Joi.number().integer().min(0).optional().allow(null),
+      gracePeriodDays: Joi.number().integer().min(0).optional().allow(null),
+      supportLevel: Joi.string().trim().valid(...config.supportLevels).optional().allow(null, ""),
+      backupFrequency: Joi.string().trim().valid(...config.backupFrequencies).optional().allow(null, ""),
+      isSellable: Joi.boolean().optional(),
+      isCustom: Joi.boolean().optional(),
+      sortOrder: Joi.number().integer().optional()
+    }),
+
+    updatePlan: Joi.object({
+      name: Joi.string().trim().min(1).max(150).optional(),
+      description: Joi.string().trim().max(1000).optional().allow(null, ""),
+      pricing: Joi.object({
+        currency: Joi.string().trim().optional(),
+        monthly: Joi.number().min(0).optional().allow(null),
+        quarterly: Joi.number().min(0).optional().allow(null),
+        yearly: Joi.number().min(0).optional().allow(null)
+      }).optional(),
+      limits: Joi.object().optional(),
+      features: Joi.object().pattern(Joi.string(), Joi.boolean()).optional(),
+      trialDays: Joi.number().integer().min(0).optional().allow(null),
+      gracePeriodDays: Joi.number().integer().min(0).optional().allow(null),
+      supportLevel: Joi.string().trim().valid(...config.supportLevels).optional().allow(null, ""),
+      backupFrequency: Joi.string().trim().valid(...config.backupFrequencies).optional().allow(null, ""),
+      isSellable: Joi.boolean().optional(),
+      sortOrder: Joi.number().integer().optional()
+    }),
+
+    startTrial: Joi.object({
+      planId: objectIdRef.required()
+    }),
+
+    createSubscription: Joi.object({
+      planId: objectIdRef.required(),
+      billingCycle: Joi.string().trim().valid(...config.billingCycles).required()
+    }),
+
+    cancelSubscription: Joi.object({
+      reason: Joi.string().trim().max(1000).optional().allow(null, "")
+    }),
+
+    setupBillingAccount: Joi.object({
+      billingContactName: Joi.string().trim().min(1).max(150).required(),
+      billingContactEmail: Joi.string().trim().email().required(),
+      billingContactPhone: Joi.string().trim().max(30).optional().allow(null, ""),
+      taxNumber: Joi.string().trim().max(50).optional().allow(null, ""),
+      billingAddress: Joi.object({
+        line1: Joi.string().trim().max(255).optional().allow(null, ""),
+        city: Joi.string().trim().max(100).optional().allow(null, ""),
+        country: Joi.string().trim().max(100).optional().allow(null, ""),
+        postalCode: Joi.string().trim().max(20).optional().allow(null, "")
+      }).optional(),
+      paymentMethod: Joi.string().trim().valid(...config.billingPaymentMethods).optional(),
+      manualPaymentDetails: Joi.object({
+        accountTitle: Joi.string().trim().optional().allow(null, ""),
+        accountNumber: Joi.string().trim().optional().allow(null, ""),
+        bankOrProviderName: Joi.string().trim().optional().allow(null, "")
+      }).optional()
+    }),
+
+    payInvoiceManually: Joi.object({
+      reference: Joi.string().trim().max(200).optional().allow(null, "")
+    }),
+
+    adminSuspend: Joi.object({
+      reason: Joi.string().trim().min(1).max(1000).required()
+    }),
+
+    // Enterprise Merchant & Billing Platform (Improvement 3).
+    createMerchant: Joi.object({
+      organisationName: Joi.string().trim().min(1).max(200).required(),
+      legalName: Joi.string().trim().max(200).optional().allow(null, ""),
+      taxNumber: Joi.string().trim().max(50).optional().allow(null, ""),
+      registrationNumber: Joi.string().trim().max(50).optional().allow(null, ""),
+      country: Joi.string().trim().max(100).optional().allow(null, ""),
+      primaryContact: Joi.object({
+        name: Joi.string().trim().optional().allow(null, ""),
+        email: Joi.string().trim().email().optional().allow(null, ""),
+        phone: Joi.string().trim().optional().allow(null, "")
+      }).optional(),
+      billingEmail: Joi.string().trim().email().required()
+    }),
+
+    merchantSuspend: Joi.object({
+      reason: Joi.string().trim().min(1).max(1000).required()
+    }),
+
+    addPaymentMethod: Joi.object({
+      paymentMethod: Joi.string().trim().valid(...config.billingPaymentMethods).required(),
+      stripePaymentMethodId: Joi.string().trim().optional().allow(null, ""),
+      manualPaymentDetails: Joi.object({
+        accountTitle: Joi.string().trim().optional().allow(null, ""),
+        accountNumber: Joi.string().trim().optional().allow(null, ""),
+        bankOrProviderName: Joi.string().trim().optional().allow(null, "")
+      }).optional()
+    }),
+
+    walletOperation: Joi.object({
+      merchantId: objectIdRef.required(),
+      balanceType: Joi.string().trim().valid(...config.walletBalanceTypes).optional(),
+      amount: Joi.number().greater(0).optional(),
+      currency: Joi.string().trim().optional()
+    }),
+
+    merchantRefund: Joi.object({
+      merchantId: objectIdRef.required(),
+      amount: Joi.number().greater(0).required(),
+      currency: Joi.string().trim().required(),
+      reason: Joi.string().trim().min(1).max(1000).required(),
+      referenceId: Joi.string().trim().optional().allow(null, "")
+    })
+  };
+};
+
+const PLATFORM_SCHEMA_KEYS = new Set(["createPlan", "updatePlan", "startTrial", "createSubscription", "cancelSubscription", "setupBillingAccount", "payInvoiceManually", "adminSuspend", "createMerchant", "merchantSuspend", "addPaymentMethod", "walletOperation", "merchantRefund"]);
+
+export const platformSchemas = new Proxy({}, {
+  get(_target, prop) {
+    if (PLATFORM_SCHEMA_KEYS.has(prop)) {
+      return buildPlatformSchemas()[prop];
+    }
+    return undefined;
+  }
+});
+
+// Enterprise Organisation Structure Platform (Improvement 4). Same
+// config-driven-Proxy pattern as buildPlatformSchemas above — status
+// enums come from utils/organisationConfig.js so an env override takes
+// effect without a schema-caching bug.
+const buildOrganisationSchemas = () => {
+  const config = getOrganisationConfig();
+  const addressSchema = Joi.object({
+    line1: Joi.string().trim().max(255).optional().allow(null, ""),
+    city: Joi.string().trim().max(100).optional().allow(null, ""),
+    country: Joi.string().trim().max(100).optional().allow(null, ""),
+    postalCode: Joi.string().trim().max(20).optional().allow(null, "")
+  });
+
+  return {
+    createOrganisation: Joi.object({
+      name: Joi.string().trim().min(1).max(200).required(),
+      description: Joi.string().trim().max(1000).optional().allow(null, ""),
+      industry: Joi.string().trim().max(100).optional().allow(null, "")
+    }),
+    updateOrganisation: Joi.object({
+      name: Joi.string().trim().min(1).max(200).optional(),
+      description: Joi.string().trim().max(1000).optional().allow(null, ""),
+      industry: Joi.string().trim().max(100).optional().allow(null, ""),
+      status: Joi.string().trim().valid(...config.organisationStatuses).optional()
+    }),
+
+    createLegalEntity: Joi.object({
+      organisationId: objectIdRef.required(),
+      name: Joi.string().trim().min(1).max(200).required(),
+      registrationNumber: Joi.string().trim().max(50).optional().allow(null, ""),
+      taxNumber: Joi.string().trim().max(50).optional().allow(null, ""),
+      country: Joi.string().trim().max(100).optional().allow(null, ""),
+      reportingCurrency: Joi.string().trim().max(10).optional().allow(null, "")
+    }),
+    updateLegalEntity: Joi.object({
+      name: Joi.string().trim().min(1).max(200).optional(),
+      registrationNumber: Joi.string().trim().max(50).optional().allow(null, ""),
+      taxNumber: Joi.string().trim().max(50).optional().allow(null, ""),
+      country: Joi.string().trim().max(100).optional().allow(null, ""),
+      reportingCurrency: Joi.string().trim().max(10).optional().allow(null, ""),
+      status: Joi.string().trim().valid(...config.legalEntityStatuses).optional()
+    }),
+
+    createBusinessUnit: Joi.object({
+      legalEntityId: objectIdRef.required(),
+      name: Joi.string().trim().min(1).max(200).required(),
+      description: Joi.string().trim().max(1000).optional().allow(null, "")
+    }),
+    updateBusinessUnit: Joi.object({
+      name: Joi.string().trim().min(1).max(200).optional(),
+      description: Joi.string().trim().max(1000).optional().allow(null, ""),
+      status: Joi.string().trim().valid(...config.businessUnitStatuses).optional()
+    }),
+
+    createCompany: Joi.object({
+      legalEntityId: objectIdRef.required(),
+      businessUnitId: objectIdRef.optional().allow(null, ""),
+      name: Joi.string().trim().min(1).max(200).required(),
+      registrationNumber: Joi.string().trim().max(50).optional().allow(null, ""),
+      taxNumber: Joi.string().trim().max(50).optional().allow(null, ""),
+      country: Joi.string().trim().max(100).optional().allow(null, ""),
+      currency: Joi.string().trim().max(10).optional().allow(null, "")
+    }),
+    updateCompany: Joi.object({
+      name: Joi.string().trim().min(1).max(200).optional(),
+      registrationNumber: Joi.string().trim().max(50).optional().allow(null, ""),
+      taxNumber: Joi.string().trim().max(50).optional().allow(null, ""),
+      country: Joi.string().trim().max(100).optional().allow(null, ""),
+      currency: Joi.string().trim().max(10).optional().allow(null, ""),
+      status: Joi.string().trim().valid(...config.companyStatuses).optional()
+    }),
+
+    createBranch: Joi.object({
+      companyId: objectIdRef.required(),
+      name: Joi.string().trim().min(1).max(200).required(),
+      address: addressSchema.optional()
+    }),
+    updateBranch: Joi.object({
+      name: Joi.string().trim().min(1).max(200).optional(),
+      address: addressSchema.optional()
+    }),
+    closeBranch: Joi.object({
+      reason: Joi.string().trim().max(1000).optional().allow(null, "")
+    }),
+
+    createDepartment: Joi.object({
+      companyId: objectIdRef.optional().allow(null, ""),
+      branchId: objectIdRef.optional().allow(null, ""),
+      name: Joi.string().trim().min(1).max(200).required(),
+      description: Joi.string().trim().max(1000).optional().allow(null, "")
+    }),
+    updateDepartment: Joi.object({
+      companyId: objectIdRef.optional().allow(null, ""),
+      branchId: objectIdRef.optional().allow(null, ""),
+      name: Joi.string().trim().min(1).max(200).optional(),
+      description: Joi.string().trim().max(1000).optional().allow(null, ""),
+      status: Joi.string().trim().valid("active", "inactive", "suspended", "deleted").optional()
+    }),
+
+    createTeam: Joi.object({
+      departmentId: objectIdRef.required(),
+      name: Joi.string().trim().min(1).max(200).required(),
+      description: Joi.string().trim().max(1000).optional().allow(null, "")
+    }),
+    updateTeam: Joi.object({
+      name: Joi.string().trim().min(1).max(200).optional(),
+      description: Joi.string().trim().max(1000).optional().allow(null, ""),
+      status: Joi.string().trim().valid(...config.teamStatuses).optional()
+    })
+  };
+};
+
+const ORGANISATION_SCHEMA_KEYS = new Set([
+  "createOrganisation", "updateOrganisation",
+  "createLegalEntity", "updateLegalEntity",
+  "createBusinessUnit", "updateBusinessUnit",
+  "createCompany", "updateCompany",
+  "createBranch", "updateBranch", "closeBranch",
+  "createDepartment", "updateDepartment",
+  "createTeam", "updateTeam"
+]);
+
+export const organisationSchemas = new Proxy({}, {
+  get(_target, prop) {
+    if (ORGANISATION_SCHEMA_KEYS.has(prop)) {
+      return buildOrganisationSchemas()[prop];
+    }
+    return undefined;
+  }
+});
+
+// Enterprise Identity & Global Resource ID Platform (Improvement 5).
+// resourceType is deliberately NOT restricted to
+// config.resourceTypeCatalog — see utils/numberingConfig.js's own doc
+// comment on why it stays a free string (the spec's own "Configurable
+// Formats" requirement covers resource types this codebase doesn't know
+// about yet, not just the seeded catalog).
+const buildNumberingSchemas = () => {
+  const config = getNumberingConfig();
+
+  return {
+    createScheme: Joi.object({
+      resourceType: Joi.string().trim().min(1).max(100).required(),
+      companyId: objectIdRef.optional().allow(null, ""),
+      branchId: objectIdRef.optional().allow(null, ""),
+      prefix: Joi.string().trim().min(1).max(20).required(),
+      separator: Joi.string().trim().max(3).allow("").optional(),
+      includeYear: Joi.boolean().optional(),
+      includeCompany: Joi.boolean().optional(),
+      includeBranch: Joi.boolean().optional(),
+      sequenceLength: Joi.number().integer().min(1).max(12).optional(),
+      fiscalYearStartMonth: Joi.number().integer().min(1).max(12).optional(),
+      allowGaps: Joi.boolean().optional(),
+      isDefault: Joi.boolean().optional()
+    }),
+    updateScheme: Joi.object({
+      prefix: Joi.string().trim().min(1).max(20).optional(),
+      separator: Joi.string().trim().max(3).allow("").optional(),
+      includeYear: Joi.boolean().optional(),
+      includeCompany: Joi.boolean().optional(),
+      includeBranch: Joi.boolean().optional(),
+      sequenceLength: Joi.number().integer().min(1).max(12).optional(),
+      fiscalYearStartMonth: Joi.number().integer().min(1).max(12).optional(),
+      allowGaps: Joi.boolean().optional(),
+      isDefault: Joi.boolean().optional(),
+      status: Joi.string().trim().valid(...config.schemeStatuses).optional()
+    }),
+    resetSequence: Joi.object({
+      key: Joi.string().trim().min(1).max(20).required(),
+      newValue: Joi.number().integer().min(0).required()
+    }),
+
+    generateNumber: Joi.object({
+      resourceType: Joi.string().trim().min(1).max(100).required(),
+      companyId: objectIdRef.optional().allow(null, ""),
+      branchId: objectIdRef.optional().allow(null, ""),
+      legalEntityId: objectIdRef.optional().allow(null, ""),
+      resourceUuid: Joi.string().trim().max(100).optional().allow(null, "")
+    }),
+    registerResource: Joi.object({
+      resourceUuid: Joi.string().trim().min(1).max(100).required()
+    }),
+    rollbackSequence: Joi.object({
+      reason: Joi.string().trim().max(1000).optional().allow(null, "")
+    })
+  };
+};
+
+const NUMBERING_SCHEMA_KEYS = new Set(["createScheme", "updateScheme", "resetSequence", "generateNumber", "registerResource", "rollbackSequence"]);
+
+export const numberingSchemas = new Proxy({}, {
+  get(_target, prop) {
+    if (NUMBERING_SCHEMA_KEYS.has(prop)) {
+      return buildNumberingSchemas()[prop];
+    }
+    return undefined;
+  }
+});
 
 export default validate;

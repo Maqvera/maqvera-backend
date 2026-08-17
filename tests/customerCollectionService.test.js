@@ -7,7 +7,10 @@ import {
   isCollectionClosable,
   resolveCollectionStatusAfterPayment,
   addIntervalToDate,
-  computeInstallmentSchedule
+  computeInstallmentSchedule,
+  sortReceivablesByStrategy,
+  buildAllocationPlan,
+  computeCustomerRiskScore
 } from "../services/CustomerCollectionService.js";
 
 test("collection status predicates follow the Requested -> Partially Collected -> Collected -> Closed gating", () => {
@@ -71,4 +74,59 @@ test("computeInstallmentSchedule rejects a Custom schedule that doesn't sum to t
 
 test("computeInstallmentSchedule rejects a missing/empty Custom schedule", () => {
   assert.throws(() => computeInstallmentSchedule({ totalAmount: 1000, frequency: "Custom" }), /customSchedule is required/);
+});
+
+test("sortReceivablesByStrategy orders OldestDueDate by ascending dueDate", () => {
+  const receivables = [{ _id: "a", dueDate: "2027-03-01", outstandingBalance: 100 }, { _id: "b", dueDate: "2027-01-01", outstandingBalance: 50 }];
+  const sorted = sortReceivablesByStrategy(receivables, "OldestDueDate");
+  assert.deepEqual(sorted.map((r) => r._id), ["b", "a"]);
+});
+
+test("sortReceivablesByStrategy orders HighestAmountFirst by descending outstandingBalance", () => {
+  const receivables = [{ _id: "a", dueDate: "2027-03-01", outstandingBalance: 100 }, { _id: "b", dueDate: "2027-01-01", outstandingBalance: 500 }];
+  const sorted = sortReceivablesByStrategy(receivables, "HighestAmountFirst");
+  assert.deepEqual(sorted.map((r) => r._id), ["b", "a"]);
+});
+
+test("sortReceivablesByStrategy leaves Manual order untouched", () => {
+  const receivables = [{ _id: "a", dueDate: "2027-01-01", outstandingBalance: 500 }, { _id: "b", dueDate: "2027-03-01", outstandingBalance: 100 }];
+  assert.deepEqual(sortReceivablesByStrategy(receivables, "Manual").map((r) => r._id), ["a", "b"]);
+});
+
+test("buildAllocationPlan greedily consumes the unallocated amount across ordered receivables, never exceeding either side", () => {
+  const receivables = [{ _id: "a", invoiceNumber: "INV-1", outstandingBalance: 100 }, { _id: "b", invoiceNumber: "INV-2", outstandingBalance: 200 }];
+  const { plan, remainingUnallocated } = buildAllocationPlan(250, receivables);
+  assert.deepEqual(plan, [{ receivableId: "a", invoiceNumber: "INV-1", amount: 100 }, { receivableId: "b", invoiceNumber: "INV-2", amount: 150 }]);
+  assert.equal(remainingUnallocated, 0);
+});
+
+test("buildAllocationPlan reports a real remainingUnallocated when receivables don't cover the full amount", () => {
+  const receivables = [{ _id: "a", invoiceNumber: "INV-1", outstandingBalance: 50 }];
+  const { plan, remainingUnallocated } = buildAllocationPlan(200, receivables);
+  assert.deepEqual(plan, [{ receivableId: "a", invoiceNumber: "INV-1", amount: 50 }]);
+  assert.equal(remainingUnallocated, 150);
+});
+
+test("computeCustomerRiskScore scores a clean customer as Low risk", () => {
+  const config = { customerRiskScoreBands: { Low: 25, Medium: 50, High: 75 } };
+  const result = computeCustomerRiskScore({ overdueCount: 0, totalCollectionCount: 10, maxDaysOverdue: 0, outstandingBalance: 0, creditLimit: 1000, disputeCount: 0, failedPaymentCount: 0, countryRiskTier: null }, config);
+  assert.equal(result.score, 0);
+  assert.equal(result.riskCategory, "Low");
+  assert.deepEqual(result.flags, []);
+});
+
+test("computeCustomerRiskScore combines late payments, aging, credit usage, disputes, and failed payments into a real score", () => {
+  const config = { customerRiskScoreBands: { Low: 25, Medium: 50, High: 75 } };
+  const result = computeCustomerRiskScore({ overdueCount: 5, totalCollectionCount: 10, maxDaysOverdue: 95, outstandingBalance: 950, creditLimit: 1000, disputeCount: 2, failedPaymentCount: 1, countryRiskTier: "High" }, config);
+  // Late: 5/10=0.5 -> 15; Aging: 95>90 -> 20; Credit usage 0.95 -> 20; Disputes: 2*5=10; Failed: 1*5=5; Country High -> 10 = 80
+  assert.equal(result.score, 80);
+  assert.equal(result.riskCategory, "Critical");
+  assert.ok(result.flags.includes("SeverelyAged90Plus"));
+});
+
+test("computeCustomerRiskScore caps the score at 100", () => {
+  const config = { customerRiskScoreBands: { Low: 25, Medium: 50, High: 75 } };
+  const result = computeCustomerRiskScore({ overdueCount: 10, totalCollectionCount: 10, maxDaysOverdue: 200, outstandingBalance: 5000, creditLimit: 1000, disputeCount: 10, failedPaymentCount: 10, countryRiskTier: "High" }, config);
+  assert.equal(result.score, 100);
+  assert.equal(result.riskCategory, "Critical");
 });

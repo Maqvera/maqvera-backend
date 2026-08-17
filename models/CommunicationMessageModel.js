@@ -28,7 +28,9 @@ const CommunicationMessageSchema = new mongoose.Schema({
   sourceModule: {
     type: String,
     required: true,
-    enum: ["CRM", "Booking", "Travel", "Visa", "Finance", "HR", "Inventory", "Sales", "Procurement", "AI", "System"],
+    // "Platform" — Enterprise Subscription Platform (a CORE platform, same
+    // real module label its own AuditLogModel entries already use).
+    enum: ["CRM", "Booking", "Travel", "Visa", "Finance", "HR", "Inventory", "Sales", "Procurement", "AI", "Platform", "System"],
     default: "System",
     index: true
   },

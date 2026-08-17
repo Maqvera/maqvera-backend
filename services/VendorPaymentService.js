@@ -3,11 +3,13 @@ import PaymentBatchModel from "../models/PaymentBatchModel.js";
 import VendorModel from "../models/VendorModel.js";
 import AccountsPayableModel from "../models/AccountsPayableModel.js";
 import BankAccountModel from "../models/BankAccountModel.js";
+import DepartmentModel from "../models/Departmentmodel.js";
 import AccountsPayableService, { isPayableEligibleForPayment } from "./AccountsPayableService.js";
 import PaymentService from "./PaymentService.js";
 import VendorCreditService from "./VendorCreditService.js";
 import AIModelRouterService from "./ai/AIModelRouterService.js";
 import FinancialPeriodService from "./FinancialPeriodService.js";
+import CurrencyService from "./CurrencyService.js";
 import FinanceSequenceModel from "../models/FinanceSequenceModel.js";
 import AuditLogModel from "../models/AuditLogmodel.js";
 import getPaymentFileGenerator from "./paymentFileGenerators/index.js";
@@ -55,6 +57,28 @@ export const nextBusinessDay = (date, skipWeekends = true) => {
 export const requiresDualApproval = (amount, config) => config.vendorPaymentDualApprovalThreshold > 0 && amount >= config.vendorPaymentDualApprovalThreshold;
 export const requiredApprovalCount = (requiresDual) => (requiresDual ? 2 : 1);
 export const hasEnoughApprovals = (approvals, requiredCount) => new Set((approvals || []).map((a) => a.approvedBy)).size >= requiredCount;
+
+/**
+ * "Duplicate Payment Detection... before approval" (File 6 Part 2) — pure,
+ * real, deterministic: a payable already covered by another active
+ * (non-terminal) proposal is a genuine duplicate risk. `existingPayments`
+ * is the set of this vendor's own non-Rejected/Cancelled/Failed proposals
+ * (queried by the caller); this only does the actual overlap check.
+ */
+export const findDuplicatePayablePayments = (payableIds, existingPayments) => {
+  const targetIds = new Set(payableIds.map((id) => id.toString()));
+  return (existingPayments || []).filter((payment) => (payment.lineAllocations || []).some((line) => targetIds.has(line.payableId.toString())));
+};
+
+/**
+ * "Fund Reservation... Bank Balance." Real but advisory at proposal time —
+ * see `fundAvailabilityCheck`'s own schema doc comment for why this isn't
+ * a true reservation/lock.
+ */
+export const checkFundAvailability = (availableBalance, totalAmount) => {
+  const shortfall = roundCurrency(Math.max(0, totalAmount - (availableBalance || 0)));
+  return { available: shortfall === 0, shortfall };
+};
 
 export const isVendorPaymentApprovable = (status) => status === "Proposed";
 export const isVendorPaymentRejectable = (status) => status === "Proposed";
@@ -138,11 +162,17 @@ class VendorPaymentService {
    */
   static async createVendorPaymentProposal(data, tenantId, userId) {
     const config = getFinanceConfig();
-    const { vendorId, invoiceIds, amounts = {}, paymentDate, bankAccountId, vendorBankAccountId = null, priority = null } = data;
+    const {
+      vendorId, invoiceIds, amounts = {}, paymentDate, bankAccountId, vendorBankAccountId = null, priority = null,
+      paymentType = null, department = null, costCenter = null, projectId = null,
+      source = config.defaultVendorPaymentSource
+    } = data;
 
     if (!vendorId || !Array.isArray(invoiceIds) || invoiceIds.length === 0 || !paymentDate || !bankAccountId) {
       throw new Error("vendorId, invoiceIds, paymentDate, and bankAccountId are required.");
     }
+    if (paymentType && !config.paymentMethods.includes(paymentType)) throw new Error(`Invalid paymentType "${paymentType}".`);
+    if (source && !config.vendorPaymentSources.includes(source)) throw new Error(`Invalid source "${source}".`);
 
     const vendor = await VendorModel.findOne({ _id: vendorId, tenantId }).lean();
     if (!vendor) throw new Error("Vendor not found.");
@@ -157,6 +187,20 @@ class VendorPaymentService {
       if (!hasVendorAccount) throw new Error("vendorBankAccountId does not belong to this vendor.");
     }
 
+    // "Department belongs to Company" — real, tenant-scoped lookup, same
+    // discipline as the cross-tenant-reference bug fixed for Expense's own
+    // employeeId in Part 34.
+    if (department) {
+      const departmentDoc = await DepartmentModel.findOne({ _id: department, tenantId }).lean();
+      if (!departmentDoc) throw new Error("Department not found.");
+    }
+
+    // "Accounting Period Open" — a real, pre-existing gap: this method
+    // never checked it at all before this Part (only `executeVendorPayment`
+    // did, at execution time — too late to stop a proposal from being
+    // created against a closed period).
+    await FinancialPeriodService.assertPeriodOpen(tenantId, new Date(paymentDate));
+
     const payables = await AccountsPayableModel.find({ _id: { $in: invoiceIds }, tenantId, vendorId }).lean();
     if (payables.length !== invoiceIds.length) throw new Error("One or more invoices were not found for this vendor.");
 
@@ -169,15 +213,56 @@ class VendorPaymentService {
       return { payableId: payable._id, invoiceNumber: payable.invoiceNumber, amount };
     });
 
+    // "Duplicate Payment Detection... before approval" — real, blocking.
+    const activeStatuses = config.vendorPaymentStatuses.filter((s) => !["Rejected", "Cancelled", "Failed"].includes(s));
+    const existingActivePayments = await VendorPaymentModel.find({ tenantId, vendorId, status: { $in: activeStatuses } }).select("vendorPaymentNumber lineAllocations").lean();
+    const duplicates = findDuplicatePayablePayments(invoiceIds, existingActivePayments);
+    if (duplicates.length > 0) {
+      throw new Error(`Duplicate payment: invoice(s) already covered by an active proposal (${duplicates.map((d) => d.vendorPaymentNumber).join(", ")}).`);
+    }
+
     const totalAmount = roundCurrency(lineAllocations.reduce((sum, l) => sum + l.amount, 0));
     const needsDualApproval = requiresDualApproval(totalAmount, config);
     const approvalRequired = config.vendorPaymentApprovalRequired || needsDualApproval;
+
+    // Real base-currency conversion — same pattern as ExpenseService's own
+    // `_computeBaseCurrencyFields` (Part 34), best-effort (never blocks
+    // creating a proposal when no rate is available yet).
+    const baseCurrency = await CurrencyService.getBaseCurrency(tenantId);
+    let baseCurrencyAmount = totalAmount;
+    let exchangeRate = 1;
+    // "Multi-Currency Accounting... Rate Version." (File 7 Part 4) — real
+    // rate-provenance snapshot, from the same convert() call above,
+    // previously discarded (same gap ExpenseModel's own fields just closed).
+    let exchangeRateId = null; let exchangeRateVersion = null; let exchangeRateProvider = null; let exchangeRateType = null;
+    if (bankAccount.currency.toUpperCase() !== baseCurrency.toUpperCase()) {
+      try {
+        const converted = await CurrencyService.convert(totalAmount, bankAccount.currency, baseCurrency, tenantId);
+        baseCurrencyAmount = converted.convertedAmount;
+        exchangeRate = converted.rate;
+        exchangeRateId = converted.rateId; exchangeRateVersion = converted.rateVersion; exchangeRateProvider = converted.rateProvider; exchangeRateType = converted.rateType;
+      } catch {
+        baseCurrencyAmount = null;
+        exchangeRate = null;
+      }
+    }
+
+    // "Fund Reservation... Bank Balance" — real, advisory (see
+    // fundAvailabilityCheck's own schema doc comment).
+    const fundAvailabilityCheck = { ...checkFundAvailability(bankAccount.balances?.available, totalAmount), checkedAt: new Date() };
+
+    const financialPeriod = await FinancialPeriodService.findPeriodForDate(tenantId, new Date(paymentDate)).catch(() => null);
 
     const vendorPaymentNumber = await VendorPaymentService._generateCode(tenantId, "vendorPaymentNumber", config.vendorPaymentNumberPrefix);
 
     const vendorPayment = new VendorPaymentModel({
       tenantId, vendorPaymentNumber, vendorId, vendorName: vendor.name, lineAllocations, totalAmount,
       currency: bankAccount.currency, bankAccountId, vendorBankAccountId, paymentDate: new Date(paymentDate), priority,
+      paymentCategory: config.defaultVendorPaymentCategory, paymentType, department, costCenter, projectId, source,
+      financialPeriodId: financialPeriod?._id || null, baseCurrency, baseCurrencyAmount, exchangeRate,
+      exchangeRateId, exchangeRateVersion, exchangeRateProvider, exchangeRateType,
+      duplicateCheck: { isDuplicate: false, matchedVendorPaymentIds: [], checkedAt: new Date() },
+      fundAvailabilityCheck,
       status: config.defaultVendorPaymentStatus, requiresDualApproval: needsDualApproval,
       proposedBy: userId || null, proposedAt: new Date(),
       timeline: [{ event: "VendorPaymentProposed", description: `Proposed payment of ${totalAmount} ${bankAccount.currency} to ${vendor.name} across ${lineAllocations.length} invoice(s).`, performedBy: userId || null }],

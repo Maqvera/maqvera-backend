@@ -62,6 +62,16 @@ class BaseGatewayAdapter {
   }
 
   /**
+   * Enterprise Subscription Platform's own Billing Account setup — creates
+   * a real customer/payer profile with the gateway. Default: not
+   * implemented (Manual has no real customer concept to create).
+   * Returns `{ customerId, rawResponse }`.
+   */
+  async createCustomer(params) {
+    throw new Error(`createCustomer() not implemented in ${this.gatewayName}`);
+  }
+
+  /**
    * "Payment Intent -> Payment Provider Selection -> ... -> Payment
    * Execution" (Finance Module Part 18 Part 2). Creates a hosted/
    * client-confirmable session BEFORE any funds move — the real

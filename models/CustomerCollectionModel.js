@@ -55,6 +55,32 @@ const CollectionPaymentSchema = new mongoose.Schema({
   installmentNumber: { type: Number, default: null }
 }, { _id: false });
 
+// File 6 Part 5 — "POST/GET .../attachments." Same real
+// checksum+storeDocumentPdf pattern as ExpenseModel's own
+// ExpenseAttachmentSchema, without that schema's Expense-specific
+// OCR/fraud-scoring fields (there is no claimed amount or category cap to
+// reconcile a collection attachment against).
+const CollectionAttachmentSchema = new mongoose.Schema({
+  filename: { type: String, required: true },
+  url: { type: String, default: null },
+  storageKey: { type: String, default: null },
+  storageProvider: { type: String, default: null },
+  mimeType: { type: String, default: null },
+  fileSize: { type: Number, default: null },
+  checksum: { type: String, default: null },
+  uploadedBy: { type: String, default: null },
+  uploadedAt: { type: Date, default: Date.now }
+});
+
+// "POST/GET .../comments" — free-text staff notes on the collection,
+// distinct from `timeline` (system-observed lifecycle events, still
+// writable via its own POST .../timeline for a manual log line).
+const CollectionCommentSchema = new mongoose.Schema({
+  text: { type: String, required: true },
+  createdBy: { type: String, default: null },
+  createdAt: { type: Date, default: Date.now }
+});
+
 const CustomerCollectionSchema = new mongoose.Schema({
   tenantId: {
     type: String,
@@ -166,6 +192,12 @@ const CustomerCollectionSchema = new mongoose.Schema({
   collectedAt: { type: Date, default: null },
   closedBy: { type: String, default: null },
   closedAt: { type: Date, default: null },
+  // "POST .../reopen" — the mirror of closedBy/closedAt above.
+  reopenedBy: { type: String, default: null },
+  reopenedAt: { type: Date, default: null },
+  reopenReason: { type: String, default: null },
+  attachments: { type: [CollectionAttachmentSchema], default: [] },
+  comments: { type: [CollectionCommentSchema], default: [] },
   timeline: [{
     event: { type: String, required: true },
     description: { type: String, default: null },
@@ -174,7 +206,16 @@ const CustomerCollectionSchema = new mongoose.Schema({
   }],
   createdBy: { type: String, default: null },
   updatedBy: { type: String, default: null }
-}, { timestamps: true });
+}, {
+  timestamps: true,
+  // "Collections support optimistic locking" (AI Coding Rule) — every
+  // service method that mutates this model follows the same
+  // findOne-then-mutate-then-.save() shape (never findOneAndUpdate), so
+  // Mongoose's own real optimistic-concurrency check (VersionError on a
+  // stale .save()) is a correct, working guarantee here, not a fabricated
+  // one bolted onto a findOneAndUpdate-based write path.
+  optimisticConcurrency: true
+});
 
 CustomerCollectionSchema.index({ tenantId: 1, collectionNumber: 1 }, { unique: true });
 CustomerCollectionSchema.index({ tenantId: 1, customerId: 1, status: 1 });

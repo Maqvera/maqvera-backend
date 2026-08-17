@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import { getCorrelationId } from "../utils/correlationContext.js";
 
 const AuditLogSchema = new mongoose.Schema({
     action: {
@@ -37,10 +38,20 @@ const AuditLogSchema = new mongoose.Schema({
         default: null,
         index: true
     },
+    // Enterprise Correlation & Traceability Standard — "Include
+    // Correlation-ID in every audit record." Any call site that already
+    // passes its own `requestId` keeps that value untouched; this default
+    // only fires when one is omitted, and now prefers the CURRENT
+    // request's real correlationId (AsyncLocalStorage — see
+    // utils/correlationContext.js) over the old placeholder string, so an
+    // audit row created without an explicit requestId still traces back
+    // to the real request that caused it. The `system-<timestamp>-<random>`
+    // form remains the honest fallback outside any request context (a
+    // cron scheduler's own audit entries).
     requestId: {
         type: String,
         required: true,
-        default: () => `system-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        default: () => getCorrelationId() || `system-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         index: true
     },
     ipAddress: {

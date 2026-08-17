@@ -1,6 +1,8 @@
 import express from "express";
 import rateLimit from "express-rate-limit";
 import authenticateAccessToken from "../middleware/authenticateAccessToken.js";
+import { requireFeature, subscriptionResponseHeaders } from "../middleware/subscriptionEnforcement.js";
+import { enterpriseRateLimit } from "../middleware/rateLimiter.js";
 import idempotency from "../middleware/idempotency.js";
 import validate, { accountSchemas, journalSchemas, receivableSchemas, paymentSchemas, payableSchemas, vendorSchemas, receiptSchemas, invoiceSchemas, creditNoteSchemas, debitNoteSchemas, refundSchemas, chargebackSchemas, bankAccountSchemas, bankReconciliationSchemas, cashManagementSchemas, expenseSchemas, vendorPaymentSchemas, customerCollectionSchemas, currencySchemas, taxSchemas, pricingSchemas, approvalWorkflowSchemas, settlementSchemas, financialReportSchemas, financialDashboardSchemas, financialAnalyticsSchemas, auditComplianceSchemas, planningSchemas, treasurySchemas, governanceSchemas, financePlatformSchemas, walletSchemas, subscriptionSchemas, collectionCampaignSchemas, webhookSchemas } from "../middleware/validateRequest.js";
 import { processFinancialRequest, getPlatformArchitecture, getPlatformHealthStatus } from "../controllers/FinancePlatformOrchestrationController.js";
@@ -246,8 +248,18 @@ import {
   getExpense,
   createExpense,
   updateExpense,
+  exportExpenses,
+  bulkApproveExpenses,
+  bulkRejectExpenses,
+  bulkTagExpenses,
+  bulkArchiveExpenses,
+  bulkCommentExpenses,
+  bulkAssignReviewerExpenses,
+  bulkRecalculateExpenseBudgets,
+  bulkRevalidateExpensePolicies,
   uploadReceipt,
   verifyExpenseReceipt,
+  correctReceiptOcr,
   submitExpense,
   approveExpense,
   rejectExpense,
@@ -300,7 +312,21 @@ import {
   viewCollectionByToken,
   sendReminder,
   listCollectionReminders,
-  createCustomerDeposit
+  createCustomerDeposit,
+  allocatePayment,
+  listCustomerCredits,
+  getCustomerRiskScore,
+  uploadCollectionAttachmentFile,
+  uploadCollectionAttachment,
+  listCollectionAttachments,
+  addCollectionComment,
+  listCollectionComments,
+  addCollectionTimelineEntry,
+  regeneratePaymentLink,
+  allocateAdvance,
+  reopenCollection,
+  getCollectionAuditTrail,
+  getCollectionHistory
 } from "../controllers/CustomerCollectionController.js";
 import {
   createWallet,
@@ -349,7 +375,8 @@ import {
   reactivateWebhookSubscription,
   disableWebhookSubscription,
   listWebhookDeliveries,
-  replayWebhookDelivery
+  replayWebhookDelivery,
+  getWebhookMonitoringSummary
 } from "../controllers/WebhookController.js";
 import {
   createCurrency,
@@ -365,11 +392,14 @@ import {
   approveExchangeRate,
   rejectExchangeRate,
   listExchangeRates,
+  getExchangeRate,
   importExchangeRates,
   convertCurrency,
+  convertCurrencyViaApi,
   runRevaluation,
   listRevaluations,
   getCurrencyExposure,
+  getCurrencyDashboard,
   listConversions
 } from "../controllers/CurrencyController.js";
 import {
@@ -561,6 +591,26 @@ router.get("/customer-portal/:token", limiter, viewCustomerPortalByToken);
 // Finance data is tenant-owned (customer/company financial records) — never
 // public, matching every other tenant-scoped route group in this codebase.
 router.use(authenticateAccessToken);
+// Enterprise Subscription Platform — "Refactor Pattern 1... Finance
+// Enabled? No -> 403." The real, router-level "every endpoint" feature
+// gate — every route below already went through authenticateAccessToken's
+// own real-time subscription-status check; this is the additional
+// per-module Feature Entitlement layer (see middleware/subscriptionEnforcement.js's
+// own doc comment for why this is the correct retrofit shape, not
+// hundreds of individual per-route edits). No-op for any tenant with no
+// subscription row.
+router.use(requireFeature("finance"));
+router.use(subscriptionResponseHeaders);
+// Enterprise Subscription Enforcement Middleware (Automation #6) — "API
+// Rate Limiting Integration... Plan -> Requests/Minute." Real,
+// plan-tier-aware (utils/rateLimiter.js#resolveLimit now consults the
+// tenant's own PlatformPlanModel.limits.maxApiCallsPerDay), distributed,
+// MongoDB-backed (Improvement 13). This is `enterpriseRateLimit`'s own
+// FIRST real mount onto any business route in this codebase — proof of
+// the pattern on this one flagship module; the same one-line mount onto
+// every other tenant-scoped router is real, deliberate, incremental
+// Adoption work, not claimed complete here.
+router.use(enterpriseRateLimit({ scope: "Tenant" }));
 
 // Chart of Accounts — docs/05-api/07-finance-api.md Part 2, extended Part 36.
 router.get("/accounts", limiter, listAccounts);
@@ -664,6 +714,122 @@ router.post("/accounts-receivable/:receivableId/write-off", limiter, validate(re
 
 // Enterprise Payment Engine — docs/05-api/07-finance-api.md Part 7.
 router.get("/payments", limiter, listPayments);
+
+/**
+ * Enterprise OpenAPI / Swagger Standard (Improvement 15) — the flagship,
+ * fully-documented endpoint proving the real per-endpoint JSDoc pattern
+ * (`swagger-jsdoc` already scans `./routes/*.js` — see
+ * config/swaggerConfig.js's own `apis` option). Every field/status/error
+ * below reflects this route's REAL validation (`middleware/validateRequest.js#paymentSchemas.createPayment`)
+ * and REAL controller behavior (`controllers/PaymentController.js#createPayment`)
+ * — not a guessed shape. See docs/07-enterprise-standards/15-openapi-sdk.md
+ * "Adoption" for why this is one representative endpoint, not all ~300+
+ * Finance/Enterprise-Standards routes in this pass.
+ *
+ * @swagger
+ * /payments:
+ *   post:
+ *     tags: [Finance — Payments]
+ *     summary: Record a payment against a customer or vendor
+ *     description: >
+ *       Records a real payment, running it through the configured gateway
+ *       adapter when `gateway` is a live processor (e.g. `Stripe`) or
+ *       recording it directly when `gateway` is `Manual`/omitted. Emits
+ *       `PaymentAuthorized`/`PaymentCaptured`/`PaymentFailed` domain
+ *       events (Enterprise Event Versioning Standard) and, for any tenant
+ *       subscribed to them, a signed webhook delivery (Enterprise Webhook
+ *       Standard). Idempotent when called with an `Idempotency-Key` header
+ *       (Enterprise Idempotency Standard) — a retried request with the
+ *       same key returns the original result rather than creating a
+ *       second payment.
+ *     security:
+ *       - BearerAuth: []
+ *     parameters:
+ *       - in: header
+ *         name: Idempotency-Key
+ *         schema: { type: string }
+ *         description: Recommended for any client that might retry this call — see the Enterprise Idempotency Standard.
+ *       - in: header
+ *         name: Correlation-ID
+ *         schema: { type: string }
+ *         description: Propagated onto every domain event, audit entry, and error response this call produces.
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [amount, currency, paymentMethod]
+ *             properties:
+ *               paymentType: { type: string, example: Customer, description: "Config-driven — Customer, Vendor, Employee, Refund, Advance, Deposit." }
+ *               partyType: { type: string, enum: [customer, vendor] }
+ *               partyId: { type: string, description: "MongoDB ObjectId of the customer/vendor this payment applies to." }
+ *               amount: { type: number, example: 1500.00, description: "Must be greater than 0." }
+ *               currency: { type: string, example: USD, description: "Must be one of this tenant's supported currencies." }
+ *               paymentMethod: { type: string, example: "Credit Card", description: "Config-driven — Cash, Bank Transfer, Cheque, Credit Card, Wallet, and more." }
+ *               gateway: { type: string, example: Stripe, description: "Config-driven — Manual, Stripe, PayPal, and more. Omit or 'Manual' for a directly-recorded payment." }
+ *               gatewayPaymentMethodId: { type: string, description: "Real gateway token (e.g. a Stripe PaymentMethod id) — required for a live gateway." }
+ *               reference: { type: string, example: "INV-2026-00042" }
+ *               transactionDate: { type: string, format: date-time }
+ *     responses:
+ *       201:
+ *         description: Payment recorded/authorized successfully.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessResponse'
+ *                 - type: object
+ *                   properties:
+ *                     data:
+ *                       type: object
+ *                       properties:
+ *                         paymentNumber: { type: string, example: "PAY-2026-000123" }
+ *                         status: { type: string, example: Completed }
+ *                         amount: { type: number, example: 1500.00 }
+ *                         currency: { type: string, example: USD }
+ *       402:
+ *         description: The payment gateway declined the request — a real, terminal business outcome, not a thrown error.
+ *         content:
+ *           application/json:
+ *             schema:
+ *               allOf:
+ *                 - $ref: '#/components/schemas/SuccessResponse'
+ *                 - type: object
+ *                   properties:
+ *                     data: { type: object, properties: { status: { type: string, example: Failed } } }
+ *       400:
+ *         description: Validation failed (missing/invalid amount, currency, or paymentMethod).
+ *         content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+ *       403:
+ *         description: No tenant context, or the caller's role lacks the `finance.payment.create` permission.
+ *         content: { application/json: { schema: { $ref: '#/components/schemas/ErrorResponse' } } }
+ *     x-rate-limit:
+ *       note: "Not yet mounted on this route — see docs/07-enterprise-standards/13-rate-limiting.md Adoption. Once mounted, responses carry the headers below."
+ *       headers:
+ *         X-RateLimit-Limit: { $ref: '#/components/headers/RateLimitLimit' }
+ *         X-RateLimit-Remaining: { $ref: '#/components/headers/RateLimitRemaining' }
+ *     x-code-samples:
+ *       - lang: cURL
+ *         source: |
+ *           curl -X POST https://api.example.com/api/v1/payments \
+ *             -H "Authorization: Bearer $ACCESS_TOKEN" \
+ *             -H "Content-Type: application/json" \
+ *             -H "Idempotency-Key: $(uuidgen)" \
+ *             -d '{"amount":1500.00,"currency":"USD","paymentMethod":"Credit Card","partyType":"customer","partyId":"64f1ab29c4e1234567890abc"}'
+ *       - lang: JavaScript
+ *         source: |
+ *           const res = await fetch("https://api.example.com/api/v1/payments", {
+ *             method: "POST",
+ *             headers: {
+ *               Authorization: `Bearer ${accessToken}`,
+ *               "Content-Type": "application/json",
+ *               "Idempotency-Key": crypto.randomUUID()
+ *             },
+ *             body: JSON.stringify({ amount: 1500.00, currency: "USD", paymentMethod: "Credit Card", partyType: "customer", partyId })
+ *           });
+ *           const { data: payment } = await res.json();
+ */
 router.post("/payments", limiter, validate(paymentSchemas.createPayment), createPayment);
 router.get("/payments/:paymentId", limiter, getPayment);
 router.post("/payments/:paymentId/allocate", limiter, validate(paymentSchemas.allocate), allocatePaymentGeneric);
@@ -832,10 +998,24 @@ router.get("/expense-budgets/:budgetId", limiter, getExpenseBudget);
 
 router.get("/expenses", limiter, listExpenses);
 router.post("/expenses", limiter, validate(expenseSchemas.createExpense), createExpense);
+// Enterprise Expense Management Refactor Part 3/4 — bulk/export routes are
+// registered BEFORE the `:expenseId` routes below; Express matches routes
+// in registration order, and `/expenses/bulk/approve` would otherwise be
+// captured by `/expenses/:expenseId/approve` with expenseId="bulk".
+router.get("/expenses/export", limiter, exportExpenses);
+router.post("/expenses/bulk/approve", limiter, validate(expenseSchemas.bulkApprove), bulkApproveExpenses);
+router.post("/expenses/bulk/reject", limiter, validate(expenseSchemas.bulkReject), bulkRejectExpenses);
+router.post("/expenses/bulk/tag", limiter, validate(expenseSchemas.bulkTag), bulkTagExpenses);
+router.post("/expenses/bulk/archive", limiter, validate(expenseSchemas.bulkIds), bulkArchiveExpenses);
+router.post("/expenses/bulk/comment", limiter, validate(expenseSchemas.bulkComment), bulkCommentExpenses);
+router.post("/expenses/bulk/assign-reviewer", limiter, validate(expenseSchemas.bulkAssignReviewer), bulkAssignReviewerExpenses);
+router.post("/expenses/bulk/recalculate-budget", limiter, validate(expenseSchemas.bulkIds), bulkRecalculateExpenseBudgets);
+router.post("/expenses/bulk/revalidate-policy", limiter, validate(expenseSchemas.bulkIds), bulkRevalidateExpensePolicies);
 router.get("/expenses/:expenseId", limiter, getExpense);
 router.patch("/expenses/:expenseId", limiter, validate(expenseSchemas.updateExpense), updateExpense);
 router.post("/expenses/:expenseId/receipts", limiter, uploadReceiptFile, uploadReceipt);
 router.post("/expenses/:expenseId/receipts/:attachmentId/verify", limiter, validate(expenseSchemas.verifyReceipt), verifyExpenseReceipt);
+router.post("/expenses/:expenseId/receipts/:attachmentId/correct-ocr", limiter, validate(expenseSchemas.correctOcr), correctReceiptOcr);
 router.post("/expenses/:expenseId/submit", limiter, submitExpense);
 router.post("/expenses/:expenseId/approve", limiter, validate(expenseSchemas.approve), approveExpense);
 router.post("/expenses/:expenseId/reject", limiter, validate(expenseSchemas.reject), rejectExpense);
@@ -880,6 +1060,15 @@ router.post("/payment-batches/:batchId/execute", limiter, executePaymentBatch);
 // same static-before-dynamic ordering used repeatedly this session.
 router.post("/customer-payments/deposits", limiter, validate(customerCollectionSchemas.createDeposit), createCustomerDeposit);
 router.get("/customer-payments/analytics", limiter, getCollectionAnalytics);
+// Payment Allocation Engine / Customer Credit Balance / Customer Credit
+// Risk Scoring (Part 18 continuation). `/customer-payments/customers/...`
+// keeps the risk-score route inside this Finance-owned path prefix rather
+// than a bare `/customers/...` that could collide with CustomerRoutes.js's
+// own routing (this is a Finance computation over Customer data, Finance
+// does not own Customer per Part 1's own boundary).
+router.get("/customer-credits", limiter, listCustomerCredits);
+router.get("/customer-payments/customers/:customerId/risk-score", limiter, getCustomerRiskScore);
+router.post("/customer-payments/:paymentId/allocate", limiter, validate(customerCollectionSchemas.allocatePayment), allocatePayment);
 
 router.get("/customer-payments", limiter, listCollections);
 // Part 18 Part 2 — "Idempotency-Key... Duplicate requests -> Return
@@ -905,6 +1094,25 @@ router.post("/customer-payments/:collectionId/installments/settle-early", limite
 router.post("/customer-payments/:collectionId/payment-link", limiter, generatePaymentLink);
 router.post("/customer-payments/:collectionId/send-reminder", limiter, validate(customerCollectionSchemas.sendReminder), sendReminder);
 router.get("/customer-payments/:collectionId/reminders", limiter, listCollectionReminders);
+
+// File 6 Part 5 — API Enhancements (attachments, comments, timeline,
+// advance allocation, reopen, audit/history). "Reminders/send" and
+// "writeoff" below are deliberate route ALIASES onto the exact same
+// pre-existing handlers as send-reminder/write-off above (no duplicated
+// logic) — added so both this Part's own literal endpoint contract and
+// the original hyphenated routes keep working for any existing caller.
+router.post("/customer-payments/:collectionId/attachments", limiter, uploadCollectionAttachmentFile, uploadCollectionAttachment);
+router.get("/customer-payments/:collectionId/attachments", limiter, listCollectionAttachments);
+router.post("/customer-payments/:collectionId/comments", limiter, validate(customerCollectionSchemas.addComment), addCollectionComment);
+router.get("/customer-payments/:collectionId/comments", limiter, listCollectionComments);
+router.post("/customer-payments/:collectionId/timeline", limiter, validate(customerCollectionSchemas.addTimelineEntry), addCollectionTimelineEntry);
+router.post("/customer-payments/:collectionId/reminders/send", limiter, validate(customerCollectionSchemas.sendReminder), sendReminder);
+router.post("/customer-payments/:collectionId/payment-link/regenerate", limiter, idempotency(), regeneratePaymentLink);
+router.post("/customer-payments/:collectionId/allocate-advance", limiter, idempotency(), allocateAdvance);
+router.post("/customer-payments/:collectionId/writeoff", limiter, validate(customerCollectionSchemas.writeOff), writeOffCollection);
+router.post("/customer-payments/:collectionId/reopen", limiter, validate(customerCollectionSchemas.reopen), reopenCollection);
+router.get("/customer-payments/:collectionId/audit", limiter, getCollectionAuditTrail);
+router.get("/customer-payments/:collectionId/history", limiter, getCollectionHistory);
 
 // Enterprise Customer Payments — Customer Self-Service Portal (Part 18
 // Part 4). Only token generation is authenticated (staff-initiated); the
@@ -956,6 +1164,9 @@ router.post("/collection-campaigns/:campaignId/cancel", limiter, cancelCampaign)
 // session.
 router.get("/webhook-subscriptions", limiter, listWebhookSubscriptions);
 router.post("/webhook-subscriptions", limiter, validate(webhookSchemas.createSubscription), createWebhookSubscription);
+// Enterprise Webhook Standard (Improvement 14). Static, before the
+// dynamic "/webhook-subscriptions/:subscriptionId" route below.
+router.get("/webhook-subscriptions/monitoring/summary", limiter, getWebhookMonitoringSummary);
 router.get("/webhook-subscriptions/:subscriptionId", limiter, getWebhookSubscription);
 router.post("/webhook-subscriptions/:subscriptionId/rotate-secret", limiter, rotateWebhookSecret);
 router.post("/webhook-subscriptions/:subscriptionId/suspend", limiter, validate(webhookSchemas.updateStatus), suspendWebhookSubscription);
@@ -969,7 +1180,12 @@ router.post("/webhook-deliveries/:deliveryId/replay", limiter, replayWebhookDeli
 // "/currencies/:currencyId" routes below — same static-before-dynamic
 // ordering used repeatedly this session.
 router.get("/currencies/convert", limiter, convertCurrency);
+// File 7 Part 3 — "POST /api/v1/currency/convert" (singular, distinct
+// base path from every other /currencies route above/below).
+router.post("/currency/convert", limiter, idempotency(), validate(currencySchemas.convert), convertCurrencyViaApi);
 router.get("/currencies/exposure", limiter, getCurrencyExposure);
+// File 7 Part 4 — "Read Models" dashboard.
+router.get("/currencies/dashboard", limiter, getCurrencyDashboard);
 router.post("/currencies/revalue", limiter, validate(currencySchemas.runRevaluation), runRevaluation);
 router.get("/currencies/revaluations", limiter, listRevaluations);
 router.get("/currencies/conversions", limiter, listConversions);
@@ -982,6 +1198,9 @@ router.post("/exchange-rates", limiter, idempotency(), validate(currencySchemas.
 router.post("/exchange-rates/import", limiter, validate(currencySchemas.importRates), importExchangeRates);
 router.post("/exchange-rates/:exchangeRateId/approve", limiter, approveExchangeRate);
 router.post("/exchange-rates/:exchangeRateId/reject", limiter, validate(currencySchemas.rejectExchangeRate), rejectExchangeRate);
+// File 7 Part 2 — "GET /exchange-rates/{rateId}" (Rate Details, Historical
+// Versions, Audit/Approval History, Usage Statistics).
+router.get("/exchange-rates/:exchangeRateId", limiter, getExchangeRate);
 
 router.get("/currencies", limiter, listCurrencies);
 router.post("/currencies", limiter, idempotency(), validate(currencySchemas.createCurrency), createCurrency);

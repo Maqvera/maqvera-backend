@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import mongoose from "mongoose";
 import ExpenseModel from "../models/ExpenseModel.js";
 import ExpenseBudgetModel from "../models/ExpenseBudgetModel.js";
 import UserModel from "../models/Usermodel.js";
@@ -9,12 +10,15 @@ import CashLocationModel from "../models/CashLocationModel.js";
 import BankAccountService from "./BankAccountService.js";
 import CashManagementService from "./CashManagementService.js";
 import AccountsPayableService from "./AccountsPayableService.js";
+import AccountsPayableModel from "../models/AccountsPayableModel.js";
+import JournalModel from "../models/JournalModel.js";
 import JournalService from "./JournalService.js";
 import FinancialPeriodService from "./FinancialPeriodService.js";
 import FinanceSequenceModel from "../models/FinanceSequenceModel.js";
 import AuditLogModel from "../models/AuditLogmodel.js";
 import ExpenseOcrService from "./ExpenseOcrService.js";
 import ApprovalWorkflowService from "./ApprovalWorkflowService.js";
+import CommunicationPlatformService from "./CommunicationPlatformService.js";
 import CurrencyService from "./CurrencyService.js";
 import TaxService from "./TaxService.js";
 import { storeDocumentPdf } from "../utils/documentPdfStorage.js";
@@ -106,6 +110,32 @@ export const deriveAccountingStatus = (expense) => {
 };
 
 /**
+ * "Reimbursement Status" (Enterprise Expense Management Refactor Part 3/4)
+ * — a fourth real, read-time-derived view, same discipline as the other
+ * three: never a separately-persisted, potentially-inconsistent field.
+ */
+export const deriveReimbursementStatus = (expense) => {
+  if (["Rejected", "Cancelled"].includes(expense?.status)) return "NotApplicable";
+  if (["Reimbursed", "Closed"].includes(expense?.status)) return "Reimbursed";
+  if (expense?.status === "Approved") return "PendingReimbursement";
+  return "NotYetApproved";
+};
+
+/** Real, deterministic rank mirroring `deriveApprovalStatus` exactly — used
+ * only to sort by the derived `approvalStatus` in an aggregation pipeline
+ * (Mongo can't sort by a JS-computed field via a plain `.find()`). */
+const APPROVAL_STATUS_SORT_EXPR = {
+  $switch: {
+    branches: [
+      { case: { $in: ["$status", ["Approved", "Reimbursed", "Closed"]] }, then: 2 },
+      { case: { $eq: ["$status", "Under Review"] }, then: 1 },
+      { case: { $eq: ["$status", "Rejected"] }, then: 3 }
+    ],
+    default: 0
+  }
+};
+
+/**
  * "Fraud Risk Score" (Part 35's own Receipt Information ask) — a real,
  * deterministic 0-100 heuristic mirroring Part 32's
  * FinancialGovernanceService fraud-rule style (checksum-duplicate match,
@@ -153,6 +183,20 @@ export const computeAllocationAmounts = (allocations, totalAmount) => {
   return allocations.map((a) => ({ ...a, amount: roundCurrency((totalAmount * a.percentage) / 100) }));
 };
 
+/**
+ * "Configurable Expense Category Hierarchy... Level 1 -> Level 2" (Part
+ * 44) — pure validation that `category` (Level 2) actually belongs to the
+ * supplied `categoryGroup` (Level 1) per the real, config-driven
+ * `expenseCategoryHierarchy`. A no-op when `categoryGroup` isn't supplied
+ * (every pre-Part-44 caller).
+ */
+export const validateCategoryGroup = (categoryGroup, category, hierarchy) => {
+  if (!categoryGroup) return;
+  const level2 = hierarchy[categoryGroup];
+  if (!level2) throw new Error(`Invalid categoryGroup "${categoryGroup}".`);
+  if (!level2.includes(category)) throw new Error(`Category "${category}" does not belong to categoryGroup "${categoryGroup}".`);
+};
+
 /** A budget `period` string is either a bare year ("2027") or a year-month ("2027-04"). */
 export const doesPeriodContainDate = (period, date) => {
   const d = new Date(date);
@@ -188,11 +232,43 @@ export const isExpenseReimbursable = (status) => status === "Approved";
 export const isExpenseCloseable = (status) => status === "Reimbursed";
 export const isReceiptUploadable = (status) => !RECEIPT_UPLOADABLE_BLOCKED_STATUSES.has(status);
 
+/**
+ * "Approval History... Each approval contains Approver, Role, Decision,
+ * Comments, Decision Time, Digital Signature, Approval SLA, Delegated
+ * From, Escalated." Merges this expense's own real `approvals[]`
+ * (level/approvedBy/approvedAt/notes — always present, the authoritative
+ * lifecycle gate) with the matching decision on the real
+ * `ApprovalRequestModel` (when one exists — see `submitExpense`'s own doc
+ * comment on why the two aren't always both present) for the fields only
+ * the real Approval Platform tracks: `signatureHash` (real per-decision
+ * SHA-256, never fabricated), `decidedOnBehalfOf` ("Delegated From"), and
+ * the resolved level's own `slaDeadline`/the request's `escalatedAt`.
+ * Never guesses a match across levels of different names/order.
+ */
+export const buildApprovalHistory = (expense, approvalRequest) => {
+  return (expense.approvals || []).map((approval, index) => {
+    const decision = approvalRequest?.decisions?.[index];
+    const level = approvalRequest?.levels?.[index];
+    return {
+      level: approval.level,
+      approver: approval.approvedBy,
+      decision: "Approved",
+      comments: approval.notes,
+      decidedAt: approval.approvedAt,
+      signatureHash: decision?.signatureHash || null,
+      delegatedFrom: decision?.decidedOnBehalfOf || null,
+      slaDeadline: level?.slaDeadline || null,
+      escalated: !!(approvalRequest?.escalatedAt && level && approvalRequest.escalatedAt <= (approval.approvedAt || new Date()))
+    };
+  });
+};
+
 const withDerivedStatuses = (expense) => ({
   ...expense,
   approvalStatus: deriveApprovalStatus(expense.status),
   budgetStatus: deriveBudgetStatus(expense.budgetCheck),
-  accountingStatus: deriveAccountingStatus(expense)
+  accountingStatus: deriveAccountingStatus(expense),
+  reimbursementStatus: deriveReimbursementStatus(expense)
 });
 
 // ---------------------------------------------------------------------------
@@ -219,8 +295,8 @@ class ExpenseService {
   static async createExpense(data, tenantId, userId, auditContext = {}) {
     const config = getFinanceConfig();
     const {
-      employeeId, department = null, projectId = null, costCenter = null, businessUnit = null, branch = null, tags = [],
-      allocations = [], category, expenseType = config.defaultExpenseType, currency, expenseDate, description, paymentMethod = null,
+      employeeId, department = null, projectId = null, costCenter = null, profitCenter = null, businessUnit = null, branch = null, tags = [],
+      allocations = [], category, categoryGroup = null, expenseType = config.defaultExpenseType, currency, expenseDate, description, paymentMethod = null,
       amount = null, perDiem = null, mileage = null, corporateCard = null, country = null, taxCode = null
     } = data;
 
@@ -228,6 +304,7 @@ class ExpenseService {
       throw new Error("employeeId, category, currency, expenseDate, and description are required.");
     }
     if (!config.expenseCategories.includes(category)) throw new Error(`Invalid category "${category}".`);
+    validateCategoryGroup(categoryGroup, category, config.expenseCategoryHierarchy);
     if (!config.expenseTypes.includes(expenseType)) throw new Error(`Invalid expenseType "${expenseType}".`);
     if (!config.supportedCurrencies.includes(currency)) throw new Error(`Unsupported currency "${currency}".`);
     if (paymentMethod && !config.expensePaymentMethods.includes(paymentMethod)) throw new Error(`Invalid paymentMethod "${paymentMethod}".`);
@@ -273,8 +350,8 @@ class ExpenseService {
     const baseCurrencyFields = await ExpenseService._computeBaseCurrencyFields(resolvedAmount, currency, tenantId);
 
     const expense = await ExpenseModel.create({
-      tenantId, expenseNumber, employeeId, employeeName: employee.username, department, projectId, costCenter, businessUnit, branch, tags, allocations: allocationsWithAmounts,
-      category, expenseType, amount: resolvedAmount, currency, ...baseCurrencyFields, country, taxCode, expenseDate: new Date(expenseDate), description, paymentMethod,
+      tenantId, expenseNumber, employeeId, employeeName: employee.username, department, projectId, costCenter, profitCenter, businessUnit, branch, tags, allocations: allocationsWithAmounts,
+      category, categoryGroup, expenseType, amount: resolvedAmount, currency, ...baseCurrencyFields, country, taxCode, expenseDate: new Date(expenseDate), description, paymentMethod,
       corporateCard: corporateCard || undefined,
       perDiem: perDiemData, mileage: mileageData,
       status: config.defaultExpenseStatus,
@@ -299,13 +376,13 @@ class ExpenseService {
   static async _computeBaseCurrencyFields(amount, currency, tenantId) {
     const baseCurrency = await CurrencyService.getBaseCurrency(tenantId);
     if (currency.toUpperCase() === baseCurrency.toUpperCase()) {
-      return { baseCurrency, baseCurrencyAmount: amount, exchangeRate: 1 };
+      return { baseCurrency, baseCurrencyAmount: amount, exchangeRate: 1, exchangeRateId: null, exchangeRateVersion: null, exchangeRateProvider: null, exchangeRateType: null };
     }
     try {
-      const { convertedAmount, rate } = await CurrencyService.convert(amount, currency, baseCurrency, tenantId);
-      return { baseCurrency, baseCurrencyAmount: convertedAmount, exchangeRate: rate };
+      const { convertedAmount, rate, rateId, rateVersion, rateProvider, rateType } = await CurrencyService.convert(amount, currency, baseCurrency, tenantId);
+      return { baseCurrency, baseCurrencyAmount: convertedAmount, exchangeRate: rate, exchangeRateId: rateId, exchangeRateVersion: rateVersion, exchangeRateProvider: rateProvider, exchangeRateType: rateType };
     } catch {
-      return { baseCurrency, baseCurrencyAmount: null, exchangeRate: null };
+      return { baseCurrency, baseCurrencyAmount: null, exchangeRate: null, exchangeRateId: null, exchangeRateVersion: null, exchangeRateProvider: null, exchangeRateType: null };
     }
   }
 
@@ -350,45 +427,315 @@ class ExpenseService {
     };
   }
 
-  static async listExpenses(query, tenantId) {
-    const config = getFinanceConfig();
-    const { employeeId, department, category, expenseType, status, businessUnit, branch, currency } = query;
-    // `projectId` is the spec's own query param name; `project` kept as a
-    // backward-compatible alias for whichever one is supplied.
+  /**
+   * Shared by `listExpenses` and `exportExpenses` — "Advanced Filtering"
+   * (Enterprise Expense Management Refactor Part 3/4). `approvalStatus`/
+   * `accountingStatus`/`reimbursementStatus` are read-time-DERIVED (see
+   * `deriveApprovalStatus`/`deriveAccountingStatus`/`deriveReimbursementStatus`
+   * above) — filtering by them means translating the spec's own vocabulary
+   * back into the real, underlying stored conditions those functions
+   * derive from, never a second, independently-fabricated status field.
+   * `merchant`/`subscription`/`company`/`branch`-as-isolation from the
+   * spec are dropped — see ExpenseModel.js's own doc comment: no
+   * Merchant/Subscription backing entity exists, `company` is redundant
+   * with the caller's own `tenantId` scope, and `branch` (kept as a plain
+   * filterable descriptive field, unchanged since Part 34) is never an
+   * isolation boundary per the standing master instructions §3.
+   */
+  static _buildExpenseFilter(query, tenantId) {
+    const {
+      employeeId, department, category, categoryGroup, expenseType, status, businessUnit, branch, currency, costCenter, profitCenter,
+      paymentMethod, createdBy, approvalStatus, accountingStatus, reimbursementStatus, archived, q
+    } = query;
     const project = query.projectId || query.project;
     const filter = { tenantId };
     if (employeeId) filter.employeeId = employeeId;
     if (department) filter.department = department;
     if (category) filter.category = category;
+    if (categoryGroup) filter.categoryGroup = categoryGroup;
     if (expenseType) filter.expenseType = expenseType;
     if (status) filter.status = status;
     if (project) filter.projectId = project;
     if (businessUnit) filter.businessUnit = businessUnit;
     if (branch) filter.branch = branch;
     if (currency) filter.currency = currency;
+    if (costCenter) filter.costCenter = costCenter;
+    if (profitCenter) filter.profitCenter = profitCenter;
+    if (paymentMethod) filter.paymentMethod = paymentMethod;
+    if (createdBy) filter.createdBy = createdBy;
+    if (archived !== undefined) filter.archived = archived === true || archived === "true";
     if (query.dateFrom || query.dateTo) {
       filter.expenseDate = {};
       if (query.dateFrom) filter.expenseDate.$gte = new Date(query.dateFrom);
       if (query.dateTo) filter.expenseDate.$lte = new Date(query.dateTo);
     }
 
-    const page = Math.max(parseInt(query.page, 10) || 1, 1);
+    const derivedConditions = [];
+    if (approvalStatus) {
+      const byApprovalStatus = {
+        Approved: { status: { $in: ["Approved", "Reimbursed", "Closed"] } },
+        PendingApproval: { status: "Under Review" },
+        Rejected: { status: "Rejected" },
+        NotSubmitted: { status: { $in: ["Draft", "Returned"] } }
+      };
+      if (byApprovalStatus[approvalStatus]) derivedConditions.push(byApprovalStatus[approvalStatus]);
+    }
+    if (accountingStatus) {
+      const postedCondition = { $or: [{ "accrual.journalId": { $ne: null } }, { "reimbursement.journalId": { $ne: null } }] };
+      const reimbursableStatuses = { status: { $in: ["Approved", "Reimbursed", "Closed"] } };
+      if (accountingStatus === "Posted") derivedConditions.push(postedCondition);
+      else if (accountingStatus === "ReimbursedNotPosted") derivedConditions.push(reimbursableStatuses, { "accrual.journalId": null, "reimbursement.journalId": null });
+      else if (accountingStatus === "NotPosted") derivedConditions.push({ status: { $nin: ["Approved", "Reimbursed", "Closed"] } }, { "accrual.journalId": null, "reimbursement.journalId": null });
+    }
+    if (reimbursementStatus) {
+      const byReimbursementStatus = {
+        NotApplicable: { status: { $in: ["Rejected", "Cancelled"] } },
+        Reimbursed: { status: { $in: ["Reimbursed", "Closed"] } },
+        PendingReimbursement: { status: "Approved" },
+        NotYetApproved: { status: { $in: ["Draft", "Submitted", "Under Review", "Returned"] } }
+      };
+      if (byReimbursementStatus[reimbursementStatus]) derivedConditions.push(byReimbursementStatus[reimbursementStatus]);
+    }
+    if (derivedConditions.length > 0) filter.$and = derivedConditions;
+
+    // "Full Text Search" (Part 3/4) — a real, bounded convenience search
+    // over the fields this schema actually stores (expenseNumber,
+    // description, employeeName, tags). Comprehensive cross-module full
+    // text search (OCR text, receipt/invoice/reference numbers) already
+    // exists via the pre-existing Enterprise Search platform
+    // (`GET /api/v1/search?entityType=Expense&q=...`, Part 28's
+    // `SearchEngineService.indexExpense`) — not duplicated here.
+    // Merchant/Subscription name search is dropped (no backing field).
+    if (q) {
+      const escaped = String(q).trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      if (escaped) {
+        const regex = new RegExp(escaped, "i");
+        filter.$or = [{ expenseNumber: regex }, { description: regex }, { employeeName: regex }, { tags: regex }];
+      }
+    }
+
+    return filter;
+  }
+
+  static async listExpenses(query, tenantId) {
+    const config = getFinanceConfig();
+    const filter = ExpenseService._buildExpenseFilter(query, tenantId);
     const pageSize = Math.min(Math.max(parseInt(query.pageSize, 10) || config.defaultPageSize, 1), config.maxPageSize);
+
+    // "Pagination... Cursor Pagination, Infinite Scroll" — a real, bounded
+    // keyset alternative to offset pagination: sorted strictly by `_id`
+    // descending (real, deterministic — the caller's own `sort` param is
+    // not honored in cursor mode, since arbitrary-field keyset cursors
+    // would require encoding that field's value too; documented rather
+    // than faked). Offset pagination (`page`/`pageSize`) remains the
+    // default and supports the caller's own `sort`.
+    if (query.cursor) {
+      if (!mongoose.Types.ObjectId.isValid(query.cursor)) throw new Error("Invalid cursor.");
+      const cursorFilter = { ...filter, _id: { $lt: new mongoose.Types.ObjectId(query.cursor) } };
+      const items = await ExpenseModel.find(cursorFilter).sort({ _id: -1 }).limit(pageSize + 1).lean();
+      const hasMore = items.length > pageSize;
+      const page = items.slice(0, pageSize);
+      return { items: page.map(withDerivedStatuses), pagination: { pageSize, hasMore, nextCursor: hasMore ? page[page.length - 1]._id.toString() : null } };
+    }
+
+    const page = Math.max(parseInt(query.page, 10) || 1, 1);
     const skip = (page - 1) * pageSize;
 
-    let sortSpec = { expenseDate: -1 };
-    if (query.sort) {
-      const direction = query.sort.startsWith("-") ? -1 : 1;
-      const field = query.sort.replace(/^-/, "");
-      sortSpec = { [field]: direction };
+    const sortField = query.sort ? query.sort.replace(/^-/, "") : "expenseDate";
+    const sortDirection = query.sort?.startsWith("-") ? -1 : 1;
+
+    // "Sorting... Approval Status" — `approvalStatus` isn't a stored field
+    // (see `deriveApprovalStatus`'s own doc comment), so sorting by it
+    // needs a real aggregation stage computing the identical rank via
+    // `APPROVAL_STATUS_SORT_EXPR`, rather than silently ignoring the sort
+    // request or fabricating a persisted duplicate field.
+    if (sortField === "approvalStatus") {
+      const [items, totalResult] = await Promise.all([
+        ExpenseModel.aggregate([
+          { $match: filter },
+          { $addFields: { _approvalStatusRank: APPROVAL_STATUS_SORT_EXPR } },
+          { $sort: { _approvalStatusRank: sortDirection, expenseDate: -1 } },
+          { $skip: skip },
+          { $limit: pageSize },
+          { $project: { _approvalStatusRank: 0 } }
+        ]),
+        ExpenseModel.countDocuments(filter)
+      ]);
+      return { items: items.map(withDerivedStatuses), pagination: { total: totalResult, page, pageSize, totalPages: Math.ceil(totalResult / pageSize) } };
     }
 
     const [items, total] = await Promise.all([
-      ExpenseModel.find(filter).sort(sortSpec).skip(skip).limit(pageSize).lean(),
+      ExpenseModel.find(filter).sort({ [sortField]: sortDirection }).skip(skip).limit(pageSize).lean(),
       ExpenseModel.countDocuments(filter)
     ]);
 
     return { items: items.map(withDerivedStatuses), pagination: { total, page, pageSize, totalPages: Math.ceil(total / pageSize) } };
+  }
+
+  /**
+   * GET /api/v1/expenses/export — "Bulk Operations... Export." Same CSV
+   * hand-built escaping convention as `services/paymentFileGenerators/
+   * CsvPaymentFileGenerator.js` / `BankReconciliationService.exportReportCsv`
+   * (no csv-writer dependency exists in this codebase to reuse instead).
+   * Reuses `_buildExpenseFilter` — export honors the exact same filters as
+   * the list endpoint, capped at `expenseExportMaxRows` (a real, configured
+   * safety bound, not an arbitrary in-code magic number).
+   */
+  static async exportExpenses(query, tenantId) {
+    const config = getFinanceConfig();
+    const filter = ExpenseService._buildExpenseFilter(query, tenantId);
+    const items = await ExpenseModel.find(filter).sort({ expenseDate: -1 }).limit(config.expenseExportMaxRows).lean();
+
+    const escapeCsvCell = (cell) => {
+      const str = String(cell ?? "");
+      return /[",\n]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
+    };
+    const header = ["Expense Number", "Employee", "Category", "Expense Type", "Department", "Cost Center", "Profit Center", "Project", "Business Unit", "Amount", "Currency", "Base Currency Amount", "Tax Amount", "Payment Method", "Status", "Approval Status", "Accounting Status", "Reimbursement Status", "Expense Date", "Created By", "Created At"];
+    const rows = items.map((item) => [
+      item.expenseNumber, item.employeeName, item.category, item.expenseType, item.department || "", item.costCenter || "", item.profitCenter || "", item.projectId || "", item.businessUnit || "",
+      item.amount, item.currency, item.baseCurrencyAmount ?? "", item.tax?.taxAmount ?? 0, item.paymentMethod || "", item.status,
+      deriveApprovalStatus(item.status), deriveAccountingStatus(item), deriveReimbursementStatus(item),
+      new Date(item.expenseDate).toISOString().slice(0, 10), item.createdBy || "", new Date(item.createdAt).toISOString()
+    ]);
+    const csv = [header, ...rows].map((row) => row.map(escapeCsvCell).join(",")).join("\n");
+    return { filename: `expenses-export-${Date.now()}.csv`, csv, rowCount: items.length };
+  }
+
+  // ---- Bulk Operations ----
+  // "Bulk Operations... Subject to permissions." Every bulk method takes a
+  // real, tenant-scoped array of expense ids and returns a real per-item
+  // outcome (never a fabricated blanket success) — items that fail (not
+  // found, wrong status, etc.) are reported individually rather than
+  // aborting the whole batch.
+
+  static async _runBulk(expenseIds, tenantId, itemFn) {
+    const config = getFinanceConfig();
+    if (!Array.isArray(expenseIds) || expenseIds.length === 0) throw new Error("expenseIds must be a non-empty array.");
+    if (expenseIds.length > config.expenseBulkActionMaxItems) throw new Error(`A bulk action may target at most ${config.expenseBulkActionMaxItems} expenses at once.`);
+
+    const results = [];
+    for (const expenseId of expenseIds) {
+      try {
+        const result = await itemFn(expenseId);
+        results.push({ expenseId, success: true, result });
+      } catch (error) {
+        results.push({ expenseId, success: false, error: error.message });
+      }
+    }
+    return { results, succeeded: results.filter((r) => r.success).length, failed: results.filter((r) => !r.success).length };
+  }
+
+  static bulkApproveExpenses(expenseIds, data, tenantId, userId, auditContext) {
+    return ExpenseService._runBulk(expenseIds, tenantId, (id) => ExpenseService.approveExpense(id, data, tenantId, userId, auditContext));
+  }
+
+  static bulkRejectExpenses(expenseIds, data, tenantId, userId, auditContext) {
+    return ExpenseService._runBulk(expenseIds, tenantId, (id) => ExpenseService.rejectExpense(id, data, tenantId, userId, auditContext));
+  }
+
+  static bulkTagExpenses(expenseIds, tags, tenantId, userId, auditContext) {
+    if (!Array.isArray(tags) || tags.length === 0) throw new Error("tags must be a non-empty array.");
+    return ExpenseService._runBulk(expenseIds, tenantId, async (id) => {
+      const expense = await ExpenseModel.findOne({ _id: id, tenantId });
+      if (!expense) throw new Error("Expense not found.");
+      expense.tags = Array.from(new Set([...(expense.tags || []), ...tags]));
+      expense.updatedBy = userId || null;
+      expense.timeline.push({ event: "ExpenseTagged", description: `Tags added: ${tags.join(", ")}.`, performedBy: userId || null });
+      await expense.save();
+      await AuditLogModel.create({ action: "finance.expense.bulk_tag", module: "Finance", resource: "Expense", resourceId: id.toString(), userId: userId || null, tenantId, details: { tags }, ...auditContext });
+      return expense.toJSON();
+    });
+  }
+
+  static bulkArchiveExpenses(expenseIds, tenantId, userId, auditContext) {
+    return ExpenseService._runBulk(expenseIds, tenantId, async (id) => {
+      const expense = await ExpenseModel.findOne({ _id: id, tenantId });
+      if (!expense) throw new Error("Expense not found.");
+      expense.archived = true;
+      expense.archivedAt = new Date();
+      expense.archivedBy = userId || null;
+      expense.timeline.push({ event: "ExpenseArchived", description: "Expense archived.", performedBy: userId || null });
+      await expense.save();
+      await AuditLogModel.create({ action: "finance.expense.bulk_archive", module: "Finance", resource: "Expense", resourceId: id.toString(), userId: userId || null, tenantId, details: {}, ...auditContext });
+      publishEvent("ExpenseArchived", { tenantId, expenseId: id.toString(), performedBy: userId || null });
+      return expense.toJSON();
+    });
+  }
+
+  static bulkCommentExpenses(expenseIds, text, tenantId, userId, auditContext) {
+    if (!text || !text.trim()) throw new Error("text is required.");
+    return ExpenseService._runBulk(expenseIds, tenantId, async (id) => {
+      const expense = await ExpenseModel.findOne({ _id: id, tenantId });
+      if (!expense) throw new Error("Expense not found.");
+      expense.comments.push({ text, by: userId || null, at: new Date() });
+      expense.timeline.push({ event: "ExpenseCommented", description: text, performedBy: userId || null });
+      await expense.save();
+      await AuditLogModel.create({ action: "finance.expense.bulk_comment", module: "Finance", resource: "Expense", resourceId: id.toString(), userId: userId || null, tenantId, details: { text }, ...auditContext });
+      return expense.toJSON();
+    });
+  }
+
+  static bulkAssignReviewer(expenseIds, { reviewerId, notes = null }, tenantId, userId, auditContext) {
+    if (!reviewerId) throw new Error("reviewerId is required.");
+    return ExpenseService._runBulk(expenseIds, tenantId, async (id) => {
+      const expense = await ExpenseModel.findOne({ _id: id, tenantId });
+      if (!expense) throw new Error("Expense not found.");
+      expense.reviewerAssignment = { assignedTo: reviewerId, assignedBy: userId || null, assignedAt: new Date(), notes };
+      expense.timeline.push({ event: "ExpenseReviewerAssigned", description: `Assigned to ${reviewerId} for review.`, performedBy: userId || null });
+      await expense.save();
+      await AuditLogModel.create({ action: "finance.expense.bulk_assign_reviewer", module: "Finance", resource: "Expense", resourceId: id.toString(), userId: userId || null, tenantId, details: { reviewerId }, ...auditContext });
+      return expense.toJSON();
+    });
+  }
+
+  /** Re-runs the same real budget match `submitExpense` uses, without
+   * touching `status` — "Bulk Operations... Recalculate Budget" for an
+   * already-submitted expense whose budget scope may have changed. */
+  static async recalculateExpenseBudget(expenseId, tenantId, userId, auditContext = {}) {
+    const expense = await ExpenseModel.findOne({ _id: expenseId, tenantId });
+    if (!expense) throw new Error("Expense not found.");
+    if (!["Under Review", "Approved"].includes(expense.status)) throw new Error(`Budget cannot be recalculated from status "${expense.status}".`);
+
+    const config = getFinanceConfig();
+    const matchingBudget = await ExpenseService._findMatchingBudget(tenantId, { department: expense.department, projectId: expense.projectId, costCenter: expense.costCenter }, expense.expenseDate);
+    if (matchingBudget) {
+      const projectedTotal = roundCurrency(matchingBudget.consumedAmount + expense.amount);
+      const exceeded = projectedTotal > matchingBudget.allocatedAmount;
+      expense.budgetCheck = { scope: matchingBudget.scope, scopeRef: matchingBudget.scopeRef, period: matchingBudget.period, allocatedAmount: matchingBudget.allocatedAmount, consumedAmountBefore: matchingBudget.consumedAmount, exceeded, overridden: expense.budgetCheck?.overridden || false, checkedAt: new Date() };
+      if (exceeded && config.expenseBudgetEnforcement === "Block") publishEvent("BudgetExceeded", { tenantId, expenseId: expense._id.toString(), scope: matchingBudget.scope, scopeRef: matchingBudget.scopeRef, allocatedAmount: matchingBudget.allocatedAmount, projectedTotal, performedBy: userId || null });
+    } else {
+      expense.budgetCheck = { scope: null, scopeRef: null, period: null, allocatedAmount: null, consumedAmountBefore: null, exceeded: false, overridden: false, checkedAt: new Date() };
+    }
+    expense.timeline.push({ event: "ExpenseBudgetRecalculated", description: `Budget re-checked (${expense.budgetCheck.exceeded ? "exceeded" : "within budget"}).`, performedBy: userId || null });
+    await expense.save();
+    await AuditLogModel.create({ action: "finance.expense.recalculate_budget", module: "Finance", resource: "Expense", resourceId: expense._id.toString(), userId: userId || null, tenantId, details: { exceeded: expense.budgetCheck.exceeded }, ...auditContext });
+    return expense.toJSON();
+  }
+
+  static bulkRecalculateBudget(expenseIds, tenantId, userId, auditContext) {
+    return ExpenseService._runBulk(expenseIds, tenantId, (id) => ExpenseService.recalculateExpenseBudget(id, tenantId, userId, auditContext));
+  }
+
+  /** Re-runs the same real policy check `submitExpense` uses — "Bulk
+   * Operations... Revalidate Policy." Non-blocking: updates
+   * `policyViolations` for a human to see rather than throwing, since a
+   * bulk revalidation pass is inherently a review action, not a gate. */
+  static async revalidateExpensePolicy(expenseId, tenantId, userId, auditContext = {}) {
+    const config = getFinanceConfig();
+    const expense = await ExpenseModel.findOne({ _id: expenseId, tenantId });
+    if (!expense) throw new Error("Expense not found.");
+
+    const hasReceipt = expense.attachments.length > 0;
+    const violations = checkPolicyViolations({ category: expense.category, amount: expense.amount, hasReceipt, config });
+    expense.policyViolations = violations;
+    expense.timeline.push({ event: "ExpensePolicyRevalidated", description: violations.length > 0 ? `Policy violation(s): ${violations.join(", ")}.` : "No policy violations found.", performedBy: userId || null });
+    await expense.save();
+    await AuditLogModel.create({ action: "finance.expense.revalidate_policy", module: "Finance", resource: "Expense", resourceId: expense._id.toString(), userId: userId || null, tenantId, details: { violations }, ...auditContext });
+    return expense.toJSON();
+  }
+
+  static bulkRevalidatePolicy(expenseIds, tenantId, userId, auditContext) {
+    return ExpenseService._runBulk(expenseIds, tenantId, (id) => ExpenseService.revalidateExpensePolicy(id, tenantId, userId, auditContext));
   }
 
   /**
@@ -402,16 +749,103 @@ class ExpenseService {
    * auditSummary below) plus the three derived statuses — no separate
    * "response shaping" layer was needed beyond that.
    */
+  /**
+   * GET /api/v1/expenses/{expenseId} — "360° view" (Enterprise Expense
+   * Management Refactor Part 4/4). Reads the live aggregate document
+   * itself, not the async-indexed `SearchIndexModel` (Part 28/42's own
+   * real CQRS read model) — correct for a single-record detail view where
+   * read-your-own-write consistency matters (e.g. right after an approval);
+   * the search index remains the real read model for list/dashboard/search
+   * use, unchanged. Cross-references (`journalId`/AP payable/vendor) are
+   * resolved with real, tenant-scoped lookups — never populated with
+   * fabricated placeholder data when the reference is absent.
+   */
   static async getExpenseById(expenseId, tenantId) {
     const expense = await ExpenseModel.findOne({ _id: expenseId, tenantId }).lean();
     if (!expense) throw new Error("Expense not found.");
 
-    const [auditSummary, approvalRequest] = await Promise.all([
+    const journalId = expense.accrual?.journalId || expense.reimbursement?.journalId || null;
+    const isApPayable = expense.reimbursement?.targetType === "accounts_payable" && expense.reimbursement?.targetId;
+
+    const [auditSummary, auditEventCount, approvalRequest, journal, apPayable, fiscalPeriod] = await Promise.all([
       AuditLogModel.find({ tenantId, resource: "Expense", resourceId: expense._id.toString() }).sort({ createdAt: -1 }).limit(20).lean(),
-      expense.approvalRequestId ? ApprovalWorkflowService.getApprovalRequestById(expense.approvalRequestId, tenantId).catch(() => null) : Promise.resolve(null)
+      AuditLogModel.countDocuments({ tenantId, resource: "Expense", resourceId: expense._id.toString() }),
+      expense.approvalRequestId ? ApprovalWorkflowService.getApprovalRequestById(expense.approvalRequestId, tenantId).catch(() => null) : Promise.resolve(null),
+      journalId ? JournalModel.findOne({ _id: journalId, tenantId }).lean().catch(() => null) : Promise.resolve(null),
+      isApPayable ? AccountsPayableModel.findOne({ _id: expense.reimbursement.targetId, tenantId }).lean().catch(() => null) : Promise.resolve(null),
+      FinancialPeriodService.findPeriodForDate(tenantId, expense.expenseDate).catch(() => null)
     ]);
 
-    return { ...withDerivedStatuses(expense), auditSummary, approvalRequest };
+    const vendor = apPayable?.vendorId ? await VendorModel.findOne({ _id: apPayable.vendorId, tenantId }).select("name currency").lean().catch(() => null) : null;
+
+    // "Vendor Information (Optional)" — only ever populated when this
+    // expense was actually reimbursed via Accounts Payable (the one real
+    // vendor-referencing path this codebase has); "Vendor Category"/
+    // "Vendor Tax Number" are dropped — no such fields exist on
+    // `VendorModel` (see its own doc comment: deliberately minimal,
+    // name/contact/terms/bankAccounts only).
+    const vendorInformation = (apPayable && vendor) ? {
+      vendorId: apPayable.vendorId, vendorName: vendor.name,
+      vendorInvoice: apPayable.invoiceNumber, vendorReference: apPayable._id,
+      vendorPayment: apPayable.status
+    } : null;
+
+    // "Accounting Information" — real, populated from the actual Journal
+    // document `accrual.journalId`/`reimbursement.journalId` points at
+    // (see ExpenseModel.js's own doc comments on both) rather than
+    // fabricated. "Posting Status" collapses into the same real
+    // `accountingStatus` already derived below (this codebase has one
+    // real posting concept, not two independent ones).
+    const accountingInformation = journal ? {
+      journalId: journal._id, journalNumber: journal.journalNumber, postingDate: journal.postingDate,
+      lines: (journal.lines || []).map((l) => ({ accountCode: l.accountCode, debit: l.debit, credit: l.credit })),
+      postedBy: journal.postedBy, postingBatch: journal.batchId || null, reversalOf: journal.reversalOf || null,
+      fiscalPeriod: fiscalPeriod ? { periodId: fiscalPeriod._id, name: fiscalPeriod.name || null, status: fiscalPeriod.status } : null
+    } : { journalId: null, journalNumber: null, fiscalPeriod: fiscalPeriod ? { periodId: fiscalPeriod._id, name: fiscalPeriod.name || null, status: fiscalPeriod.status } : null };
+
+    // "Budget Information" — real, from the `budgetCheck` snapshot taken
+    // at Submit (see `submitExpense`). "Budget Name"/"Budget Version" are
+    // dropped — `ExpenseBudgetModel` is deliberately lean (scope/scopeRef/
+    // period/allocatedAmount/consumedAmount only, no name or version
+    // field exists, by the same design as Part 24's original scoping).
+    const budgetInformation = expense.budgetCheck?.checkedAt ? {
+      scope: expense.budgetCheck.scope, scopeRef: expense.budgetCheck.scopeRef, period: expense.budgetCheck.period,
+      budgetAvailable: expense.budgetCheck.allocatedAmount, budgetUsed: expense.budgetCheck.consumedAmountBefore,
+      budgetRemaining: expense.budgetCheck.allocatedAmount !== null && expense.budgetCheck.consumedAmountBefore !== null ? roundCurrency(expense.budgetCheck.allocatedAmount - expense.budgetCheck.consumedAmountBefore) : null,
+      validationResult: expense.budgetCheck.exceeded ? "Exceeded" : "WithinBudget",
+      budgetOverride: expense.budgetCheck.overridden
+    } : null;
+
+    // "Cross-Module References" — real ids only, for whichever links
+    // actually apply to this expense; Merchant/Subscription are always
+    // omitted (no backing entity anywhere in this codebase).
+    const crossModuleReferences = {
+      budget: budgetInformation ? { scope: expense.budgetCheck.scope, scopeRef: expense.budgetCheck.scopeRef } : null,
+      journal: journalId,
+      ledger: journalId,
+      payment: expense.reimbursement?.targetType === "bank_transaction" || expense.reimbursement?.targetType === "cash_transaction" ? expense.reimbursement.targetId : null,
+      vendor: apPayable?.vendorId || null,
+      employee: expense.employeeId,
+      project: expense.projectId || null,
+      approvalWorkflow: expense.approvalRequestId || null,
+      audit: expense._id
+    };
+
+    return {
+      ...withDerivedStatuses(expense),
+      totalAmount: roundCurrency(expense.amount + (expense.tax?.taxAmount || 0)),
+      approvalHistory: buildApprovalHistory(expense, approvalRequest),
+      budgetInformation,
+      accountingInformation,
+      vendorInformation,
+      crossModuleReferences,
+      // "Immutable History Flag" — real, mirrors the actual enforced rule
+      // (`isExpenseEditable`/the module's own "Immutable Accounting" rule):
+      // true once the expense has reached a posted/terminal state.
+      immutableHistory: !isExpenseEditable(expense.status) && ["Approved", "Reimbursed", "Closed"].includes(expense.status),
+      auditSummary: { entries: auditSummary, eventCount: auditEventCount, correlationId: auditSummary[0]?.requestId || null, lastAuditTime: auditSummary[0]?.createdAt || null, approvedBy: expense.approvals?.[expense.approvals.length - 1]?.approvedBy || null, postedBy: journal?.postedBy || null },
+      approvalRequest
+    };
   }
 
   /**
@@ -423,10 +857,14 @@ class ExpenseService {
     if (!expense) throw new Error("Expense not found.");
     if (!isExpenseEditable(expense.status)) throw new Error(`Expense cannot be edited from status "${expense.status}".`);
 
-    const { category, expenseType, amount, currency, description, expenseDate, department, projectId, costCenter, businessUnit, branch, tags, allocations, paymentMethod, country, taxCode } = data;
+    const { category, categoryGroup, expenseType, amount, currency, description, expenseDate, department, projectId, costCenter, profitCenter, businessUnit, branch, tags, allocations, paymentMethod, country, taxCode } = data;
     if (category !== undefined) {
       if (!config.expenseCategories.includes(category)) throw new Error(`Invalid category "${category}".`);
       expense.category = category;
+    }
+    if (categoryGroup !== undefined) {
+      validateCategoryGroup(categoryGroup, category !== undefined ? category : expense.category, config.expenseCategoryHierarchy);
+      expense.categoryGroup = categoryGroup;
     }
     if (expenseType !== undefined) {
       if (!config.expenseTypes.includes(expenseType)) throw new Error(`Invalid expenseType "${expenseType}".`);
@@ -444,12 +882,17 @@ class ExpenseService {
       expense.baseCurrency = baseCurrencyFields.baseCurrency;
       expense.baseCurrencyAmount = baseCurrencyFields.baseCurrencyAmount;
       expense.exchangeRate = baseCurrencyFields.exchangeRate;
+      expense.exchangeRateId = baseCurrencyFields.exchangeRateId;
+      expense.exchangeRateVersion = baseCurrencyFields.exchangeRateVersion;
+      expense.exchangeRateProvider = baseCurrencyFields.exchangeRateProvider;
+      expense.exchangeRateType = baseCurrencyFields.exchangeRateType;
     }
     if (description !== undefined) expense.description = description;
     if (expenseDate !== undefined) expense.expenseDate = new Date(expenseDate);
     if (department !== undefined) expense.department = department;
     if (projectId !== undefined) expense.projectId = projectId;
     if (costCenter !== undefined) expense.costCenter = costCenter;
+    if (profitCenter !== undefined) expense.profitCenter = profitCenter;
     if (businessUnit !== undefined) expense.businessUnit = businessUnit;
     if (branch !== undefined) expense.branch = branch;
     if (tags !== undefined) expense.tags = tags;
@@ -509,17 +952,42 @@ class ExpenseService {
 
     const attachment = {
       filename: file.originalname || "receipt", url: stored.url, storageKey: stored.storageKey, storageProvider: stored.storageProvider,
-      mimeType: file.mimetype, checksum, ocr,
+      mimeType: file.mimetype, fileSize: file.buffer.length, checksum, ocr,
+      // Real, honest per-attachment security metadata — see
+      // ExpenseModel.js's own doc comments on both fields for why these
+      // specific values, not "clean"/encrypted-everywhere fabrications.
+      virusScanStatus: "skipped",
+      encryptionStatus: ["cloudinary", "s3"].includes(stored.storageProvider) ? "AtRestServerSide" : "None",
       verification: { status: duplicate ? "Duplicate" : "Pending", verifiedBy: null, verifiedAt: null, notes: duplicate ? "Matches the checksum of another receipt already on file for this employee." : null },
       fraudRiskScore, fraudRiskFlags,
       uploadedBy: userId || null, uploadedAt: new Date()
     };
     expense.attachments.push(attachment);
+    // Mongoose assigns the real subdocument `_id` on the CAST array
+    // element, not the plain object literal `attachment` still points at
+    // (verified: pushing a plain object never mutates it with `_id`) —
+    // this is the one real reference used for the events published below.
+    const savedAttachment = expense.attachments[expense.attachments.length - 1];
     expense.timeline.push({ event: "ReceiptUploaded", description: `Receipt "${attachment.filename}" uploaded${duplicate ? " (possible duplicate)" : ""}${fraudRiskScore > 0 ? ` (fraud risk score: ${fraudRiskScore})` : ""}.`, performedBy: userId || null });
+    // "Timeline... Receipt Uploaded -> OCR Completed" (Part 4/4) — a
+    // distinct timeline entry for the real OCR outcome, alongside the
+    // ReceiptUploaded entry above (the pre-existing `OCRCompleted` domain
+    // event already fires; this only adds the matching visible timeline
+    // row the spec's own example lists as a separate step).
+    if (ocr.status === "Completed") expense.timeline.push({ event: "OCRCompleted", description: `OCR extracted${ocr.extractedVendor ? ` vendor "${ocr.extractedVendor}"` : ""}${ocr.extractedAmount ? `, amount ${ocr.extractedAmount}` : ""}${ocr.confidence !== null ? ` (confidence ${ocr.confidence})` : ""}.`, performedBy: "system" });
     await expense.save();
 
     await AuditLogModel.create({ action: "finance.expense.upload_receipt", module: "Finance", resource: "Expense", resourceId: expense._id.toString(), userId: userId || null, tenantId, details: { filename: attachment.filename, ocrStatus: ocr.status, duplicate: !!duplicate, fraudRiskScore }, ...auditContext });
+    // "Receipt Uploaded" / "Duplicate Detected" (Part 44) — the two real
+    // events named first in the spec's own Receipt Lifecycle diagram, at
+    // the same real upload/checksum-match this method already performs.
+    publishEvent("ReceiptUploaded", { tenantId, expenseId: expense._id.toString(), attachmentId: savedAttachment._id.toString(), filename: attachment.filename, performedBy: userId || null });
+    if (duplicate) publishEvent("ReceiptDuplicateDetected", { tenantId, expenseId: expense._id.toString(), attachmentId: savedAttachment._id.toString(), performedBy: userId || null });
     if (ocr.status === "Completed") publishEvent("OCRCompleted", { tenantId, expenseId: expense._id.toString(), extractedAmount: ocr.extractedAmount, extractedVendor: ocr.extractedVendor, performedBy: userId || null });
+    // "Fraud Detection" (Part 44) — `FraudRiskDetected` below IS the real
+    // "ReceiptFraudDetected" event from the spec's own new-events list;
+    // kept under its pre-existing Part 35 name rather than publishing a
+    // second, redundant event for the identical detection.
     if (fraudRiskScore >= config.expenseFraudRiskScoreThreshold) publishEvent("FraudRiskDetected", { tenantId, expenseId: expense._id.toString(), fraudRiskScore, fraudRiskFlags, performedBy: userId || null });
 
     return expense.toJSON();
@@ -545,6 +1013,31 @@ class ExpenseService {
     await AuditLogModel.create({ action: "finance.expense.verify_receipt", module: "Finance", resource: "Expense", resourceId: expense._id.toString(), userId: userId || null, tenantId, details: { attachmentId: attachmentId.toString(), status }, ...auditContext });
     if (status === "Verified") publishEvent("ReceiptVerified", { tenantId, expenseId: expense._id.toString(), attachmentId: attachmentId.toString(), performedBy: userId || null });
 
+    return expense.toJSON();
+  }
+
+  /**
+   * POST /api/v1/expenses/{expenseId}/receipts/{attachmentId}/correct-ocr —
+   * "OCR Information... Manual Corrections." A human-supplied override,
+   * kept alongside (never overwriting) the original machine-extracted
+   * `ocr.extracted*` fields, so a reviewer can always see both.
+   */
+  static async correctReceiptOcr(expenseId, attachmentId, data, tenantId, userId, auditContext = {}) {
+    const { amount = null, vendor = null, date = null, receiptNumber = null, notes = null } = data;
+    if (amount === null && vendor === null && date === null && receiptNumber === null) {
+      throw new Error("At least one of amount, vendor, date, or receiptNumber is required.");
+    }
+
+    const expense = await ExpenseModel.findOne({ _id: expenseId, tenantId });
+    if (!expense) throw new Error("Expense not found.");
+    const attachment = expense.attachments.id(attachmentId);
+    if (!attachment) throw new Error("Attachment not found.");
+
+    attachment.ocr.manualCorrection = { amount, vendor, date: date ? new Date(date) : null, receiptNumber, notes, correctedBy: userId || null, correctedAt: new Date() };
+    expense.timeline.push({ event: "ReceiptOcrCorrected", description: `Manual OCR correction recorded for "${attachment.filename}".`, performedBy: userId || null });
+    await expense.save();
+
+    await AuditLogModel.create({ action: "finance.expense.correct_ocr", module: "Finance", resource: "Expense", resourceId: expense._id.toString(), userId: userId || null, tenantId, details: { attachmentId: attachmentId.toString(), amount, vendor, receiptNumber }, ...auditContext });
     return expense.toJSON();
   }
 
@@ -588,6 +1081,10 @@ class ExpenseService {
       expense.baseCurrency = retry.baseCurrency;
       expense.baseCurrencyAmount = retry.baseCurrencyAmount;
       expense.exchangeRate = retry.exchangeRate;
+      expense.exchangeRateId = retry.exchangeRateId;
+      expense.exchangeRateVersion = retry.exchangeRateVersion;
+      expense.exchangeRateProvider = retry.exchangeRateProvider;
+      expense.exchangeRateType = retry.exchangeRateType;
     }
 
     // "Validate Tax Rules" — real Tax Engine integration (see
@@ -613,6 +1110,10 @@ class ExpenseService {
         }
         publishEvent("BudgetExceeded", { tenantId, expenseId: expense._id.toString(), scope: matchingBudget.scope, scopeRef: matchingBudget.scopeRef, allocatedAmount: matchingBudget.allocatedAmount, projectedTotal, performedBy: userId || null });
       }
+      // "Budget Validated" (Part 44) — fires on every real budget check at
+      // Submit, whether or not it exceeded (`BudgetExceeded` above remains
+      // the separate, exceeded-only event).
+      publishEvent("BudgetValidated", { tenantId, expenseId: expense._id.toString(), scope: matchingBudget.scope, scopeRef: matchingBudget.scopeRef, exceeded, performedBy: userId || null });
     } else {
       expense.budgetCheck = { scope: null, scopeRef: null, period: null, allocatedAmount: null, consumedAmountBefore: null, exceeded: false, overridden: false, checkedAt: new Date() };
     }
@@ -662,6 +1163,7 @@ class ExpenseService {
 
     await AuditLogModel.create({ action: "finance.expense.submit", module: "Finance", resource: "Expense", resourceId: expense._id.toString(), userId: userId || null, tenantId, details: { requiredApprovalLevels: expense.requiredApprovalLevels, budgetExceeded: expense.budgetCheck.exceeded, taxAmount: expense.tax?.taxAmount || 0 }, ...auditContext });
     publishEvent("ExpenseSubmitted", { tenantId, expenseId: expense._id.toString(), employeeId: expense.employeeId.toString(), amount: expense.amount, requiredApprovalLevels: expense.requiredApprovalLevels, performedBy: userId || null });
+    await ExpenseService._notifyExpenseOwner(expense, { subject: `Expense ${expense.expenseNumber} submitted for approval`, content: `Your expense "${expense.description}" (${expense.amount} ${expense.currency}) was submitted and is pending ${expense.requiredApprovalLevels.join(" -> ")} approval.` }, tenantId);
 
     return expense.toJSON();
   }
@@ -685,6 +1187,36 @@ class ExpenseService {
       await ApprovalWorkflowService.recordDecision(expense.approvalRequestId, { decision, comments }, tenantId, userId);
     } catch {
       // Expected when this approver isn't resolvable on the real request — see doc comment above.
+    }
+  }
+
+  /**
+   * "Notifications... Expense Submitted, Expense Returned, Expense
+   * Approved, Expense Rejected, Reimbursement Completed, Expense Closed"
+   * (Part 44) — real delivery via the already-real, generic
+   * `CommunicationPlatformService` (Email/SMS/WhatsApp/Push/InApp/Webhook
+   * adapters all genuinely implemented, not this method's own concern).
+   * Targets the expense OWNER only — this codebase's approval is
+   * permission-gated, not person-assigned (see `approveExpense`'s own doc
+   * comment), so there is no real "the approver" user to resolve and
+   * notify; notifying a fictional one would be fabricated. "Budget
+   * Exceeded"/"Receipt Missing" are not wired here — the first already has
+   * no real approver-identity to reach either, and the second is enforced
+   * as a synchronous blocking validation at Submit, never a standalone
+   * async reminder. Best-effort: a delivery failure never blocks the real
+   * business transaction it's reporting on.
+   */
+  static async _notifyExpenseOwner(expense, { subject, content, priority = "Normal" }, tenantId) {
+    try {
+      const employee = await UserModel.findOne({ _id: expense.employeeId, tenantId }).select("email").lean();
+      if (!employee?.email) return;
+      await CommunicationPlatformService.requestCommunication({
+        tenantId, sourceModule: "Finance", channel: "Email",
+        recipient: { userId: expense.employeeId.toString(), email: employee.email },
+        subject, content, priority
+      });
+    } catch {
+      // Notification delivery is never allowed to fail the real expense transaction it's reporting on.
     }
   }
 
@@ -735,6 +1267,10 @@ class ExpenseService {
           { tenantId, scope: expense.budgetCheck.scope, scopeRef: expense.budgetCheck.scopeRef, period: expense.budgetCheck.period },
           { $inc: { consumedAmount: expense.amount }, $set: { updatedBy: userId || null } }
         );
+        // "Budget Reserved" (Part 44) — the real, already-existing
+        // consumedAmount increment above IS the reservation; this only adds
+        // the matching domain event, never a second reservation mechanism.
+        publishEvent("BudgetReserved", { tenantId, expenseId: expense._id.toString(), scope: expense.budgetCheck.scope, scopeRef: expense.budgetCheck.scopeRef, amount: expense.amount, performedBy: userId || null });
       }
 
       // "Expense Approved -> Accounting Validation -> Journal Generated
@@ -746,6 +1282,7 @@ class ExpenseService {
       if (accrualJournalId) {
         expense.accrual = { journalId: accrualJournalId, postedAt: new Date() };
         expense.timeline.push({ event: "ExpenseAccrualPosted", description: `Accrual journal posted.`, performedBy: userId || "system" });
+        publishEvent("ExpensePosted", { tenantId, expenseId: expense._id.toString(), journalId: accrualJournalId.toString(), performedBy: userId || "system" });
       }
 
       await expense.save();
@@ -754,6 +1291,7 @@ class ExpenseService {
 
       await AuditLogModel.create({ action: "finance.expense.approve", module: "Finance", resource: "Expense", resourceId: expense._id.toString(), userId: userId || null, tenantId, details: { level: nextLevel, final: true, accrualPosted: !!accrualJournalId }, ...auditContext });
       publishEvent("ExpenseApproved", { tenantId, expenseId: expense._id.toString(), amount: expense.amount, performedBy: userId || null });
+      await ExpenseService._notifyExpenseOwner(expense, { subject: `Expense ${expense.expenseNumber} approved`, content: `Your expense "${expense.description}" (${expense.amount} ${expense.currency}) has been fully approved.` }, tenantId);
     } else {
       expense.timeline.push({ event: "ExpenseLevelApproved", description: `${nextLevel} approval recorded (${expense.approvals.length}/${expense.requiredApprovalLevels.length}).`, performedBy: userId || null });
       await expense.save();
@@ -783,15 +1321,17 @@ class ExpenseService {
 
     await AuditLogModel.create({ action: "finance.expense.reject", module: "Finance", resource: "Expense", resourceId: expense._id.toString(), userId: userId || null, tenantId, details: { reason: data?.reason || null }, ...auditContext });
     publishEvent("ExpenseRejected", { tenantId, expenseId: expense._id.toString(), reason: data?.reason || null, performedBy: userId || null });
+    await ExpenseService._notifyExpenseOwner(expense, { subject: `Expense ${expense.expenseNumber} rejected`, content: `Your expense "${expense.description}" was rejected.${data?.reason ? ` Reason: ${data.reason}` : ""}` }, tenantId);
 
     return expense.toJSON();
   }
 
   /**
-   * POST /api/v1/expenses/{expenseId}/return — gap-fill: "Returned" is a
-   * named alternative-flow outcome with no domain event of its own. Sends
-   * the claim back to the employee for correction; resubmitting clears
-   * prior approvals and re-runs the full policy/budget/tax check.
+   * POST /api/v1/expenses/{expenseId}/return — "Returned" is a named
+   * alternative-flow outcome; publishes the real `ExpenseReturned` domain
+   * event (Part 44) alongside the pre-existing timeline entry. Sends the
+   * claim back to the employee for correction; resubmitting clears prior
+   * approvals and re-runs the full policy/budget/tax check.
    */
   static async returnExpense(expenseId, data, tenantId, userId, auditContext = {}) {
     const expense = await ExpenseModel.findOne({ _id: expenseId, tenantId });
@@ -809,6 +1349,8 @@ class ExpenseService {
     await ExpenseService._closeApprovalRequest(expense, "Completed via Expense's own approval flow (Returned).", tenantId, userId);
 
     await AuditLogModel.create({ action: "finance.expense.return", module: "Finance", resource: "Expense", resourceId: expense._id.toString(), userId: userId || null, tenantId, details: { reason: data?.reason || null }, ...auditContext });
+    publishEvent("ExpenseReturned", { tenantId, expenseId: expense._id.toString(), employeeId: expense.employeeId.toString(), reason: data?.reason || null, performedBy: userId || null });
+    await ExpenseService._notifyExpenseOwner(expense, { subject: `Expense ${expense.expenseNumber} returned for correction`, content: `Your expense "${expense.description}" was returned for correction.${data?.reason ? ` Reason: ${data.reason}` : ""}` }, tenantId);
 
     return expense.toJSON();
   }
@@ -847,11 +1389,15 @@ class ExpenseService {
         );
         budgetRolledBack = true;
         expense.timeline.push({ event: "ExpenseBudgetRolledBack", description: `Consumed budget for ${expense.budgetCheck.scope} "${expense.budgetCheck.scopeRef}" released.`, performedBy: userId || null });
+        // "Budget Released" (Part 44) — the real, already-existing
+        // consumedAmount decrement above IS the release; matching domain event.
+        publishEvent("BudgetReleased", { tenantId, expenseId: expense._id.toString(), scope: expense.budgetCheck.scope, scopeRef: expense.budgetCheck.scopeRef, amount: expense.amount, performedBy: userId || null });
       }
       if (expense.accrual?.journalId) {
         const reversal = await JournalService.reverseJournal(expense.accrual.journalId, {}, tenantId, userId || "system");
         accrualReversed = true;
         expense.timeline.push({ event: "ExpenseAccrualReversed", description: `Accrual journal reversed (${reversal.journalNumber || reversal._id}).`, performedBy: userId || "system" });
+        publishEvent("ExpenseReversed", { tenantId, expenseId: expense._id.toString(), reversalJournalId: (reversal._id || reversal.journalId || "").toString(), performedBy: userId || "system" });
       }
     }
 
@@ -931,6 +1477,7 @@ class ExpenseService {
 
     await AuditLogModel.create({ action: "finance.expense.reimburse", module: "Finance", resource: "Expense", resourceId: expense._id.toString(), userId: userId || null, tenantId, details: { method, amount: reimbursementAmount, targetType, targetId: targetId ? targetId.toString() : null }, ...auditContext });
     publishEvent("ExpenseReimbursed", { tenantId, expenseId: expense._id.toString(), employeeId: expense.employeeId.toString(), method, amount: reimbursementAmount, performedBy: userId || null });
+    await ExpenseService._notifyExpenseOwner(expense, { subject: `Expense ${expense.expenseNumber} reimbursed`, content: `Your expense "${expense.description}" has been reimbursed: ${reimbursementAmount} ${expense.currency} via ${method}.` }, tenantId);
 
     return expense.toJSON();
   }
@@ -946,7 +1493,13 @@ class ExpenseService {
     }, tenantId, userId || "system");
     await JournalService.approveJournal(journal._id, tenantId, userId || "system");
     const posted = await JournalService.postJournal(journal._id, tenantId, userId || "system");
-    return posted?._id || journal._id;
+    const postedJournalId = posted?._id || journal._id;
+    // "Ledger Posting Completed" (Part 44) — the one real point every
+    // Expense-generated journal (accrual and reimbursement/clearing alike)
+    // actually posts through; a single publish site rather than one per
+    // caller.
+    publishEvent("LedgerPostingCompleted", { tenantId, expenseId: expense._id.toString(), journalId: postedJournalId.toString(), description, performedBy: userId || "system" });
+    return postedJournalId;
   }
 
   /**
@@ -1024,6 +1577,7 @@ class ExpenseService {
 
     await AuditLogModel.create({ action: "finance.expense.close", module: "Finance", resource: "Expense", resourceId: expense._id.toString(), userId: userId || null, tenantId, details: {}, ...auditContext });
     publishEvent("ExpenseClosed", { tenantId, expenseId: expense._id.toString(), performedBy: userId || null });
+    await ExpenseService._notifyExpenseOwner(expense, { subject: `Expense ${expense.expenseNumber} closed`, content: `Your expense "${expense.description}" has been closed.`, priority: "Low" }, tenantId);
 
     return expense.toJSON();
   }

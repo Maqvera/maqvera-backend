@@ -192,6 +192,69 @@ export const DEFAULT_PERMISSIONS = [
   { key: "roles.read", description: "View the company's role catalog and permission assignments" },
   { key: "roles.manage", description: "Create, edit, and delete roles and their permission assignments" },
   { key: "admin", description: "Full administrative override across all modules" },
+  // Enterprise Subscription Platform. `platform.subscription.*`/
+  // `platform.billing.*` are this tenant's own admin managing their own
+  // subscription/billing account — same tenant-scoped RBAC as every
+  // other module. `platform.plan.manage` (Plan catalog CRUD) and the
+  // cross-tenant suspend/reactivate override endpoints deliberately reuse
+  // the existing tenant-scoped "admin" permission rather than a separate
+  // platform-operator identity — no such actor (distinct from any
+  // tenant's own admin) exists anywhere in this codebase's auth model,
+  // and inventing one wasn't part of what was asked; a real, separate
+  // "Platform Operator" authentication surface is legitimate future
+  // infrastructure, not guessed at here.
+  { key: "platform.subscription.read", description: "Read the tenant's own subscription, plan, and billing history" },
+  { key: "platform.subscription.manage", description: "Change plan, cancel, or manage the tenant's own subscription" },
+  { key: "platform.billing.read", description: "Read the tenant's own billing account and subscription invoices" },
+  { key: "platform.billing.manage", description: "Create/update the tenant's own billing account and record/attempt subscription payments" },
+  { key: "platform.plan.read", description: "Read the platform's sellable plan catalog" },
+  // Enterprise Merchant & Billing Platform (Improvement 3). Merchant
+  // create/verify/suspend/reactivate/close and cross-tenant billing
+  // consolidation reuse the existing "admin" permission — same
+  // no-separate-platform-operator-identity reasoning already recorded in
+  // Improvement 1/File 0.
+  { key: "platform.merchant.read", description: "Read merchant accounts, wallets, and consolidated billing history" },
+  { key: "platform.merchant.manage", description: "Create/verify merchants, manage payment methods, wallets, and refunds" },
+  // Enterprise Organisation Structure Platform (Improvement 4). Tenant-scoped
+  // like every other module permission — the Organisation hierarchy below
+  // Tenant (Organisation -> Legal Entity -> Business Unit -> Company ->
+  // Branch -> Department -> Team) is business-owned data, not a second
+  // access-control dimension (see utils/accessScope.js and
+  // utils/organisationConfig.js's own doc comment on why Branch here is
+  // descriptive-only).
+  { key: "organisation.read", description: "Read organisation records" },
+  { key: "organisation.manage", description: "Create and update organisation records" },
+  { key: "legalentity.read", description: "Read legal entity records" },
+  { key: "legalentity.manage", description: "Create, update, and activate legal entity records" },
+  { key: "businessunit.read", description: "Read business unit records" },
+  { key: "businessunit.manage", description: "Create and update business unit records" },
+  { key: "company.read", description: "Read company records" },
+  { key: "company.manage", description: "Create and update company records" },
+  { key: "branch.read", description: "Read branch records" },
+  { key: "branch.manage", description: "Create, update, and close branch records" },
+  { key: "department.read", description: "Read department records" },
+  { key: "department.manage", description: "Create and update department records" },
+  { key: "team.read", description: "Read team records" },
+  { key: "team.manage", description: "Create and update team records" },
+  // Enterprise Identity & Global Resource ID Platform (Improvement 5).
+  // numbering.generate is deliberately separate from numbering.manage —
+  // any authorized user creating an Invoice/Payment/etc. should be able to
+  // trigger number generation without also holding scheme-admin rights.
+  { key: "numbering.read", description: "Read numbering schemes and generated-number history" },
+  { key: "numbering.manage", description: "Create/update numbering schemes and reset sequence counters" },
+  { key: "numbering.generate", description: "Generate, register, and roll back document numbers" },
+  // Enterprise Resilience & Reliability Standard (Improvement 6).
+  { key: "resilience.read", description: "Read Dead Letter Queue records and Circuit Breaker status" },
+  { key: "resilience.manage", description: "Mark Dead Letter Queue records as a permanent failure" },
+  // Enterprise Event Versioning Standard (Improvement 7).
+  { key: "eventregistry.read", description: "Read the central Event Registry" },
+  { key: "eventregistry.manage", description: "Register events and manage their deprecation/retirement lifecycle" },
+  // Enterprise API Version Strategy Standard (Improvement 8).
+  { key: "apiversion.read", description: "Read the central API Version Registry" },
+  { key: "apiversion.manage", description: "Register API versions and manage their deprecation/sunset/retirement lifecycle" },
+  // Enterprise API Rate Limiting & Throttling Standard (Improvement 13).
+  { key: "ratelimit.read", description: "Read rate limit rules, violations, and top-consumer monitoring data" },
+  { key: "ratelimit.manage", description: "Create/update rate limit rules" },
 ];
 
 export const ADMINISTRATOR_ROLE_NAME = "Administrator";

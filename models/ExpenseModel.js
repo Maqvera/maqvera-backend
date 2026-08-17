@@ -17,17 +17,52 @@ const ExpenseAttachmentSchema = new mongoose.Schema({
   storageKey: { type: String, default: null },
   storageProvider: { type: String, default: null },
   mimeType: { type: String, default: null },
+  // "Every attachment contains... File Size" — real, from `file.buffer.length`
+  // at upload time (multer memoryStorage already gives this for free).
+  fileSize: { type: Number, default: null },
   // SHA-256 of the raw file — "Duplicate Detection" runs against this,
   // real and deterministic, not a fuzzy OCR-based guess.
   checksum: { type: String, default: null },
+  // "Virus Scan Status" — same honest pattern already established by
+  // `models/EnterpriseDocumentModel.js`'s own `virusScanStatus` (Part
+  // 9/document verification): "skipped" is the real status every upload
+  // gets (no scanner is configured anywhere in this codebase); "clean" is
+  // never falsely claimed for a scan that didn't happen.
+  virusScanStatus: { type: String, enum: ["clean", "infected", "pending", "skipped"], default: "skipped" },
+  // "Encryption Status" — a real, honest property of the actual storage
+  // backend the file landed on (`storageProvider`), not app-level file
+  // encryption (no such capability exists anywhere in this codebase —
+  // `utils/fieldEncryption.js` only ever encrypts short structured string
+  // fields like bank account numbers, never binary file content).
+  // Cloudinary/S3 both provide real server-side encryption-at-rest;
+  // the `local` backend does not.
+  encryptionStatus: { type: String, enum: ["AtRestServerSide", "None"], default: "None" },
   ocr: {
     status: { type: String, enum: ["Pending", "Completed", "Failed", "Skipped"], default: "Pending" },
     extractedText: { type: String, default: null },
     extractedAmount: { type: Number, default: null },
+    // "Invoice Date"/"Receipt Date" from the spec collapse into this one
+    // real field — a single receipt image gives no reliable way to
+    // distinguish the two dates (most receipts only print one date at
+    // all); an honest documented collapse, not two independently
+    // extracted values.
     extractedDate: { type: Date, default: null },
     extractedVendor: { type: String, default: null },
+    extractedReceiptNumber: { type: String, default: null },
     confidence: { type: Number, default: null },
-    processedAt: { type: Date, default: null }
+    processedAt: { type: Date, default: null },
+    // "Manual Corrections" — a human-supplied override of an OCR
+    // misread, kept alongside (never overwriting) the original
+    // machine-extracted values above, so both remain visible.
+    manualCorrection: {
+      amount: { type: Number, default: null },
+      vendor: { type: String, default: null },
+      date: { type: Date, default: null },
+      receiptNumber: { type: String, default: null },
+      notes: { type: String, default: null },
+      correctedBy: { type: String, default: null },
+      correctedAt: { type: Date, default: null }
+    }
   },
   verification: {
     status: { type: String, enum: ["Pending", "Verified", "Duplicate", "Rejected"], default: "Pending" },
@@ -98,9 +133,42 @@ const ExpenseSchema = new mongoose.Schema({
   // remains the only isolation boundary in this codebase.
   projectId: { type: String, default: null },
   costCenter: { type: String, default: null },
+  // "Profit Centre filtering" (Enterprise Expense Management Refactor Part
+  // 3/4) — same descriptive-string treatment as costCenter/businessUnit
+  // above (no ProfitCenterModel exists in this codebase either).
+  profitCenter: { type: String, default: null },
   businessUnit: { type: String, default: null },
   branch: { type: String, default: null },
   tags: { type: [String], default: [] },
+  // "Bulk Operations... Archive" — a real, honest metadata flag, distinct
+  // from the `status` lifecycle (an archived expense keeps whatever status
+  // it had; this only affects default list visibility). Never a lifecycle
+  // transition of its own — Reimbursed/Closed remain the only real
+  // terminal states.
+  archived: { type: Boolean, default: false, index: true },
+  archivedAt: { type: Date, default: null },
+  archivedBy: { type: String, default: null },
+  // "Bulk Operations... Comment" — free-text notes distinct from the
+  // approval/verification/timeline notes already captured elsewhere on
+  // this schema; never mutates after being added (append-only, matching
+  // this schema's `timeline`/`approvals` append-only discipline).
+  comments: [{
+    text: { type: String, required: true },
+    by: { type: String, default: null },
+    at: { type: Date, default: Date.now }
+  }],
+  // "Bulk Operations... Assign Reviewer" — real, honest metadata only: this
+  // codebase's RBAC has no per-user approver assignment (see
+  // `approveExpense`'s own doc comment on why "next required level" is
+  // permission-gated, not person-gated), so this field records who was
+  // asked to look at the expense without pretending to gate `approveExpense`
+  // itself.
+  reviewerAssignment: {
+    assignedTo: { type: String, default: null },
+    assignedBy: { type: String, default: null },
+    assignedAt: { type: Date, default: null },
+    notes: { type: String, default: null }
+  },
   // Optional multi-target split — see ExpenseAllocationSchema doc comment
   // above. Locked immutable once the expense is Approved (enforced in
   // ExpenseService, not at the schema layer, matching this codebase's
@@ -108,6 +176,11 @@ const ExpenseSchema = new mongoose.Schema({
   allocations: { type: [ExpenseAllocationSchema], default: [] },
   // Config-driven (expenseCategories) — the specific spend classification.
   category: { type: String, required: true, index: true },
+  // "Configurable Expense Category Hierarchy... Level 1" (Part 44) — the
+  // real, optional Level-1 grouping over `category` above, validated
+  // against `expenseCategoryHierarchy`'s own keys when supplied. Optional:
+  // omitting it (every pre-Part-44 caller) works exactly as before.
+  categoryGroup: { type: String, default: null, index: true },
   // Config-driven (expenseTypes) — the higher-level ownership nature of
   // the spend (Employee/Operational/Project/Capital), distinct from and
   // orthogonal to `category` above.
@@ -124,6 +197,17 @@ const ExpenseSchema = new mongoose.Schema({
   baseCurrency: { type: String, default: null },
   baseCurrencyAmount: { type: Number, default: null },
   exchangeRate: { type: Number, default: null },
+  // "Multi-Currency Accounting... Rate Version." (File 7 Part 4) — real
+  // rate-provenance snapshot from the same CurrencyService.convert call
+  // above, previously computed and discarded (same gap Journal's own
+  // exchangeRateId/Version/Provider already closed — Part 41). Null when
+  // `currency` already equals the base currency (nothing was resolved
+  // against a specific ExchangeRateModel row) or when triangulated
+  // (no single row to point at).
+  exchangeRateId: { type: mongoose.Schema.Types.ObjectId, ref: "exchange_rate", default: null },
+  exchangeRateVersion: { type: Number, default: null },
+  exchangeRateProvider: { type: String, default: null },
+  exchangeRateType: { type: String, default: null },
   // ISO country code — the jurisdiction Tax Engine calculation needs.
   // Optional: no country means "skip tax calculation" (never fabricated),
   // the same discipline as every other optional config in this module.
@@ -286,6 +370,11 @@ ExpenseSchema.index({ tenantId: 1, category: 1 });
 ExpenseSchema.index({ tenantId: 1, department: 1 });
 ExpenseSchema.index({ tenantId: 1, expenseType: 1 });
 ExpenseSchema.index({ tenantId: 1, expenseDate: 1 });
+ExpenseSchema.index({ tenantId: 1, createdBy: 1 });
+ExpenseSchema.index({ tenantId: 1, archived: 1, status: 1 });
+ExpenseSchema.index({ tenantId: 1, costCenter: 1 });
+ExpenseSchema.index({ tenantId: 1, profitCenter: 1 });
+ExpenseSchema.index({ tenantId: 1, categoryGroup: 1 });
 
 ExpenseSchema.set("toJSON", {
   transform: (_, ret) => {

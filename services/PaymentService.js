@@ -8,69 +8,29 @@ import { publishEvent } from "../utils/eventBus.js";
 import { getFinanceConfig } from "../utils/financeConfig.js";
 import { getGatewayAdapter } from "./gateways/index.js";
 import { retryWithBackoff } from "../utils/retryWithBackoff.js";
+import { PaymentAggregate } from "../domain/payment/PaymentAggregate.js";
+import { PaymentRepository } from "../domain/payment/PaymentRepository.js";
+import { Money } from "../domain/payment/valueObjects/Money.js";
+import { resolveGateway } from "../domain/payment/policies/GatewayRoutingPolicy.js";
+import { computeFraudRiskScore, deriveFraudStatus } from "../domain/payment/services/PaymentFraudDomainService.js";
+import { isPaymentAllocatable } from "../domain/payment/specifications/CanAllocateSpecification.js";
+import { isPaymentVoidable } from "../domain/payment/specifications/CanVoidSpecification.js";
+import { isPaymentRefundable } from "../domain/payment/specifications/CanRefundSpecification.js";
+import { isPaymentSettleable } from "../domain/payment/specifications/CanSettleSpecification.js";
+import { isPaymentCapturable } from "../domain/payment/specifications/CanCaptureSpecification.js";
 
 const roundCurrency = (value) => Math.round((Number(value) || 0) * 100) / 100;
 
 // ---------------------------------------------------------------------------
-// Pure helpers — no DB access, unit-testable directly (see
-// tests/paymentService.test.js).
+// Business-rule predicates — canonically defined in domain/payment/ as of
+// Improvement 16 (Enterprise DDD Internal Domain Model Standard: "Business
+// logic MUST live inside the Domain Layer"). Re-exported here, unchanged in
+// name and behavior, so every existing import site
+// (services/PaymentIntentService.js, services/CustomerCollectionService.js,
+// services/SettlementService.js, services/RefundService.js,
+// tests/paymentService.test.js) keeps working with zero changes.
 // ---------------------------------------------------------------------------
-
-// Methods that settle without an external API call — everything else
-// defaults to the tenant's configured default gateway (itself "Manual"
-// unless explicitly changed), never auto-routed to a live gateway like
-// Stripe without the caller asking for it. "Wallet" (Part 18 Part 4) is
-// genuinely manual too — a wallet purchase spends an already-real,
-// already-verified internal balance (WalletService), never an external
-// gateway call. "Store Credit" is the same for the same reason
-// (CustomerCreditService's own already-real balance).
-const MANUAL_ONLY_METHODS = new Set(["Cash", "Cheque", "Bank Transfer", "Wallet", "Store Credit"]);
-
-/** Resolves which gateway processes a payment when the caller doesn't say. */
-export const resolveGateway = (paymentMethod, requestedGateway, defaultGateway) => {
-  if (requestedGateway) return requestedGateway;
-  if (MANUAL_ONLY_METHODS.has(paymentMethod)) return "Manual";
-  return defaultGateway;
-};
-
-/**
- * Rule-based (not AI) fraud signal — "Duplicate Payment, Velocity Check,
- * Amount Threshold." Pure: takes pre-computed counts, does no DB work
- * itself (see PaymentService._runFraudCheck for the DB-backed wrapper).
- */
-export const computeFraudRiskScore = ({ isDuplicate, velocityCount, velocityMax, amount, amountThreshold }) => {
-  const flags = [];
-  let riskScore = 0;
-  if (isDuplicate) { flags.push("DuplicatePayment"); riskScore += 40; }
-  if (velocityCount > velocityMax) { flags.push("VelocityExceeded"); riskScore += 30; }
-  if (amount >= amountThreshold) { flags.push("AmountThresholdExceeded"); riskScore += 30; }
-  return { riskScore: Math.min(riskScore, 100), flags };
-};
-
-/** Statuses a payment must be in to accept a new allocation. */
-export const isPaymentAllocatable = (status) => ["Captured", "Allocated"].includes(status);
-
-/** Statuses a payment must be in to be voided (i.e. before any funds were put to use). */
-export const isPaymentVoidable = (status) => ["Initiated", "Pending", "Authorized", "Captured"].includes(status);
-
-/** Statuses a payment must be in to accept a (partial, unallocated-portion-only) refund. */
-export const isPaymentRefundable = (status) => ["Captured", "Allocated", "Settled", "Completed"].includes(status);
-
-/** Statuses a payment must be in for its Settlement Engine settlement to actually complete (Finance Module Part 23). */
-export const isPaymentSettleable = (status) => ["Captured", "Allocated"].includes(status);
-
-/** A payment sitting in Authorized status is waiting on a separate capture call (Manual/Authorize Only/Delayed/Partial Capture modes, Part 18 Part 3). */
-export const isPaymentCapturable = (status) => status === "Authorized";
-
-/**
- * "Risk Score, Fraud Status." Deterministic bands over the already-real
- * `computeFraudRiskScore` output — never a fabricated ML classification.
- */
-export const deriveFraudStatus = (riskScore, { reviewThreshold, flagThreshold }) => {
-  if (riskScore >= flagThreshold) return "Flagged";
-  if (riskScore >= reviewThreshold) return "Review";
-  return "Clear";
-};
+export { resolveGateway, computeFraudRiskScore, deriveFraudStatus, isPaymentAllocatable, isPaymentVoidable, isPaymentRefundable, isPaymentSettleable, isPaymentCapturable };
 
 // Real target-type validation only for modules that actually exist in this
 // codebase — see utils/financeConfig.js allocationTargetTypes doc comment.
@@ -260,12 +220,13 @@ class PaymentService {
   static async capturePayment(paymentId, data, tenantId, userId) {
     const { amount = null } = data || {};
     const payment = await PaymentService.getPaymentById(paymentId, tenantId);
-    if (!isPaymentCapturable(payment.status)) {
+    const aggregate = PaymentAggregate.fromPersistence(payment);
+    if (!aggregate.isCapturableStatus()) {
       throw new Error(`Payment cannot be captured from status "${payment.status}".`);
     }
 
     const captureAmount = amount ? roundCurrency(amount) : payment.amount;
-    if (captureAmount <= 0 || captureAmount > payment.amount) {
+    if (!aggregate.canCapture(captureAmount)) {
       throw new Error(`captureAmount must be greater than zero and no more than the authorized amount (${payment.amount}).`);
     }
 
@@ -288,13 +249,10 @@ class PaymentService {
       return payment.toJSON();
     }
 
-    const isPartial = captureAmount < payment.amount;
-    payment.amount = captureAmount;
-    payment.unallocatedAmount = captureAmount;
-    payment.status = "Captured";
+    const { isPartial } = aggregate.applyCapture(captureAmount);
     payment.gatewayDetails.capturedAt = new Date();
     payment.timeline.push({ event: "PaymentCaptured", description: `Captured ${captureAmount} ${payment.currency}${isPartial ? " (partial)" : ""}.`, performedBy: userId || null });
-    await payment.save();
+    await PaymentRepository.save(payment);
 
     await AuditLogModel.create({ action: "finance.payment.capture", module: "Finance", resource: "Payment", resourceId: payment._id.toString(), userId: userId || null, tenantId, details: { captureAmount } });
     publishEvent("PaymentCaptured", { tenantId, paymentId: payment._id.toString(), bankAccountId: payment.bankAccountId ? payment.bankAccountId.toString() : null, performedBy: userId || null });
@@ -340,10 +298,9 @@ class PaymentService {
     return { items, pagination: { total, page, pageSize, totalPages: Math.ceil(total / pageSize) } };
   }
 
+  /** Persistence lookup — delegates to the Payment Repository (domain/payment/PaymentRepository.js) rather than the Mongoose model directly (Improvement 16: "Repositories MUST abstract persistence only"). */
   static async getPaymentById(paymentId, tenantId) {
-    const payment = await PaymentModel.findOne({ _id: paymentId, tenantId });
-    if (!payment) throw new Error("Payment not found.");
-    return payment;
+    return PaymentRepository.findById(paymentId, tenantId);
   }
 
   /**
@@ -352,25 +309,27 @@ class PaymentService {
    * allocate-payment, AP's own, and this module's generic `allocate` all
    * call it, which is what makes `payment.allocations[]` a complete,
    * trustworthy audit trail no matter which "specialized workflow"
-   * triggered it (see this file's own top-of-file architecture note).
+   * triggered it (see this file's own top-of-file architecture note). Only
+   * the balance sufficiency check is enforced here (status eligibility is
+   * each caller's own responsibility — several callers, e.g.
+   * AccountsReceivableService/AccountsPayableService/WalletService, invoke
+   * this directly without going through the generic `allocate()` status
+   * gate, by design). The balance/invariant mutation itself is delegated
+   * to PaymentAggregate (Improvement 16) — this method stays the
+   * persistence-orchestration entry point (load, ask the aggregate, save).
    */
   static async consumeUnallocatedAmount(paymentId, tenantId, amount, allocationMeta = {}) {
     const payment = await PaymentService.getPaymentById(paymentId, tenantId);
     const roundedAmount = roundCurrency(amount);
+    const aggregate = PaymentAggregate.fromPersistence(payment);
 
-    if (roundedAmount > payment.unallocatedAmount) {
+    if (!aggregate.unallocatedMoney.isGreaterThanOrEqual(new Money(roundedAmount, payment.currency))) {
       throw new Error(`Payment ${paymentId} does not have enough unallocated balance: requested ${roundedAmount}, available ${payment.unallocatedAmount}.`);
     }
 
-    payment.unallocatedAmount = roundCurrency(payment.unallocatedAmount - roundedAmount);
-    if (allocationMeta.targetType && allocationMeta.targetId) {
-      payment.allocations.push({ targetType: allocationMeta.targetType, targetId: allocationMeta.targetId, amount: roundedAmount, allocatedBy: allocationMeta.allocatedBy || null });
-    }
-    if (payment.unallocatedAmount === 0 && payment.status === "Captured") {
-      payment.status = "Allocated";
-    }
+    aggregate.applyAllocation(roundedAmount, { targetType: allocationMeta.targetType, targetId: allocationMeta.targetId, allocatedBy: allocationMeta.allocatedBy });
     payment.timeline.push({ event: "PaymentAllocated", description: `${roundedAmount} ${payment.currency} allocated${allocationMeta.targetType ? ` to ${allocationMeta.targetType}` : ""}.`, performedBy: allocationMeta.allocatedBy || null });
-    await payment.save();
+    await PaymentRepository.save(payment);
 
     return payment.toJSON();
   }
@@ -443,7 +402,8 @@ class PaymentService {
    */
   static async void(paymentId, data, tenantId, userId) {
     const payment = await PaymentService.getPaymentById(paymentId, tenantId);
-    if (!isPaymentVoidable(payment.status)) {
+    const aggregate = PaymentAggregate.fromPersistence(payment);
+    if (!aggregate.canVoid()) {
       throw new Error(`Payment cannot be voided from status "${payment.status}".`);
     }
 
@@ -455,11 +415,9 @@ class PaymentService {
       }
     }
 
-    payment.status = "Voided";
-    payment.voidedAt = new Date();
-    payment.voidedBy = userId || null;
+    aggregate.applyVoid(userId || null);
     payment.timeline.push({ event: "PaymentVoided", description: data?.reason || "Payment voided.", performedBy: userId || null });
-    await payment.save();
+    await PaymentRepository.save(payment);
 
     await AuditLogModel.create({ action: "finance.payment.void", module: "Finance", resource: "Payment", resourceId: paymentId.toString(), userId: userId || null, tenantId, details: { reason: data?.reason || null } });
     publishEvent("PaymentReversed", { tenantId, paymentId: paymentId.toString(), reversalType: "Void", performedBy: userId || null });
@@ -480,11 +438,12 @@ class PaymentService {
     if (!amount || amount <= 0) throw new Error("A positive refund amount is required.");
 
     const payment = await PaymentService.getPaymentById(paymentId, tenantId);
-    if (!isPaymentRefundable(payment.status)) {
+    const roundedAmount = roundCurrency(amount);
+    const aggregate = PaymentAggregate.fromPersistence(payment);
+    if (!aggregate.isRefundableStatus()) {
       throw new Error(`Payment cannot be refunded from status "${payment.status}".`);
     }
-    const roundedAmount = roundCurrency(amount);
-    if (roundedAmount > payment.unallocatedAmount) {
+    if (!aggregate.canRefund(roundedAmount)) {
       throw new Error(`Refund amount exceeds the unallocated portion available (${payment.unallocatedAmount}). Already-allocated funds must be reversed via their own target's mechanism.`);
     }
 
@@ -496,13 +455,9 @@ class PaymentService {
       }
     }
 
-    payment.unallocatedAmount = roundCurrency(payment.unallocatedAmount - roundedAmount);
-    payment.refundedAmount = roundCurrency(payment.refundedAmount + roundedAmount);
-    if (payment.unallocatedAmount === 0 && payment.refundedAmount === payment.amount) {
-      payment.status = "Refunded";
-    }
+    aggregate.applyRefund(roundedAmount);
     payment.timeline.push({ event: "PaymentRefunded", description: `${roundedAmount} ${payment.currency} refunded${reason ? `: ${reason}` : ""}.`, performedBy: userId || null });
-    await payment.save();
+    await PaymentRepository.save(payment);
 
     await AuditLogModel.create({ action: "finance.payment.refund", module: "Finance", resource: "Payment", resourceId: paymentId.toString(), userId: userId || null, tenantId, details: { amount: roundedAmount, reason } });
     publishEvent("PaymentRefunded", { tenantId, paymentId: paymentId.toString(), amount: roundedAmount, performedBy: userId || null });
@@ -558,13 +513,14 @@ class PaymentService {
    */
   static async markSettled(paymentId, tenantId, { settlementId = null, userId = null } = {}) {
     const payment = await PaymentService.getPaymentById(paymentId, tenantId);
-    if (!isPaymentSettleable(payment.status)) {
+    const aggregate = PaymentAggregate.fromPersistence(payment);
+    if (!aggregate.canSettle()) {
       throw new Error(`Payment cannot be marked Settled from status "${payment.status}".`);
     }
 
-    payment.status = "Settled";
+    aggregate.applySettle();
     payment.timeline.push({ event: "PaymentSettled", description: settlementId ? `Settled via settlement ${settlementId}.` : "Settled.", performedBy: userId || "system" });
-    await payment.save();
+    await PaymentRepository.save(payment);
 
     await AuditLogModel.create({ action: "finance.payment.settle", module: "Finance", resource: "Payment", resourceId: paymentId.toString(), userId: userId || null, tenantId, details: { settlementId: settlementId ? settlementId.toString() : null } });
     publishEvent("PaymentSettled", { tenantId, paymentId: paymentId.toString(), settlementId: settlementId ? settlementId.toString() : null, performedBy: userId || "system" });

@@ -140,6 +140,21 @@ export const listWebhookDeliveries = async (req, res) => {
   }
 };
 
+export const getWebhookMonitoringSummary = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "finance.webhook.read", "finance.read")) return sendError(res, 403, "Permission denied.", requestId);
+
+    const summary = await WebhookService.getMonitoringSummary(scope.tenantId, req.query);
+    return sendSuccess(res, 200, "Webhook monitoring summary retrieved successfully.", summary, requestId);
+  } catch (error) {
+    console.error("getWebhookMonitoringSummary error:", error);
+    return sendError(res, 500, error.message || "Failed to retrieve webhook monitoring summary.", requestId);
+  }
+};
+
 export const replayWebhookDelivery = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
