@@ -4,7 +4,6 @@ const DepartmentSchema = new mongoose.Schema({
   departmentKey: {
     type: String,
     required: true,
-    unique: true,
     index: true
   },
   tenantId: {
@@ -47,7 +46,7 @@ const DepartmentSchema = new mongoose.Schema({
   }
 }, { timestamps: true });
 
-DepartmentSchema.index({ tenantId: 1, departmentKey: 1 });
+DepartmentSchema.index({ tenantId: 1, departmentKey: 1 }, { unique: true });
 
 const DepartmentModel = mongoose.model("department", DepartmentSchema);
 

@@ -29,7 +29,7 @@ export const getAuthConfig = () => {
     appName,
     accessTokenSecret: process.env.ACCESS_TOKEN_SECRET || process.env.PRIVATE_KEY,
     refreshTokenSecret: process.env.REFRESH_TOKEN_SECRET || process.env.PRIVATE_KEY,
-    accessTokenExpiresIn: process.env.ACCESS_TOKEN_EXPIRES_IN || "15m",
+    accessTokenExpiresIn: process.env.ACCESS_TOKEN_EXPIRES_IN || "45m",
     refreshTokenExpiresIn: process.env.REFRESH_TOKEN_EXPIRES_IN || "30d",
     refreshTokenExpiresDays: parseInteger(process.env.REFRESH_TOKEN_EXPIRES_DAYS, 30),
     refreshTokenRememberMeExpiresIn: process.env.REFRESH_TOKEN_REMEMBER_ME_EXPIRES_IN || "90d",
