@@ -17,6 +17,9 @@ import HotelBookingModel from "../models/HotelBookingModel.js";
 import FlightBookingModel from "../models/FlightBookingModel.js";
 import CarRentalBookingModel from "../models/CarRentalBookingModel.js";
 import BookingVoucherService from "../services/BookingVoucherService.js";
+import InvoiceModel from "../models/InvoiceModel.js";
+import InvoiceService from "../services/InvoiceService.js";
+import { validateBookingForDocumentGeneration } from "../utils/bookingDocumentValidation.js";
 import BookingDocumentParserService from "../services/BookingDocumentParserService.js";
 import multer from "multer";
 import AuditLogModel from "../models/AuditLogmodel.js";
@@ -27,6 +30,7 @@ import { publishEvent } from "../utils/eventBus.js";
 import { createRequestId } from "../utils/authTokens.js";
 import { handleBookingCreatedSaga } from "../utils/BookingSagaManager.js";
 import { getBookingConfig } from "../utils/bookingConfig.js";
+import { normalizeHotelServiceDetails } from "../utils/hotelServiceDetails.js";
 import { getStorageConfig } from "../utils/storageConfig.js";
 import { saveBookingDocumentFile, resolveBookingDocumentUrl } from "../utils/fileStorage.js";
 import CacheManager from "../utils/cacheManager.js";
@@ -575,7 +579,7 @@ export const GetBooking = async (req, res) => {
       return sendError(res, 403, "Permission denied to view archived booking.", requestId);
     }
 
-    const [customer, travelers, services, workflow, notesCount, documentsCount, tasksCount, timelineSummary, hotelLegs, flightLegs, carRentalLegs] = await Promise.all([
+    const [customer, travelers, services, workflow, notesCount, documentsCount, tasksCount, timelineSummary, hotelLegs, flightLegs, carRentalLegs, relatedInvoices] = await Promise.all([
       CustomerModel.findOne({ _id: booking.customerId, tenantId }).lean(),
       BookingTravelerModel.find({ bookingId, tenantId, status: "active" }).lean(),
       BookingServiceModel.find({ bookingId, tenantId }).lean(),
@@ -586,7 +590,8 @@ export const GetBooking = async (req, res) => {
       BookingTimelineModel.find({ bookingId, tenantId }).sort({ createdAt: -1 }).limit(10).lean(),
       HotelBookingModel.find({ bookingId, tenantId }).lean(),
       FlightBookingModel.find({ bookingId, tenantId }).lean(),
-      CarRentalBookingModel.find({ bookingId, tenantId }).lean()
+      CarRentalBookingModel.find({ bookingId, tenantId }).lean(),
+      InvoiceModel.find({ bookingId, tenantId }).select("invoiceNumber invoiceType status currency grandTotal issueDate dueDate").sort({ createdAt: -1 }).lean()
     ]);
 
     return sendSuccess(res, 200, "Booking aggregate profile loaded.", {
@@ -663,6 +668,18 @@ export const GetBooking = async (req, res) => {
         description: t.description,
         performedByName: t.performedByName || "Staff",
         timestamp: t.createdAt
+      })),
+      // PRD A4 — lets the Account Statement / booking detail view resolve
+      // straight through to whichever invoice(s) this booking produced.
+      relatedInvoices: relatedInvoices.map((inv) => ({
+        invoiceId: inv._id,
+        invoiceNumber: inv.invoiceNumber,
+        invoiceType: inv.invoiceType,
+        status: inv.status,
+        currency: inv.currency,
+        grandTotal: inv.grandTotal,
+        issueDate: inv.issueDate,
+        dueDate: inv.dueDate
       })),
       counts: {
         notesCount,
@@ -1718,6 +1735,21 @@ export const AddBookingServices = async (req, res) => {
       const numQty = Math.max(Number(quantity) || 1, 1);
       const calculatedTotal = numSelling * numQty;
 
+      let resolvedDetails = details;
+      if (normalizedServiceType === "hotel") {
+        if (details.view && !bookingConfig.hotelRoomViews.includes(`${details.view}`.trim().toLowerCase())) {
+          return sendError(res, 422, `Unsupported hotel view '${details.view}'.`, requestId);
+        }
+        if (details.mealPlan && !bookingConfig.hotelMealPlans.includes(`${details.mealPlan}`.trim().toLowerCase())) {
+          return sendError(res, 422, `Unsupported mealPlan '${details.mealPlan}'.`, requestId);
+        }
+        try {
+          resolvedDetails = normalizeHotelServiceDetails(details, { performedBy: req.auth?.id || null });
+        } catch (hotelDetailsError) {
+          return sendError(res, 422, hotelDetailsError.message, requestId);
+        }
+      }
+
       const newService = await BookingServiceModel.create({
         bookingId: booking._id,
         tenantId,
@@ -1738,7 +1770,7 @@ export const AddBookingServices = async (req, res) => {
         remarks,
         internalNotes,
         priority: normalizedPriority,
-        details: serviceId ? { ...details, catalogServiceId: serviceId } : details
+        details: serviceId ? { ...resolvedDetails, catalogServiceId: serviceId } : resolvedDetails
       });
 
       if (Array.isArray(travelerIds) && travelerIds.length > 0) {
@@ -1827,6 +1859,8 @@ export const UpdateBookingService = async (req, res) => {
       return sendError(res, 403, "Elevated permission required to edit a completed service.", requestId);
     }
 
+    const existingServiceDetails = service.details && typeof service.details === "object" ? service.details : {};
+
     const allowedFields = [
       "serviceName", "supplierId", "supplierName", "costPrice", "sellingPrice",
       "quantity", "currencyId", "startDate", "endDate", "remarks", "internalNotes",
@@ -1861,6 +1895,24 @@ export const UpdateBookingService = async (req, res) => {
 
     if (service.currencyId && !bookingConfig.supportedCurrencies.includes(service.currencyId)) {
       return sendError(res, 422, `Unsupported currencyId '${service.currencyId}'.`, requestId);
+    }
+
+    if (service.serviceType === "hotel" && req.body.details !== undefined) {
+      const incomingDetails = req.body.details || {};
+      if (incomingDetails.view && !bookingConfig.hotelRoomViews.includes(`${incomingDetails.view}`.trim().toLowerCase())) {
+        return sendError(res, 422, `Unsupported hotel view '${incomingDetails.view}'.`, requestId);
+      }
+      if (incomingDetails.mealPlan && !bookingConfig.hotelMealPlans.includes(`${incomingDetails.mealPlan}`.trim().toLowerCase())) {
+        return sendError(res, 422, `Unsupported mealPlan '${incomingDetails.mealPlan}'.`, requestId);
+      }
+      try {
+        service.details = normalizeHotelServiceDetails(incomingDetails, {
+          performedBy: req.auth?.id || null,
+          existing: existingServiceDetails
+        });
+      } catch (hotelDetailsError) {
+        return sendError(res, 422, hotelDetailsError.message, requestId);
+      }
     }
 
     service.totalPrice = (Number(service.sellingPrice) || 0) * (Number(service.quantity) || 1);
@@ -3021,8 +3073,96 @@ export const GenerateBookingVoucher = async (req, res) => {
     if (error.message === "Booking not found." || error.message === "Customer not found.") {
       return sendError(res, 404, error.message, requestId);
     }
+    if (error.message.startsWith("Cannot generate document")) {
+      return sendError(res, 422, error.message, requestId);
+    }
     console.error("GenerateBookingVoucher error:", error);
     return sendError(res, 500, "Unable to generate voucher.", requestId);
+  }
+};
+
+/**
+ * POST /api/v1/bookings/{bookingId}/invoice — booking-module PRD Part A
+ * item #4. Builds Invoice.items[] directly from this booking's active
+ * BookingServiceModel line items (instead of a human re-typing them) and
+ * stamps InvoiceModel.bookingId so the Account Statement / booking detail
+ * view can resolve straight through to it. Distinct from
+ * BookingFinanceLinkService's own auto-invoice-on-BookingCreated (a single
+ * lump-sum line for the booking's package price at creation time) — this is
+ * the itemized, human-triggered path, callable any time after services have
+ * been assigned.
+ */
+export const GenerateBookingInvoice = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    const permissions = req.auth?.permissions || [];
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    const tenantId = scope.tenantId;
+
+    if (!permissions.includes("bookings.update") && !permissions.includes("booking.update") && !permissions.includes("finance.invoice.create")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
+
+    const { bookingId } = req.params;
+    const booking = await BookingHeaderModel.findOne({ _id: bookingId, ...scope });
+    if (!booking) return sendError(res, 404, "Booking not found.", requestId);
+
+    const [travelers, activeServices] = await Promise.all([
+      BookingTravelerModel.find({ bookingId, tenantId, status: "active" }).lean(),
+      BookingServiceModel.find({ bookingId, tenantId, status: "active" }).lean()
+    ]);
+
+    const hotelServices = activeServices.filter((s) => s.serviceType === "hotel");
+
+    try {
+      validateBookingForDocumentGeneration(booking, { travelers, hotelServices });
+    } catch (validationError) {
+      return sendError(res, 422, validationError.message, requestId);
+    }
+
+    if (activeServices.length === 0) {
+      return sendError(res, 422, "Booking has no active services to invoice.", requestId);
+    }
+
+    const items = activeServices.map((s) => ({
+      description: s.serviceName,
+      quantity: Math.max(Number(s.quantity) || 1, 1),
+      unitPrice: Number(s.sellingPrice) || 0
+    }));
+
+    const issueDate = new Date();
+    const MS_PER_DAY = 24 * 60 * 60 * 1000;
+    const dueDate = req.body?.dueDate
+      ? new Date(req.body.dueDate)
+      : (booking.travelDate && booking.travelDate.getTime() > issueDate.getTime() ? booking.travelDate : new Date(issueDate.getTime() + 7 * MS_PER_DAY));
+
+    const invoice = await InvoiceService.createInvoice({
+      customerId: booking.customerId,
+      bookingId: booking._id,
+      currency: booking.currency || "USD",
+      issueDate,
+      dueDate,
+      items,
+      notes: `Invoice for booking ${booking.bookingNumber || booking.bookingReference}.`
+    }, tenantId, req.auth?.id || null);
+
+    await recordBookingTimeline({
+      bookingId: booking._id,
+      tenantId,
+      eventType: "BookingInvoiceGenerated",
+      title: "Invoice Generated",
+      description: `Generated invoice ${invoice.invoiceNumber} for booking`,
+      performedBy: req.auth?.id || null,
+      performedByName: req.auth?.username || "Staff"
+    });
+
+    return sendSuccess(res, 201, "Invoice generated.", invoice, requestId);
+  } catch (error) {
+    if (error.message === "Customer not found.") return sendError(res, 404, error.message, requestId);
+    if (/required/i.test(error.message)) return sendError(res, 400, error.message, requestId);
+    console.error("GenerateBookingInvoice error:", error);
+    return sendError(res, 500, "Unable to generate invoice.", requestId);
   }
 };
 
@@ -3055,7 +3195,7 @@ export const ParseSupplierDocument = async (req, res) => {
 
     if (!req.file?.buffer?.length) return sendError(res, 422, "A supplier document file is required.", requestId);
 
-    const result = await BookingDocumentParserService.parseHotelDocument(req.file.buffer, req.file.mimetype);
+    const result = await BookingDocumentParserService.parseHotelDocument(req.file.buffer, req.file.mimetype, scope.tenantId);
     return sendSuccess(res, 200, "Supplier document parsed.", result, requestId);
   } catch (error) {
     console.error("ParseSupplierDocument error:", error);

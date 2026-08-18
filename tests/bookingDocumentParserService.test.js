@@ -12,6 +12,8 @@ import {
   extractHotelConfirmationNumberFromText,
   validateHotelExtraction
 } from "../services/BookingDocumentParserService.js";
+import BookingDocumentParserService from "../services/BookingDocumentParserService.js";
+import AIModelRouterService from "../services/ai/AIModelRouterService.js";
 
 const SAMPLE_DOC = `Grand Palace Hotel
 Hotel CNF#: HTL-998877
@@ -100,4 +102,46 @@ test("validateHotelExtraction returns no warnings for consistent fields", () => 
 test("validateHotelExtraction never blocks on missing fields (returns no warnings, not an error)", () => {
   const warnings = validateHotelExtraction({ checkIn: null, checkOut: null, ratePerNight: null, total: null });
   assert.deepEqual(warnings, []);
+});
+
+// PRD A7 — parseHotelDocument's field population is now a real LLM tool-use
+// call through AIModelRouterService.route, not the regex heuristics above.
+test("parseHotelDocument returns Completed with AI-extracted fields via AIModelRouterService's tool-call result", async (t) => {
+  t.mock.method(BookingDocumentParserService, "_extractText", async () => ({ text: "Grand Palace Hotel\nGuest Name: John Doe", confidence: null }));
+  t.mock.method(AIModelRouterService, "route", async ({ tools }) => {
+    assert.equal(tools[0].name, "extract_hotel_booking_fields", "must call with the constrained extraction tool");
+    return {
+      provider: "Anthropic",
+      toolCalls: [{
+        name: "extract_hotel_booking_fields",
+        arguments: {
+          guestName: "John Doe", hotelName: "Grand Palace Hotel", roomType: "Deluxe Twin",
+          checkIn: "2027-04-10", checkOut: "2027-04-13", pax: 2, ratePerNight: 150, total: 450,
+          hotelConfirmationNumber: "HTL-998877"
+        }
+      }]
+    };
+  });
+
+  const result = await BookingDocumentParserService.parseHotelDocument(Buffer.from("dummy"), "application/pdf", "test-tenant");
+
+  assert.equal(result.status, "Completed");
+  assert.equal(result.fields.guestName, "John Doe");
+  assert.equal(result.fields.checkIn.toISOString().slice(0, 10), "2027-04-10");
+  assert.equal(result.fields.pax, 2);
+  assert.deepEqual(result.warnings, []);
+});
+
+test("parseHotelDocument returns status Failed (never throws) when no AI provider is configured/reachable", async (t) => {
+  t.mock.method(BookingDocumentParserService, "_extractText", async () => ({ text: "some document text", confidence: null }));
+  t.mock.method(AIModelRouterService, "route", async () => {
+    const error = new Error("AI service is not available: no configured provider could be reached.");
+    error.code = "AI_UNAVAILABLE";
+    throw error;
+  });
+
+  const result = await BookingDocumentParserService.parseHotelDocument(Buffer.from("dummy"), "application/pdf", "test-tenant");
+
+  assert.equal(result.status, "Failed");
+  assert.match(result.error, /AI service is not available/);
 });

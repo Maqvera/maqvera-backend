@@ -32,7 +32,12 @@ class InvoicePdfService {
   // anywhere in this file, not even a hardcoded one), so a tenant with no
   // profile set up yet still gets a valid invoice, just without a branding
   // header — never a fabricated placeholder company name.
-  static async generatePdfBuffer({ invoiceNumber, invoiceType, status, issueDate, dueDate, customerName, currency, items, subtotal, taxTotal, discountTotal, grandTotal, company }) {
+  // `bookingDetails` (guestName/paxCount/hotels[]) — booking-module PRD item
+  // A6, populated only when this invoice was generated from a booking (see
+  // InvoiceService._resolveBookingDetailsForPdf). No pricing/tax logic is
+  // computed here — those numbers already arrive fully computed in `items`/
+  // `subtotal`/`taxTotal`/`grandTotal`; this file only renders them.
+  static async generatePdfBuffer({ invoiceNumber, invoiceType, status, issueDate, dueDate, customerName, currency, items, subtotal, taxTotal, discountTotal, grandTotal, company, bookingDetails }) {
     return new Promise((resolve, reject) => {
       const doc = new PDFDocument({ margin: 50, size: "A4" });
       const chunks = [];
@@ -55,7 +60,24 @@ class InvoicePdfService {
       doc.text(`Issue Date: ${new Date(issueDate).toISOString().split("T")[0]}`);
       doc.text(`Due Date: ${new Date(dueDate).toISOString().split("T")[0]}`);
       doc.text(`Bill To: ${customerName}`);
+      if (bookingDetails?.guestName) doc.text(`Guest: ${bookingDetails.guestName}`);
+      if (bookingDetails?.paxCount) doc.text(`PAX: ${bookingDetails.paxCount}`);
       doc.moveDown();
+
+      if (Array.isArray(bookingDetails?.hotels) && bookingDetails.hotels.length > 0) {
+        doc.fontSize(11).text("Hotel / Room Details", { underline: true });
+        doc.fontSize(9);
+        bookingDetails.hotels.forEach((h) => {
+          const checkIn = h.checkIn ? new Date(h.checkIn).toISOString().split("T")[0] : "-";
+          const checkOut = h.checkOut ? new Date(h.checkOut).toISOString().split("T")[0] : "-";
+          const pax = [h.adultCount ? `${h.adultCount} Adult` : null, h.childCount ? `${h.childCount} Child` : null, h.infantCount ? `${h.infantCount} Infant` : null].filter(Boolean).join(", ");
+          doc.text(`${h.hotelName}${h.hotelConfirmationNumber ? ` (CNF: ${h.hotelConfirmationNumber})` : ""}`);
+          doc.text(`  Room: ${h.roomType || "-"}${h.view ? ` (${h.view})` : ""} | Check-In: ${checkIn} | Check-Out: ${checkOut} | Nights: ${h.nights}`);
+          if (pax) doc.text(`  PAX: ${pax}`);
+          if (h.mealPlan) doc.text(`  Meal Plan: ${h.mealPlan}`);
+        });
+        doc.moveDown();
+      }
 
       doc.fontSize(11).text("Items", { underline: true });
       doc.fontSize(9);
@@ -77,6 +99,8 @@ class InvoicePdfService {
         doc.moveDown();
         doc.fontSize(11).text("Payment Details", { underline: true });
         doc.fontSize(9);
+        if (company.bankDetails.bankName) doc.text(`Bank Name: ${company.bankDetails.bankName}`);
+        if (company.bankDetails.accountName) doc.text(`Account Name: ${company.bankDetails.accountName}`);
         if (company.bankDetails.iban) doc.text(`IBAN: ${company.bankDetails.iban}`);
         if (company.bankDetails.swiftCode) doc.text(`SWIFT/BIC: ${company.bankDetails.swiftCode}`);
         if (company.bankDetails.accountNumberLast4) doc.text(`Account: ****${company.bankDetails.accountNumberLast4}`);

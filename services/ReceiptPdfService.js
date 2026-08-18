@@ -22,7 +22,11 @@ const TEMPLATE_TITLES = {
  * utils/receiptPdfStorage.js) and served back to the caller.
  */
 class ReceiptPdfService {
-  static async generatePdfBuffer({ receiptNumber, template, issueDate, amount, currency, paymentNumber, partyName, allocations = [], qrPngBuffer }) {
+  // `company` (name/logoUrl/vatNumber/registrationNumber/address) — booking-
+  // module PRD item B4, sourced from TenantProfileModel via
+  // utils/tenantBranding.js. Optional: a tenant with no profile set up yet
+  // still gets a valid receipt, just without a branding header.
+  static async generatePdfBuffer({ receiptNumber, template, issueDate, amount, currency, paymentNumber, partyName, allocations = [], qrPngBuffer, company }) {
     return new Promise((resolve, reject) => {
       const doc = new PDFDocument({ margin: 50, size: "A4" });
       const chunks = [];
@@ -32,9 +36,13 @@ class ReceiptPdfService {
 
       const title = TEMPLATE_TITLES[template] || TEMPLATE_TITLES.Default;
 
+      if (company?.name) doc.fontSize(14).text(company.name, { align: "center" });
+      if (company?.address) doc.fontSize(9).fillColor("gray").text(company.address, { align: "center" }).fillColor("black");
       doc.fontSize(20).text(title, { align: "center" });
       doc.moveDown();
       doc.fontSize(10).text(`Receipt Number: ${receiptNumber}`);
+      if (company?.vatNumber) doc.text(`VAT Number: ${company.vatNumber}`);
+      if (company?.registrationNumber) doc.text(`Registration Number: ${company.registrationNumber}`);
       doc.text(`Issue Date: ${new Date(issueDate).toISOString().split("T")[0]}`);
       doc.text(`Payment Number: ${paymentNumber}`);
       if (partyName) doc.text(`Issued To: ${partyName}`);

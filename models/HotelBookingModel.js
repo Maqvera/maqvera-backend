@@ -3,7 +3,7 @@ import mongoose from "mongoose";
 const HotelBookingSchema = new mongoose.Schema(
   {
     tenantId: { type: String, required: true, index: true },
-    bookingId: { type: mongoose.Schema.Types.ObjectId, ref: "BookingHeader", index: true, default: null },
+    bookingId: { type: mongoose.Schema.Types.ObjectId, ref: "booking_header", index: true, default: null },
     travelPlanId: { type: mongoose.Schema.Types.ObjectId, ref: "TravelPlan", index: true, default: null },
     offerId: { type: String, required: true },
     provider: {

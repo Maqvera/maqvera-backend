@@ -1,5 +1,7 @@
 import BookingHeaderModel from "../models/BookingHeaderModel.js";
 import BookingVoucherModel from "../models/BookingVoucherModel.js";
+import BookingServiceModel from "../models/BookingServiceModel.js";
+import BookingTravelerModel from "../models/BookingTravelerModel.js";
 import CustomerModel from "../models/CustomerModel.js";
 import HotelBookingModel from "../models/HotelBookingModel.js";
 import FlightBookingModel from "../models/FlightBookingModel.js";
@@ -8,6 +10,8 @@ import NumberGeneratorService from "./NumberGeneratorService.js";
 import BookingVoucherPdfService from "./BookingVoucherPdfService.js";
 import storeDocumentPdf from "../utils/documentPdfStorage.js";
 import { resolveTenantBranding, resolveTenantDocumentSettings } from "../utils/tenantBranding.js";
+import { validateBookingForDocumentGeneration } from "../utils/bookingDocumentValidation.js";
+import { effectiveNights } from "../utils/hotelServiceDetails.js";
 
 /**
  * Orchestrates Client Voucher generation (booking-module PRD Part B item
@@ -21,15 +25,53 @@ class BookingVoucherService {
     const booking = await BookingHeaderModel.findOne({ _id: bookingId, tenantId }).lean();
     if (!booking) throw new Error("Booking not found.");
 
-    const [customer, hotelLegs, flightLegs, carRentalLegs, company, documentSettings] = await Promise.all([
+    const [customer, hotelLegs, flightLegs, carRentalLegs, company, documentSettings, travelers, manualHotelServices] = await Promise.all([
       CustomerModel.findOne({ _id: booking.customerId, tenantId }).lean(),
       HotelBookingModel.find({ bookingId, tenantId }).lean(),
       FlightBookingModel.find({ bookingId, tenantId }).lean(),
       CarRentalBookingModel.find({ bookingId, tenantId }).lean(),
       resolveTenantBranding(tenantId),
-      resolveTenantDocumentSettings(tenantId)
+      resolveTenantDocumentSettings(tenantId),
+      BookingTravelerModel.find({ bookingId, tenantId, status: "active" }).lean(),
+      BookingServiceModel.find({ bookingId, tenantId, serviceType: "hotel", status: "active" }).lean()
     ]);
     if (!customer) throw new Error("Customer not found.");
+
+    // PRD A10 — block generation with a named list of missing fields rather
+    // than rendering a voucher with blanks. hotelServices here covers both
+    // the manual/AI-parsed path (BookingServiceModel.details, PRD A8) and
+    // the GDS path is validated separately below via manualHotelServices +
+    // hotelLegs together, since either source can satisfy "a hotel exists".
+    validateBookingForDocumentGeneration(booking, {
+      travelers,
+      hotelServices: hotelLegs.length === 0 ? manualHotelServices : []
+    });
+
+    // Manual/AI-parsed hotel bookings (no GDS HotelBookingModel record) —
+    // PRD A5's own gap: this voucher used to only read the GDS legs above
+    // and silently produced an empty typeDetails.hotels for a
+    // manually-created or supplier-PDF-extracted booking (PRD A8's
+    // structured BookingServiceModel.details). Normalized into the same
+    // shape as a GDS hotel leg so the PDF template doesn't need to branch.
+    // Field names deliberately match HotelBookingModel's GDS leg shape
+    // (city/roomType/mealPlan/checkIn/checkOut/roomsCount/guestsCount) so
+    // BookingVoucherPdfService's rendering loop doesn't need to branch by
+    // source.
+    const manualHotelLegs = manualHotelServices.map((s) => {
+      const d = s.details || {};
+      return {
+        hotelName: d.hotelName || s.serviceName,
+        confirmationNumber: d.hotelConfirmationNumber || null,
+        city: d.city || null,
+        roomType: d.roomType || null,
+        mealPlan: d.mealPlan || null,
+        checkIn: d.checkIn || null,
+        checkOut: d.checkOut || null,
+        nights: effectiveNights(d),
+        roomsCount: d.roomQuantity || 1,
+        guestsCount: (d.adultCount || 0) + (d.childCount || 0) + (d.infantCount || 0) || 1
+      };
+    });
 
     const generated = await NumberGeneratorService.generateNumber(tenantId, { resourceType: "Voucher" }, userId || null);
     const voucherNumber = generated.documentNumber;
@@ -46,8 +88,9 @@ class BookingVoucherService {
       travelDate: booking.travelDate,
       returnDate: booking.returnDate
     };
+    const effectiveHotelLegs = hotelLegs.length > 0 ? hotelLegs : manualHotelLegs;
     const typeDetails = {
-      ...(hotelLegs.length > 0 ? { hotels: hotelLegs } : {}),
+      ...(effectiveHotelLegs.length > 0 ? { hotels: effectiveHotelLegs } : {}),
       ...(flightLegs.length > 0 ? { flights: flightLegs } : {}),
       ...(carRentalLegs.length > 0 ? { carRentals: carRentalLegs } : {})
     };

@@ -12,6 +12,9 @@ import PricingService from "./PricingService.js";
 import { storeDocumentPdf } from "../utils/documentPdfStorage.js";
 import { subscribeEvent, publishEvent } from "../utils/eventBus.js";
 import { getFinanceConfig } from "../utils/financeConfig.js";
+import BookingServiceModel from "../models/BookingServiceModel.js";
+import BookingTravelerModel from "../models/BookingTravelerModel.js";
+import { effectiveNights } from "../utils/hotelServiceDetails.js";
 
 const roundCurrency = (value) => Math.round((Number(value) || 0) * 100) / 100;
 
@@ -193,13 +196,55 @@ class InvoiceService {
     return resolved;
   }
 
+  // PRD A6 — populated only when this invoice was generated from a booking
+  // (invoiceDoc.bookingId set, see PRD A4 / BookingController.GenerateBookingInvoice).
+  // Read-only pull of the booking's own hotel service lines/guest — this
+  // service already becomes booking-aware the moment a caller passes
+  // bookingId in (same precedent as BookingFinanceLinkService reading
+  // BookingHeaderModel directly rather than through the event bus, since
+  // there's no async event carrying this data at PDF-render time).
+  static async _resolveBookingDetailsForPdf(invoiceDoc) {
+    if (!invoiceDoc.bookingId) return null;
+
+    const [travelers, hotelServices] = await Promise.all([
+      BookingTravelerModel.find({ bookingId: invoiceDoc.bookingId, tenantId: invoiceDoc.tenantId, status: "active" }).lean(),
+      BookingServiceModel.find({ bookingId: invoiceDoc.bookingId, tenantId: invoiceDoc.tenantId, serviceType: "hotel", status: "active" }).lean()
+    ]);
+
+    const primaryTraveler = travelers.find((t) => t.isPrimary || t.isPrimaryTraveler) || travelers[0] || null;
+
+    return {
+      guestName: primaryTraveler ? `${primaryTraveler.firstName || ""} ${primaryTraveler.lastName || ""}`.trim() : null,
+      paxCount: travelers.length,
+      hotels: hotelServices.map((s) => {
+        const d = s.details || {};
+        return {
+          hotelName: d.hotelName || s.serviceName,
+          hotelConfirmationNumber: d.hotelConfirmationNumber || null,
+          roomType: d.roomType || null,
+          view: d.view || null,
+          checkIn: d.checkIn || null,
+          checkOut: d.checkOut || null,
+          nights: effectiveNights(d),
+          adultCount: d.adultCount || null,
+          childCount: d.childCount || 0,
+          infantCount: d.infantCount || 0,
+          mealPlan: d.mealPlan || null
+        };
+      })
+    };
+  }
+
   static async _generatePdf(invoiceDoc, customerName) {
-    const company = await resolveTenantBranding(invoiceDoc.tenantId);
+    const [company, bookingDetails] = await Promise.all([
+      resolveTenantBranding(invoiceDoc.tenantId),
+      InvoiceService._resolveBookingDetailsForPdf(invoiceDoc)
+    ]);
     const buffer = await InvoicePdfService.generatePdfBuffer({
       invoiceNumber: invoiceDoc.invoiceNumber, invoiceType: invoiceDoc.invoiceType, status: invoiceDoc.status,
       issueDate: invoiceDoc.issueDate, dueDate: invoiceDoc.dueDate, customerName, currency: invoiceDoc.currency,
       items: invoiceDoc.items, subtotal: invoiceDoc.subtotal, taxTotal: invoiceDoc.taxTotal,
-      discountTotal: invoiceDoc.discountTotal, grandTotal: invoiceDoc.grandTotal, company
+      discountTotal: invoiceDoc.discountTotal, grandTotal: invoiceDoc.grandTotal, company, bookingDetails
     });
     const stored = await storeDocumentPdf({ tenantId: invoiceDoc.tenantId, folder: "invoices", filename: `${invoiceDoc.invoiceNumber}.pdf`, buffer });
     return { url: stored.url, storageKey: stored.storageKey, storageProvider: stored.storageProvider, generatedAt: new Date() };
@@ -218,7 +263,7 @@ class InvoiceService {
    */
   static async createInvoice(data, tenantId, userId) {
     const config = getFinanceConfig();
-    const { customerId, invoiceType = config.defaultInvoiceType, currency, issueDate, dueDate, items: rawItems, notes = null, attachments = [] } = data;
+    const { customerId, invoiceType = config.defaultInvoiceType, currency, issueDate, dueDate, items: rawItems, notes = null, attachments = [], bookingId = null } = data;
 
     if (!customerId || !currency || !dueDate || !Array.isArray(rawItems) || rawItems.length === 0) {
       throw new Error("customerId, currency, dueDate, and at least one item are required.");
@@ -243,6 +288,7 @@ class InvoiceService {
       invoiceNumber,
       invoiceType,
       customerId,
+      bookingId: bookingId || null,
       customerName,
       status: config.defaultInvoiceStatus,
       currency,

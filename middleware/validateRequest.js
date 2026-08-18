@@ -24,7 +24,9 @@ const getBookingValidationValues = () => {
     defaultBookingType: bookingConfig.defaultBookingType,
     defaultServiceWorkflowStatus: bookingConfig.defaultServiceWorkflowStatus,
     defaultServiceStatus: bookingConfig.defaultServiceStatus,
-    defaultServicePriority: bookingConfig.defaultServicePriority
+    defaultServicePriority: bookingConfig.defaultServicePriority,
+    hotelMealPlanValues: bookingConfig.hotelMealPlans,
+    hotelRoomViewValues: bookingConfig.hotelRoomViews
   };
 };
 
@@ -271,8 +273,36 @@ const buildBookingSchemas = () => {
     defaultBookingType,
     defaultServiceWorkflowStatus,
     defaultServiceStatus,
-    defaultServicePriority
+    defaultServicePriority,
+    hotelMealPlanValues,
+    hotelRoomViewValues
   } = getBookingValidationValues();
+
+  // Structured hotel service details (PRD A8) — validated only when
+  // serviceType==="hotel" (see serviceItemFields.details below). `nights` is
+  // never accepted from the client — utils/hotelServiceDetails.js computes
+  // it server-side; overrideNights/overrideNightsReason is the only way to
+  // record a deliberate, audited deviation from that computed value.
+  const hotelServiceDetailsSchema = Joi.object({
+    hotelName: Joi.string().trim().min(1).max(200).required(),
+    hotelConfirmationNumber: Joi.string().trim().max(100).optional().allow(""),
+    city: Joi.string().trim().max(100).optional().allow(""),
+    season: Joi.string().trim().max(100).optional().allow(""),
+    roomType: Joi.string().trim().min(1).max(100).required(),
+    roomQuantity: Joi.number().integer().min(1).optional(),
+    view: Joi.string().trim().lowercase().valid(...hotelRoomViewValues).optional(),
+    adultCount: Joi.number().integer().min(1).required(),
+    childCount: Joi.number().integer().min(0).optional(),
+    infantCount: Joi.number().integer().min(0).optional(),
+    mealPlan: Joi.string().trim().lowercase().valid(...hotelMealPlanValues).optional(),
+    mealPrice: Joi.number().min(0).optional(),
+    checkIn: Joi.date().required(),
+    checkOut: Joi.date().required().greater(Joi.ref("checkIn")),
+    ratePerNight: Joi.number().min(0).optional(),
+    overrideNights: Joi.number().integer().min(1).optional(),
+    overrideNightsReason: Joi.string().trim().max(500).when("overrideNights", { is: Joi.exist(), then: Joi.required(), otherwise: Joi.optional() }),
+    catalogServiceId: Joi.string().trim().max(100).optional()
+  });
 
   // "Editable Fields" for PATCH /bookings/{id}/travelers/{travelerId}.
   const travelerPreferenceFields = {
@@ -316,7 +346,11 @@ const buildBookingSchemas = () => {
     workflowStatus: Joi.string().trim().lowercase().valid(...serviceWorkflowStatusValues).optional().default(defaultServiceWorkflowStatus),
     status: Joi.string().trim().lowercase().valid("active", "cancelled", "archived").optional().default(defaultServiceStatus),
     travelerIds: Joi.array().items(Joi.string()).optional(),
-    details: Joi.object().optional().default({})
+    details: Joi.alternatives().conditional("serviceType", {
+      is: "hotel",
+      then: hotelServiceDetailsSchema.required(),
+      otherwise: Joi.object().optional().default({})
+    })
   };
 
   const serviceItemSchema = Joi.object(serviceItemFields).or('serviceName', 'serviceId');

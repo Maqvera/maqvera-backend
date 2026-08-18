@@ -62,6 +62,15 @@ const InvoiceSchema = new mongoose.Schema({
     required: true,
     index: true
   },
+  // Set only for invoices generated from a booking (PRD A4) — lets an
+  // Account Statement / booking-detail row resolve straight through to the
+  // invoice it produced. Null for manually-entered, non-booking AR invoices.
+  bookingId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "booking_header",
+    default: null,
+    index: true
+  },
   customerName: {
     type: String,
     required: true

@@ -78,6 +78,7 @@ class BookingFinanceLinkService {
 
       const invoice = await InvoiceService.createInvoice({
         customerId: booking.customerId,
+        bookingId: booking._id,
         currency: booking.currency || "USD",
         issueDate,
         dueDate,

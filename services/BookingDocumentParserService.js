@@ -4,8 +4,49 @@ import { createWorker } from "tesseract.js";
 // at module-load time that ESM's CJS interop triggers, causing a spurious
 // ENOENT. Import the inner lib file directly instead.
 import pdfParse from "pdf-parse/lib/pdf-parse.js";
+import AIModelRouterService from "./ai/AIModelRouterService.js";
 
 const IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/bmp", "image/tiff"]);
+
+// PRD A7 — the actual field extraction is an LLM tool-use call routed
+// through AIModelRouterService (the real "AI Gateway -> Model Router ->
+// Provider Adapter -> LLM Provider" pipeline this codebase already built
+// for EXT-034, same entry point AIAssistantService/AIOrchestrationService
+// use), constrained to this exact schema so the model can only return these
+// nine fields — never free text, never an invented field. `category:
+// "reasoning"` (accurate structured extraction from unstructured text) also
+// satisfies AIModelRouterService's `requiresToolCalling` gate. The pure
+// regex extractors below this remain as tested, standalone building blocks
+// (label-pattern documentation + a unit-testable oracle for the field set)
+// but are no longer what parseHotelDocument itself calls.
+const HOTEL_EXTRACTION_TOOL = {
+  name: "extract_hotel_booking_fields",
+  description: "Extract structured hotel booking fields from the text of a supplier/hotel confirmation document. Use null for any field genuinely not present in the text — never invent or guess a value that isn't there.",
+  parameters: {
+    type: "object",
+    properties: {
+      guestName: { type: ["string", "null"], description: "Primary guest's full name." },
+      hotelName: { type: ["string", "null"], description: "Name of the hotel." },
+      roomType: { type: ["string", "null"], description: "Room type/category (e.g. Deluxe Twin, Standard Double)." },
+      checkIn: { type: ["string", "null"], description: "Check-in date in ISO 8601 (YYYY-MM-DD)." },
+      checkOut: { type: ["string", "null"], description: "Check-out date in ISO 8601 (YYYY-MM-DD)." },
+      pax: { type: ["number", "null"], description: "Number of guests/occupants." },
+      ratePerNight: { type: ["number", "null"], description: "Rate per night as a plain number, no currency symbol." },
+      total: { type: ["number", "null"], description: "Total/grand total amount as a plain number, no currency symbol." },
+      hotelConfirmationNumber: { type: ["string", "null"], description: "Hotel confirmation number / CNF (distinct from any airline/agency booking reference)." }
+    },
+    required: ["guestName", "hotelName", "roomType", "checkIn", "checkOut", "pax", "ratePerNight", "total", "hotelConfirmationNumber"]
+  }
+};
+
+const HOTEL_EXTRACTION_SYSTEM_PROMPT = "You extract structured fields from hotel supplier confirmation documents for a travel agency's booking system. Call extract_hotel_booking_fields exactly once with your best-effort reading of the document text. Never fabricate a value for a field that isn't genuinely present — use null instead.";
+
+/** Parses an ISO/near-ISO date string into a Date, or null if not parseable — the AI is asked for YYYY-MM-DD but this tolerates minor drift rather than throwing. */
+const parseAIDate = (value) => {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+};
 
 // ---------------------------------------------------------------------------
 // Pure text-parsing helpers — no OCR/DB access, unit-testable directly (see
@@ -158,29 +199,47 @@ class BookingDocumentParserService {
     return null;
   }
 
+  /** Real LLM tool-use call — throws on a genuine AI failure (no configured/reachable provider), caught by parseHotelDocument's own try/catch, same honest-failure discipline as the rest of this codebase's AI call sites. */
+  static async _extractFieldsWithAI(text, tenantId) {
+    const { toolCalls } = await AIModelRouterService.route({
+      tenantId,
+      category: "reasoning",
+      messages: [{ role: "user", content: `Extract the hotel booking fields from this document text:\n\n${text.slice(0, 12000)}` }],
+      tools: [HOTEL_EXTRACTION_TOOL],
+      systemPrompt: HOTEL_EXTRACTION_SYSTEM_PROMPT
+    });
+
+    const call = (toolCalls || []).find((c) => c.name === "extract_hotel_booking_fields");
+    if (!call) throw new Error("AI provider did not return the expected extract_hotel_booking_fields tool call.");
+
+    const raw = call.arguments || {};
+    return {
+      guestName: raw.guestName || null,
+      hotelName: raw.hotelName || null,
+      roomType: raw.roomType || null,
+      checkIn: parseAIDate(raw.checkIn),
+      checkOut: parseAIDate(raw.checkOut),
+      pax: typeof raw.pax === "number" ? raw.pax : null,
+      ratePerNight: typeof raw.ratePerNight === "number" ? raw.ratePerNight : null,
+      total: typeof raw.total === "number" ? raw.total : null,
+      hotelConfirmationNumber: raw.hotelConfirmationNumber || null
+    };
+  }
+
   /**
    * Parses a supplier hotel-booking document. Never throws: a genuine
-   * OCR/parsing failure is `status: "Failed"`, an unsupported file type is
+   * OCR/parsing or AI-extraction failure (including no AI provider
+   * configured/reachable) is `status: "Failed"`, an unsupported file type is
    * `status: "Skipped"` — same contract as ExpenseOcrService.processAttachment.
    */
-  static async parseHotelDocument(buffer, mimeType) {
+  static async parseHotelDocument(buffer, mimeType, tenantId) {
     try {
       const extraction = await BookingDocumentParserService._extractText(buffer, mimeType);
       if (!extraction) {
         return { status: "Skipped", extractedText: null, fields: null, warnings: [], confidence: null, processedAt: new Date() };
       }
       const { text, confidence } = extraction;
-      const fields = {
-        guestName: extractGuestNameFromText(text),
-        hotelName: extractHotelNameFromText(text),
-        roomType: extractRoomTypeFromText(text),
-        checkIn: extractCheckInFromText(text),
-        checkOut: extractCheckOutFromText(text),
-        pax: extractPaxFromText(text),
-        ratePerNight: extractRatePerNightFromText(text),
-        total: extractTotalFromText(text),
-        hotelConfirmationNumber: extractHotelConfirmationNumberFromText(text)
-      };
+      const fields = await BookingDocumentParserService._extractFieldsWithAI(text, tenantId);
       return {
         status: "Completed",
         extractedText: text.slice(0, 5000),

@@ -37,6 +37,7 @@ import {
   GetBookingDashboard,
   GenerateBookingVoucher,
   ListBookingVouchers,
+  GenerateBookingInvoice,
   uploadSupplierDocumentFile,
   ParseSupplierDocument
 } from "../controllers/BookingController.js";
@@ -76,6 +77,9 @@ router.post("/:bookingId/cancel", limiter, validate(bookingSchemas.cancelBooking
 // Client Voucher (Booking-module PRD Part B item #7)
 router.post("/:bookingId/vouchers", limiter, GenerateBookingVoucher);
 router.get("/:bookingId/vouchers", limiter, ListBookingVouchers);
+
+// Booking-driven Invoice (Booking-module PRD Part A item #4)
+router.post("/:bookingId/invoice", limiter, GenerateBookingInvoice);
 
 // Booking Travelers APIs (Part 3)
 router.get("/:bookingId/travelers", limiter, ListBookingTravelers);

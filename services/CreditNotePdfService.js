@@ -7,7 +7,11 @@ import PDFDocument from "pdfkit";
  * not a placeholder.
  */
 class CreditNotePdfService {
-  static async generatePdfBuffer({ creditNumber, status, issuedAt, invoiceNumber, customerName, reason, currency, items, creditAmount, taxAdjustmentTotal, grandTotal, disposition }) {
+  // `company` (name/logoUrl/vatNumber/registrationNumber/address) — booking-
+  // module PRD item B4, sourced from TenantProfileModel via
+  // utils/tenantBranding.js. Optional: a tenant with no profile set up yet
+  // still gets a valid credit note, just without a branding header.
+  static async generatePdfBuffer({ creditNumber, status, issuedAt, invoiceNumber, customerName, reason, currency, items, creditAmount, taxAdjustmentTotal, grandTotal, disposition, company }) {
     return new Promise((resolve, reject) => {
       const doc = new PDFDocument({ margin: 50, size: "A4" });
       const chunks = [];
@@ -15,12 +19,16 @@ class CreditNotePdfService {
       doc.on("end", () => resolve(Buffer.concat(chunks)));
       doc.on("error", reject);
 
+      if (company?.name) doc.fontSize(14).text(company.name, { align: "center" });
+      if (company?.address) doc.fontSize(9).fillColor("gray").text(company.address, { align: "center" }).fillColor("black");
       doc.fontSize(20).text("CREDIT NOTE", { align: "center" });
       if (status === "Draft") doc.fontSize(10).fillColor("gray").text("DRAFT — NOT YET ISSUED", { align: "center" }).fillColor("black");
       doc.moveDown();
 
       doc.fontSize(10);
       doc.text(`Credit Note Number: ${creditNumber}`);
+      if (company?.vatNumber) doc.text(`VAT Number: ${company.vatNumber}`);
+      if (company?.registrationNumber) doc.text(`Registration Number: ${company.registrationNumber}`);
       doc.text(`Against Invoice: ${invoiceNumber}`);
       doc.text(`Date: ${new Date(issuedAt || Date.now()).toISOString().split("T")[0]}`);
       doc.text(`Customer: ${customerName}`);

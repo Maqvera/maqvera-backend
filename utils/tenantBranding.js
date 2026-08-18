@@ -29,7 +29,13 @@ export const resolveTenantBranding = async (tenantId) => {
     address: tenantProfile.address,
     phone: tenantProfile.phone,
     email: tenantProfile.email,
-    bankDetails: bankAccount ? { iban: bankAccount.iban, swiftCode: bankAccount.swiftCode, accountNumberLast4: bankAccount.accountNumberLast4 } : null
+    bankDetails: bankAccount ? {
+      bankName: bankAccount.bankName,
+      accountName: bankAccount.accountName,
+      accountNumberLast4: bankAccount.accountNumberLast4,
+      iban: bankAccount.iban,
+      swiftCode: bankAccount.swiftCode
+    } : null
   };
 };
 
