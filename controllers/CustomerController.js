@@ -10,6 +10,8 @@ import AuditLogModel from "../models/AuditLogmodel.js";
 import EnterpriseDocumentService from "../services/EnterpriseDocumentService.js";
 import CustomerStatisticsEngine from "../services/CustomerStatisticsEngine.js";
 import CustomerAccountStatementService from "../services/CustomerAccountStatementService.js";
+import CustomerStatementPdfService from "../services/CustomerStatementPdfService.js";
+import storeDocumentPdf from "../utils/documentPdfStorage.js";
 import CacheManager from "../utils/cacheManager.js";
 import { sendError, sendSuccess } from "../utils/apiResponse.js";
 import { publishEvent } from "../utils/eventBus.js";
@@ -3061,5 +3063,41 @@ export const GetCustomerAccountStatement = async (req, res) => {
     if (error.message === "Customer not found.") return sendError(res, 404, error.message, requestId);
     console.error("GetCustomerAccountStatement error:", error);
     return sendError(res, 500, "Unable to load account statement.", requestId);
+  }
+};
+
+/**
+ * GET /api/v1/customers/{customerId}/account-statement/pdf — booking-module
+ * PRD item #10 continued (Issue 6). Same generate-buffer -> storeDocumentPdf
+ * -> return URL shape every other PDF document in this codebase uses
+ * (InvoiceService._generatePdf, ReceiptService, etc.) — regenerated fresh on
+ * every call from CustomerAccountStatementService's live data, never a
+ * separately cached copy, since the statement itself has no persisted
+ * document to keep in sync.
+ */
+export const GetCustomerAccountStatementPdf = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    const permissions = req.auth?.permissions || [];
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+
+    if (!permissions.includes("customers.read") && !permissions.includes("customer.read")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
+
+    const { customerId } = req.params;
+    const { dateFrom, dateTo, status } = req.query;
+
+    const statement = await CustomerAccountStatementService.getStatement(customerId, scope.tenantId, { dateFrom, dateTo, status });
+    const buffer = await CustomerStatementPdfService.generatePdfBuffer(statement);
+    const filename = `statement-${statement.customer.customerCode || statement.customer.customerId}-${Date.now()}.pdf`;
+    const stored = await storeDocumentPdf({ tenantId: scope.tenantId, folder: "customer-statements", filename, buffer });
+
+    return sendSuccess(res, 200, "Account statement PDF generated.", { url: stored.url, generatedAt: statement.generatedAt }, requestId);
+  } catch (error) {
+    if (error.message === "Customer not found.") return sendError(res, 404, error.message, requestId);
+    console.error("GetCustomerAccountStatementPdf error:", error);
+    return sendError(res, 500, "Unable to generate account statement PDF.", requestId);
   }
 };

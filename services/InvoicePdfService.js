@@ -24,7 +24,15 @@ const TYPE_TITLES = {
  * document, not a placeholder.
  */
 class InvoicePdfService {
-  static async generatePdfBuffer({ invoiceNumber, invoiceType, status, issueDate, dueDate, customerName, currency, items, subtotal, taxTotal, discountTotal, grandTotal }) {
+  // `company` (name/logoUrl/vatNumber/registrationNumber/address/phone/
+  // email/bankDetails) is optional — booking-module PRD Part C item #15,
+  // sourced from TenantProfileModel/BankAccountModel by the caller
+  // (InvoiceService._generatePdf). Was previously absent from this PDF
+  // entirely (confirmed by grep — no company/tenant/logo reference
+  // anywhere in this file, not even a hardcoded one), so a tenant with no
+  // profile set up yet still gets a valid invoice, just without a branding
+  // header — never a fabricated placeholder company name.
+  static async generatePdfBuffer({ invoiceNumber, invoiceType, status, issueDate, dueDate, customerName, currency, items, subtotal, taxTotal, discountTotal, grandTotal, company }) {
     return new Promise((resolve, reject) => {
       const doc = new PDFDocument({ margin: 50, size: "A4" });
       const chunks = [];
@@ -34,12 +42,16 @@ class InvoicePdfService {
 
       const title = TYPE_TITLES[invoiceType] || TYPE_TITLES.Custom;
 
+      if (company?.name) doc.fontSize(14).text(company.name, { align: "center" });
+      if (company?.address) doc.fontSize(9).fillColor("gray").text(company.address, { align: "center" }).fillColor("black");
       doc.fontSize(20).text(title, { align: "center" });
       if (status === "Draft") doc.fontSize(10).fillColor("gray").text("DRAFT — NOT YET ISSUED", { align: "center" }).fillColor("black");
       doc.moveDown();
 
       doc.fontSize(10);
       doc.text(`Invoice Number: ${invoiceNumber}`);
+      if (company?.vatNumber) doc.text(`VAT Number: ${company.vatNumber}`);
+      if (company?.registrationNumber) doc.text(`Registration Number: ${company.registrationNumber}`);
       doc.text(`Issue Date: ${new Date(issueDate).toISOString().split("T")[0]}`);
       doc.text(`Due Date: ${new Date(dueDate).toISOString().split("T")[0]}`);
       doc.text(`Bill To: ${customerName}`);
@@ -60,6 +72,15 @@ class InvoicePdfService {
       if (discountTotal > 0) doc.text(`Discount: -${discountTotal.toLocaleString()} ${currency}`);
       if (taxTotal > 0) doc.text(`Tax: +${taxTotal.toLocaleString()} ${currency}`);
       doc.fontSize(14).text(`Grand Total: ${grandTotal.toLocaleString()} ${currency}`, { align: "left" });
+
+      if (company?.bankDetails) {
+        doc.moveDown();
+        doc.fontSize(11).text("Payment Details", { underline: true });
+        doc.fontSize(9);
+        if (company.bankDetails.iban) doc.text(`IBAN: ${company.bankDetails.iban}`);
+        if (company.bankDetails.swiftCode) doc.text(`SWIFT/BIC: ${company.bankDetails.swiftCode}`);
+        if (company.bankDetails.accountNumberLast4) doc.text(`Account: ****${company.bankDetails.accountNumberLast4}`);
+      }
 
       doc.end();
     });

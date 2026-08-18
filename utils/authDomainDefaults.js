@@ -261,6 +261,10 @@ export const DEFAULT_PERMISSIONS = [
   // Enterprise API Rate Limiting & Throttling Standard (Improvement 13).
   { key: "ratelimit.read", description: "Read rate limit rules, violations, and top-consumer monitoring data" },
   { key: "ratelimit.manage", description: "Create/update rate limit rules" },
+  // Booking-module PRD Part C — Agency/Tenant onboarding profile & document
+  // branding (Issue 13/14).
+  { key: "tenantprofile.read", description: "Read the tenant's company profile (branding, VAT/registration, default bank account, document settings)" },
+  { key: "tenantprofile.manage", description: "Create/update the tenant's company profile, including logo upload" },
 ];
 
 export const ADMINISTRATOR_ROLE_NAME = "Administrator";

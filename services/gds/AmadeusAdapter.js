@@ -2,6 +2,7 @@ import BaseGdsAdapter from "./BaseGdsAdapter.js";
 import gdsHttpClient from "../../utils/gdsHttpClient.js";
 import { getGdsConfig, getFlightStatusPolicy, getTicketingPolicyConfig } from "../../utils/gdsConfig.js";
 import { getAirlineCheckInRegistry } from "../../utils/airlineCheckInConfig.js";
+import NumberGeneratorService from "../NumberGeneratorService.js";
 
 /**
  * Enterprise Production Amadeus GDS Adapter
@@ -416,8 +417,15 @@ class AmadeusAdapter extends BaseGdsAdapter {
     };
   }
 
+  // Collision-free, tenant-scoped voucher numbers — replaces the old
+  // Math.random() generator (booking-module PRD Part B item #7's "second,
+  // independent instance of the same anti-pattern" as the booking
+  // reference number bug). This is the supplier's own GDS confirmation
+  // voucher, distinct from the agency's branded Client Voucher
+  // (BookingVoucherModel/BookingVoucherPdfService).
   async generateHotelVoucher(params) {
-    const voucherNumber = `VOUCH-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+    const generated = await NumberGeneratorService.generateNumber(params.tenantId, { resourceType: "GdsVoucher" }, "system");
+    const voucherNumber = generated.documentNumber;
     return {
       provider: this.providerName,
       voucherNumber,

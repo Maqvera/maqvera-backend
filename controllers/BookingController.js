@@ -13,6 +13,12 @@ import EmployeeProfileModel from "../models/EmployeeProfilemodel.js";
 import FlightCatalogModel from "../models/FlightCatalogModel.js";
 import HotelCatalogModel from "../models/HotelCatalogModel.js";
 import HotelRoomInventoryModel from "../models/HotelRoomInventoryModel.js";
+import HotelBookingModel from "../models/HotelBookingModel.js";
+import FlightBookingModel from "../models/FlightBookingModel.js";
+import CarRentalBookingModel from "../models/CarRentalBookingModel.js";
+import BookingVoucherService from "../services/BookingVoucherService.js";
+import BookingDocumentParserService from "../services/BookingDocumentParserService.js";
+import multer from "multer";
 import AuditLogModel from "../models/AuditLogmodel.js";
 import EnterpriseDocumentService from "../services/EnterpriseDocumentService.js";
 import NumberGeneratorService from "../services/NumberGeneratorService.js";
@@ -569,7 +575,7 @@ export const GetBooking = async (req, res) => {
       return sendError(res, 403, "Permission denied to view archived booking.", requestId);
     }
 
-    const [customer, travelers, services, workflow, notesCount, documentsCount, tasksCount, timelineSummary] = await Promise.all([
+    const [customer, travelers, services, workflow, notesCount, documentsCount, tasksCount, timelineSummary, hotelLegs, flightLegs, carRentalLegs] = await Promise.all([
       CustomerModel.findOne({ _id: booking.customerId, tenantId }).lean(),
       BookingTravelerModel.find({ bookingId, tenantId, status: "active" }).lean(),
       BookingServiceModel.find({ bookingId, tenantId }).lean(),
@@ -577,7 +583,10 @@ export const GetBooking = async (req, res) => {
       BookingNoteModel.countDocuments({ bookingId, tenantId, status: "active" }),
       BookingDocumentModel.countDocuments({ bookingId, tenantId, status: { $ne: "archived" } }),
       BookingTaskModel.countDocuments({ bookingId, tenantId, status: "active" }),
-      BookingTimelineModel.find({ bookingId, tenantId }).sort({ createdAt: -1 }).limit(10).lean()
+      BookingTimelineModel.find({ bookingId, tenantId }).sort({ createdAt: -1 }).limit(10).lean(),
+      HotelBookingModel.find({ bookingId, tenantId }).lean(),
+      FlightBookingModel.find({ bookingId, tenantId }).lean(),
+      CarRentalBookingModel.find({ bookingId, tenantId }).lean()
     ]);
 
     return sendSuccess(res, 200, "Booking aggregate profile loaded.", {
@@ -624,6 +633,17 @@ export const GetBooking = async (req, res) => {
         sellingPrice: s.sellingPrice,
         status: s.status
       })),
+      // Type-specific detail legs (Booking-module PRD Part A item #4): a
+      // bookingType here is a package category (umrah/hajj/holiday_package/
+      // etc, see bookingConfig.bookingTypes), not a 1:1 label, so a single
+      // booking can legitimately carry zero, one, or several Hotel/Flight
+      // legs — never a fixed one-of-each shape with nulled-out placeholders
+      // for types the booking doesn't have.
+      typeDetails: {
+        ...(hotelLegs.length > 0 ? { hotels: hotelLegs } : {}),
+        ...(flightLegs.length > 0 ? { flights: flightLegs } : {}),
+        ...(carRentalLegs.length > 0 ? { carRentals: carRentalLegs } : {})
+      },
       financialSummary: booking.financialSnapshot || {
         totalAmount: booking.totalAmount || 0,
         paidAmount: booking.paidAmount || 0,
@@ -2971,6 +2991,95 @@ export const GetBookingDashboard = async (req, res) => {
   } catch (error) {
     console.error("GetBookingDashboard error:", error);
     return sendError(res, 500, "Unable to load booking dashboard metrics.", requestId);
+  }
+};
+
+/**
+ * POST /api/v1/bookings/{bookingId}/vouchers — booking-module PRD Part B
+ * item #7. Generates the agency's own branded Client Voucher — distinct
+ * from HotelBookingModel.voucherNumber/voucherUrl (the GDS supplier's own
+ * confirmation voucher, populated separately by AmadeusAdapter/SabreAdapter).
+ * Each call mints a new voucher document (a booking may need re-issuing);
+ * this never overwrites a prior voucher, matching this codebase's general
+ * "never mutate a financial/legal document, only append" convention.
+ */
+export const GenerateBookingVoucher = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    const permissions = req.auth?.permissions || [];
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+
+    if (!permissions.includes("bookings.update") && !permissions.includes("booking.update")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
+
+    const { bookingId } = req.params;
+    const voucher = await BookingVoucherService.generateVoucher(bookingId, scope.tenantId, req.auth?.id || null);
+    return sendSuccess(res, 201, "Voucher generated.", voucher, requestId);
+  } catch (error) {
+    if (error.message === "Booking not found." || error.message === "Customer not found.") {
+      return sendError(res, 404, error.message, requestId);
+    }
+    console.error("GenerateBookingVoucher error:", error);
+    return sendError(res, 500, "Unable to generate voucher.", requestId);
+  }
+};
+
+// Supplier document upload — memoryStorage, same pattern as
+// ExpenseController.js's own uploadReceiptFile (BookingDocumentParserService
+// needs a raw Buffer, not a disk path).
+export const uploadSupplierDocumentFile = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 15 * 1024 * 1024 }
+}).single("file");
+
+/**
+ * POST /api/v1/bookings/parse-supplier-document — booking-module PRD Part B
+ * item #8. Extraction only — never saves anything, keeping "AI extracts,
+ * employee reviews" as two separate steps (Document 3 §21). Returns
+ * `needsReview` warnings for inconsistent fields (Document 3 §24) but never
+ * blocks the response on them.
+ */
+export const ParseSupplierDocument = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    const permissions = req.auth?.permissions || [];
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+
+    if (!permissions.includes("bookings.create") && !permissions.includes("booking.create") &&
+        !permissions.includes("bookings.update") && !permissions.includes("booking.update")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
+
+    if (!req.file?.buffer?.length) return sendError(res, 422, "A supplier document file is required.", requestId);
+
+    const result = await BookingDocumentParserService.parseHotelDocument(req.file.buffer, req.file.mimetype);
+    return sendSuccess(res, 200, "Supplier document parsed.", result, requestId);
+  } catch (error) {
+    console.error("ParseSupplierDocument error:", error);
+    return sendError(res, 500, "Unable to parse supplier document.", requestId);
+  }
+};
+
+export const ListBookingVouchers = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    const permissions = req.auth?.permissions || [];
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+
+    if (!permissions.includes("bookings.read") && !permissions.includes("booking.read")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
+
+    const { bookingId } = req.params;
+    const vouchers = await BookingVoucherService.listVouchers(bookingId, scope.tenantId);
+    return sendSuccess(res, 200, "Vouchers loaded.", { items: vouchers }, requestId);
+  } catch (error) {
+    console.error("ListBookingVouchers error:", error);
+    return sendError(res, 500, "Unable to load vouchers.", requestId);
   }
 };
 

@@ -34,7 +34,11 @@ import {
   AddBookingTask,
   UpdateBookingTask,
   GetBookingFinancialSummary,
-  GetBookingDashboard
+  GetBookingDashboard,
+  GenerateBookingVoucher,
+  ListBookingVouchers,
+  uploadSupplierDocumentFile,
+  ParseSupplierDocument
 } from "../controllers/BookingController.js";
 
 const router = express.Router();
@@ -55,6 +59,11 @@ router.use(subscriptionResponseHeaders);
 router.get("/dashboard", limiter, GetBookingDashboard);
 router.get("/search", limiter, SearchBookings);
 
+// AI supplier-document parsing (Booking-module PRD Part B item #8) —
+// registered before "/:bookingId" so this literal path isn't shadowed by
+// the param route, same reasoning as "/dashboard"/"/search" above.
+router.post("/parse-supplier-document", limiter, uploadSupplierDocumentFile, ParseSupplierDocument);
+
 // Booking CRUD & State transitions
 router.get("/", limiter, ListBookings);
 router.post("/", limiter, validate(bookingSchemas.createBooking), CreateBooking);
@@ -63,6 +72,10 @@ router.patch("/:bookingId", limiter, validate(bookingSchemas.updateBooking), Upd
 router.post("/:bookingId/archive", limiter, ArchiveBooking);
 router.post("/:bookingId/confirm", limiter, ConfirmBooking);
 router.post("/:bookingId/cancel", limiter, validate(bookingSchemas.cancelBooking), CancelBooking);
+
+// Client Voucher (Booking-module PRD Part B item #7)
+router.post("/:bookingId/vouchers", limiter, GenerateBookingVoucher);
+router.get("/:bookingId/vouchers", limiter, ListBookingVouchers);
 
 // Booking Travelers APIs (Part 3)
 router.get("/:bookingId/travelers", limiter, ListBookingTravelers);

@@ -49,7 +49,8 @@ import {
   UpdateCustomerPreferences,
   GetCustomerStatistics,
   GetCustomerBookings,
-  GetCustomerAccountStatement
+  GetCustomerAccountStatement,
+  GetCustomerAccountStatementPdf
 } from "../controllers/CustomerController.js";
 
 const router = express.Router();
@@ -131,5 +132,6 @@ router.patch("/:customerId/preferences", limiter, validate(customerSchemas.custo
 router.get("/:customerId/statistics", limiter, GetCustomerStatistics);
 router.get("/:customerId/bookings", limiter, GetCustomerBookings);
 router.get("/:customerId/account-statement", limiter, GetCustomerAccountStatement);
+router.get("/:customerId/account-statement/pdf", limiter, GetCustomerAccountStatementPdf);
 
 export default router;

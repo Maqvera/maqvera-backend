@@ -48,6 +48,7 @@ import subscriptionResourceRoute from "./routes/SubscriptionResourceRoutes.js";
 import merchantPlatformRoute from "./routes/MerchantPlatformRoutes.js";
 import organisationRoute from "./routes/OrganisationRoutes.js";
 import numberingRoute from "./routes/NumberingRoutes.js";
+import tenantProfileRoute from "./routes/TenantProfileRoutes.js";
 import resilienceRoute from "./routes/ResilienceRoutes.js";
 import eventRegistryRoute from "./routes/EventRegistryRoutes.js";
 import apiVersionRegistryRoute from "./routes/ApiVersionRegistryRoutes.js";
@@ -97,6 +98,7 @@ import FinancialReportScheduler from "./services/financialReportScheduler.js";
 import AuditRetentionScheduler from "./services/auditRetentionScheduler.js";
 import WebhookRetryScheduler from "./services/webhookRetryScheduler.js";
 import RecurringJournalScheduler from "./services/recurringJournalScheduler.js";
+import MuharramPeriodScheduler from "./services/muharramPeriodScheduler.js";
 
 validateEnv();
 
@@ -130,6 +132,7 @@ const bootstrapEnterpriseServices = async () => {
   await SubscriptionSuspensionEnforcementScheduler.init();
   await SubscriptionRenewalEngineScheduler.init();
   await PaymentRetryEngineScheduler.init();
+  await MuharramPeriodScheduler.init();
 };
 
 const app = express();
@@ -224,6 +227,7 @@ app.use("/api/v1/subscriptions", subscriptionResourceRoute);
 app.use("/api/v1", merchantPlatformRoute);
 app.use("/api/v1", organisationRoute);
 app.use("/api/v1/numbering", numberingRoute);
+app.use("/api/v1/tenant-profile", tenantProfileRoute);
 app.use("/api/v1/resilience", resilienceRoute);
 app.use("/api/v1/event-registry", eventRegistryRoute);
 app.use("/api/v1/api-version-registry", apiVersionRegistryRoute);

@@ -55,7 +55,20 @@ const HotelBookingSchema = new mongoose.Schema(
     stars: { type: Number, default: 5 },
     distanceToHaram: { type: String, default: null },
     roomType: { type: String, default: "Standard Room" },
+    // Room view (e.g. "Haram View", "City View") — booking-module PRD Part
+    // B item #9's dynamic-field list (Document 3 §28/§90), previously
+    // absent from this model entirely.
+    view: { type: String, default: null },
     mealPlan: { type: String, default: "Breakfast Included" },
+    // Distinct from `mealPlan` (which names the plan, e.g. "Half Board") —
+    // its priced value, needed for the Invoice/Voucher templates' line
+    // breakdown (Document 3's sample PDFs price meals separately from room
+    // rate).
+    mealPrice: { type: Number, default: null },
+    // Pricing season the rate was booked under (e.g. "Ramadan", "Hajj",
+    // "Regular") — display-only, same convention as `cancellationPolicy`
+    // being a display string.
+    season: { type: String, default: null },
     checkIn: { type: Date, required: true },
     checkOut: { type: Date, required: true },
     roomsCount: { type: Number, default: 1 },
@@ -69,6 +82,13 @@ const HotelBookingSchema = new mongoose.Schema(
       }
     ],
     totalPrice: { type: Number, required: true },
+    // Per-night room rate, distinct from the aggregate `totalPrice` above —
+    // the Invoice/Voucher templates (Part B items #6/#7) need this to show
+    // a nightly breakdown, not just the total. Not derived from
+    // totalPrice/nights automatically since real per-night rates vary by
+    // date (weekday/weekend, season) — left null when not supplied rather
+    // than fabricating an average.
+    roomRatePerNight: { type: Number, default: null },
     currency: { type: String, default: "PKR" },
     cancellationPolicy: { type: String, default: "Free cancellation up to 48 hours before check-in" },
     // EXT-024 — structured cancellation-policy data, captured once at

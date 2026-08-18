@@ -6,13 +6,17 @@ const BookingHeaderSchema = new mongoose.Schema({
     required: true,
     index: true
   },
+  // Immutable once assigned — generated server-side via NumberGeneratorService,
+  // never caller-supplied (mirrors InvoiceModel.js's invoiceNumber pattern).
   bookingReference: {
     type: String,
-    required: true
+    required: true,
+    immutable: true
   },
   bookingNumber: {
     type: String,
-    index: true
+    index: true,
+    immutable: true
   },
   customerId: {
     type: mongoose.Schema.Types.ObjectId,

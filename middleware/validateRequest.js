@@ -3646,4 +3646,32 @@ export const numberingSchemas = new Proxy({}, {
   }
 });
 
+// Booking-module PRD Part C item #14 — "required-field validation... Company
+// Name" (Document 4 §24). Deliberately not a Proxy/config-driven schema like
+// bookingSchemas/numberingSchemas above — nothing here reads from a
+// get*Config() function, so a plain static object matches customerSchemas'
+// own convention instead.
+export const tenantProfileSchemas = {
+  createOrUpdateProfile: Joi.object({
+    companyName: Joi.string().trim().min(1).max(200).required().messages({
+      'any.required': 'companyName is required',
+      'string.empty': 'companyName is required'
+    }),
+    registrationNumber: Joi.string().trim().max(100).optional().allow(null, ''),
+    vatNumber: Joi.string().trim().max(100).optional().allow(null, ''),
+    address: Joi.string().trim().max(500).optional().allow(null, ''),
+    city: Joi.string().trim().max(100).optional().allow(null, ''),
+    country: Joi.string().trim().max(100).optional().allow(null, ''),
+    phone: Joi.string().trim().max(50).optional().allow(null, ''),
+    email: Joi.string().trim().email().optional().allow(null, ''),
+    defaultBankAccountId: objectIdRef.optional().allow(null, ''),
+    documentSettings: Joi.object({
+      invoiceDisplayName: Joi.string().trim().max(200).optional().allow(null, ''),
+      termsAndConditions: Joi.string().trim().max(5000).optional().allow(null, ''),
+      cancellationPolicy: Joi.string().trim().max(5000).optional().allow(null, ''),
+      operationalContacts: Joi.string().trim().max(2000).optional().allow(null, '')
+    }).optional()
+  })
+};
+
 export default validate;

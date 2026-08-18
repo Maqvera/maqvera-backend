@@ -6,6 +6,7 @@ import FinanceSequenceModel from "../models/FinanceSequenceModel.js";
 import FinancialPeriodService from "./FinancialPeriodService.js";
 import AuditLogModel from "../models/AuditLogmodel.js";
 import InvoicePdfService from "./InvoicePdfService.js";
+import { resolveTenantBranding } from "../utils/tenantBranding.js";
 import TaxService from "./TaxService.js";
 import PricingService from "./PricingService.js";
 import { storeDocumentPdf } from "../utils/documentPdfStorage.js";
@@ -193,11 +194,12 @@ class InvoiceService {
   }
 
   static async _generatePdf(invoiceDoc, customerName) {
+    const company = await resolveTenantBranding(invoiceDoc.tenantId);
     const buffer = await InvoicePdfService.generatePdfBuffer({
       invoiceNumber: invoiceDoc.invoiceNumber, invoiceType: invoiceDoc.invoiceType, status: invoiceDoc.status,
       issueDate: invoiceDoc.issueDate, dueDate: invoiceDoc.dueDate, customerName, currency: invoiceDoc.currency,
       items: invoiceDoc.items, subtotal: invoiceDoc.subtotal, taxTotal: invoiceDoc.taxTotal,
-      discountTotal: invoiceDoc.discountTotal, grandTotal: invoiceDoc.grandTotal
+      discountTotal: invoiceDoc.discountTotal, grandTotal: invoiceDoc.grandTotal, company
     });
     const stored = await storeDocumentPdf({ tenantId: invoiceDoc.tenantId, folder: "invoices", filename: `${invoiceDoc.invoiceNumber}.pdf`, buffer });
     return { url: stored.url, storageKey: stored.storageKey, storageProvider: stored.storageProvider, generatedAt: new Date() };
