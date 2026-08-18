@@ -9,6 +9,7 @@ import BookingHeaderModel from "../models/BookingHeaderModel.js";
 import AuditLogModel from "../models/AuditLogmodel.js";
 import EnterpriseDocumentService from "../services/EnterpriseDocumentService.js";
 import CustomerStatisticsEngine from "../services/CustomerStatisticsEngine.js";
+import CustomerAccountStatementService from "../services/CustomerAccountStatementService.js";
 import CacheManager from "../utils/cacheManager.js";
 import { sendError, sendSuccess } from "../utils/apiResponse.js";
 import { publishEvent } from "../utils/eventBus.js";
@@ -769,14 +770,15 @@ export const GetCustomer = async (req, res) => {
       return sendError(res, 403, "Elevated permission required to view archived customers.", requestId);
     }
 
-    const [preferences, documents, family, notes, timeline] = await Promise.all([
+    const [preferences, documents, family, notes, timeline, bookingMetrics] = await Promise.all([
       CustomerPreferenceModel.findOne({ customerId: customer._id }).lean(),
       // Sensitive documents excluded: archived (soft-deleted) records and anything
       // the virus scan flagged as infected must never be surfaced in a profile read.
       CustomerDocumentModel.find({ customerId: customer._id, status: { $ne: "archived" }, virusScanStatus: { $ne: "infected" } }).lean(),
       CustomerFamilyModel.find({ customerId: customer._id, status: "active" }).lean(),
       CustomerNoteModel.find({ customerId: customer._id, status: { $ne: "archived" } }).sort({ createdAt: -1 }).limit(5).lean(),
-      CustomerTimelineModel.find({ customerId: customer._id }).sort({ createdAt: -1 }).limit(10).lean()
+      CustomerTimelineModel.find({ customerId: customer._id }).sort({ createdAt: -1 }).limit(10).lean(),
+      CustomerStatisticsEngine.ensureBookingMetrics({ customerId: customer._id, tenantId: scope.tenantId })
     ]);
 
     const metrics = calculateCustomerMetrics(customer, documents.length, family.length, preferences);
@@ -789,8 +791,8 @@ export const GetCustomer = async (req, res) => {
       activePassportsCount: (customer.passports || []).filter((p) => p.status === "active").length,
       completenessScore: metrics.completeness,
       healthScore: metrics.healthScore,
-      totalBookings: 0,
-      totalSpentAmount: 0
+      totalBookings: bookingMetrics.totalBookings,
+      totalSpentAmount: bookingMetrics.totalRevenue
     };
 
     return sendSuccess(res, 200, "Customer profile loaded.", buildFullCustomerProfile(customer, preferences, documents.map(buildDocumentResponse), family, notes, timeline, stats), requestId);
@@ -2986,5 +2988,78 @@ export const GetCustomerStatistics = async (req, res) => {
   } catch (error) {
     console.error("GetCustomerStatistics error:", error);
     return sendError(res, 500, "Unable to load statistics.", requestId);
+  }
+};
+
+/**
+ * GET /api/v1/customers/{customerId}/bookings — booking-module PRD item #8
+ * ("customer -> all bookings in one place" had no purpose-built endpoint;
+ * only GET /bookings?customerId=X worked as a filter). Thin wrapper over
+ * the same BookingHeaderModel query ListBookings already uses, scoped to
+ * one customer.
+ */
+export const GetCustomerBookings = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    const permissions = req.auth?.permissions || [];
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+
+    if (!permissions.includes("customers.read") && !permissions.includes("customer.read") &&
+        !permissions.includes("bookings.read") && !permissions.includes("booking.read")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
+
+    const { customerId } = req.params;
+    const customer = await CustomerModel.findOne({ _id: customerId, ...scope }).lean();
+    if (!customer) return sendError(res, 404, "Customer not found.", requestId);
+
+    const page = Math.max(parseInt(req.query.page || "1", 10), 1);
+    const pageSize = Math.min(Math.max(parseInt(req.query.pageSize || "20", 10), 1), 100);
+    const filter = { ...scope, customerId, status: { $ne: "archived" } };
+    if (req.query.bookingType) filter.bookingType = req.query.bookingType.toLowerCase();
+
+    const [items, total] = await Promise.all([
+      BookingHeaderModel.find(filter).sort({ createdAt: -1 }).skip((page - 1) * pageSize).limit(pageSize).lean(),
+      BookingHeaderModel.countDocuments(filter)
+    ]);
+
+    return sendSuccess(res, 200, "Customer bookings loaded.", {
+      items,
+      pagination: { total, page, pageSize, totalPages: Math.ceil(total / pageSize) }
+    }, requestId);
+  } catch (error) {
+    console.error("GetCustomerBookings error:", error);
+    return sendError(res, 500, "Unable to load customer bookings.", requestId);
+  }
+};
+
+/**
+ * GET /api/v1/customers/{customerId}/account-statement — booking-module
+ * PRD item #10 (Lifetime Account Statement). See
+ * CustomerAccountStatementService's own doc comment for why this is built
+ * entirely from real AccountsReceivable records rather than
+ * BookingHeaderModel.financialSnapshot.
+ */
+export const GetCustomerAccountStatement = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    const permissions = req.auth?.permissions || [];
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+
+    if (!permissions.includes("customers.read") && !permissions.includes("customer.read")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
+
+    const { customerId } = req.params;
+    const { dateFrom, dateTo, status } = req.query;
+
+    const statement = await CustomerAccountStatementService.getStatement(customerId, scope.tenantId, { dateFrom, dateTo, status });
+    return sendSuccess(res, 200, "Account statement loaded.", statement, requestId);
+  } catch (error) {
+    if (error.message === "Customer not found.") return sendError(res, 404, error.message, requestId);
+    console.error("GetCustomerAccountStatement error:", error);
+    return sendError(res, 500, "Unable to load account statement.", requestId);
   }
 };

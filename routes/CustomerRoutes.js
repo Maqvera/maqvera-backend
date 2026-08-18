@@ -47,7 +47,9 @@ import {
   DeleteCustomerAddress,
   GetCustomerPreferences,
   UpdateCustomerPreferences,
-  GetCustomerStatistics
+  GetCustomerStatistics,
+  GetCustomerBookings,
+  GetCustomerAccountStatement
 } from "../controllers/CustomerController.js";
 
 const router = express.Router();
@@ -127,5 +129,7 @@ router.get("/:customerId/preferences", limiter, GetCustomerPreferences);
 router.patch("/:customerId/preferences", limiter, validate(customerSchemas.customerPreferences), UpdateCustomerPreferences);
 
 router.get("/:customerId/statistics", limiter, GetCustomerStatistics);
+router.get("/:customerId/bookings", limiter, GetCustomerBookings);
+router.get("/:customerId/account-statement", limiter, GetCustomerAccountStatement);
 
 export default router;

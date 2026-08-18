@@ -15,6 +15,7 @@ import HotelCatalogModel from "../models/HotelCatalogModel.js";
 import HotelRoomInventoryModel from "../models/HotelRoomInventoryModel.js";
 import AuditLogModel from "../models/AuditLogmodel.js";
 import EnterpriseDocumentService from "../services/EnterpriseDocumentService.js";
+import NumberGeneratorService from "../services/NumberGeneratorService.js";
 import { sendError, sendSuccess } from "../utils/apiResponse.js";
 import { publishEvent } from "../utils/eventBus.js";
 import { createRequestId } from "../utils/authTokens.js";
@@ -434,45 +435,65 @@ export const CreateBooking = async (req, res) => {
     // there is nothing real to validate packageId against without fabricating
     // a catalog. Left as an unvalidated optional reference, same as before.
 
-    const bookingNumber = `BK-${new Date().getFullYear()}-${Math.floor(100000 + Math.random() * 900000)}`;
+    // Tenant-scoped, atomic, collision-free reference — replaces the old
+    // Math.random() generator (two concurrent creates could mint the same
+    // reference and hit the unique index with an unhandled 500).
+    let generatedNumber;
+    try {
+      generatedNumber = await NumberGeneratorService.generateNumber(tenantId, { resourceType: "Booking" }, req.auth?.id || null);
+    } catch (numberError) {
+      console.error("Booking reference generation error:", numberError);
+      return sendError(res, 422, numberError.message || "Unable to generate a booking reference.", requestId);
+    }
+    const bookingNumber = generatedNumber.documentNumber;
 
     const initialAmount = Number(totalAmount) || 0;
 
-    const booking = await BookingHeaderModel.create({
-      tenantId,
-      bookingReference: bookingNumber,
-      bookingNumber,
-      customerId: customer._id,
-      customerCode: customer.customerCode,
-      customerName: `${customer.firstName} ${customer.lastName}`.trim(),
-      packageId: packageId || null,
-      bookingType: bookingType.toLowerCase(),
-      status: bookingConfig.defaultBookingStatus,
-      priority,
-      paymentStatus,
-      visaStatus,
-      assignedTo: assignedConsultant,
-      assignedConsultant: assignedConsultant,
-      travelDate: parsedTravelDate,
-      returnDate: parsedReturnDate,
-      totalAmount: initialAmount,
-      paidAmount: 0,
-      currency: currencyId,
-      remarks: remarks || null,
-      financialSnapshot: {
-        packagePrice: initialAmount,
-        discounts: 0,
-        taxes: 0,
-        serviceCharges: 0,
+    let booking;
+    try {
+      booking = await BookingHeaderModel.create({
+        tenantId,
+        bookingReference: bookingNumber,
+        bookingNumber,
+        customerId: customer._id,
+        customerCode: customer.customerCode,
+        customerName: `${customer.firstName} ${customer.lastName}`.trim(),
+        packageId: packageId || null,
+        bookingType: bookingType.toLowerCase(),
+        status: bookingConfig.defaultBookingStatus,
+        priority,
+        paymentStatus,
+        visaStatus,
+        assignedTo: assignedConsultant,
+        assignedConsultant: assignedConsultant,
+        travelDate: parsedTravelDate,
+        returnDate: parsedReturnDate,
         totalAmount: initialAmount,
         paidAmount: 0,
-        outstandingBalance: initialAmount,
-        refundAmount: 0,
         currency: currencyId,
-        paymentStatus,
-        lastCalculatedAt: new Date()
-      }
-    });
+        remarks: remarks || null,
+        financialSnapshot: {
+          packagePrice: initialAmount,
+          discounts: 0,
+          taxes: 0,
+          serviceCharges: 0,
+          totalAmount: initialAmount,
+          paidAmount: 0,
+          outstandingBalance: initialAmount,
+          refundAmount: 0,
+          currency: currencyId,
+          paymentStatus,
+          lastCalculatedAt: new Date()
+        }
+      });
+    } catch (createError) {
+      await NumberGeneratorService.rollbackSequence(tenantId, generatedNumber._id, "Booking creation failed.", req.auth?.id || null)
+        .catch((rollbackError) => console.error("rollbackSequence error:", rollbackError));
+      throw createError;
+    }
+
+    await NumberGeneratorService.registerResource(tenantId, generatedNumber._id, booking._id.toString(), req.auth?.id || null)
+      .catch((registerError) => console.error("registerResource error:", registerError));
 
     await BookingWorkflowModel.create({
       bookingId: booking._id,

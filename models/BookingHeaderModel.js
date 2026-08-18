@@ -8,9 +8,7 @@ const BookingHeaderSchema = new mongoose.Schema({
   },
   bookingReference: {
     type: String,
-    required: true,
-    unique: true,
-    index: true
+    required: true
   },
   bookingNumber: {
     type: String,
@@ -119,10 +117,17 @@ const BookingHeaderSchema = new mongoose.Schema({
     refundAmount: { type: Number, default: 0 },
     currency: { type: String, default: "USD" },
     paymentStatus: { type: String, default: "unpaid" },
-    lastCalculatedAt: { type: Date, default: Date.now }
+    lastCalculatedAt: { type: Date, default: Date.now },
+    // Set by BookingFinanceLinkService once a real Finance-module Invoice
+    // has been issued for this booking (see that service's doc comment) —
+    // null for bookings created before that link existed, or for a $0
+    // booking that never had anything to bill.
+    invoiceId: { type: mongoose.Schema.Types.ObjectId, ref: "invoice", default: null },
+    invoiceNumber: { type: String, default: null }
   }
 }, { timestamps: true });
 
+BookingHeaderSchema.index({ tenantId: 1, bookingReference: 1 }, { unique: true });
 BookingHeaderSchema.index({ tenantId: 1, status: 1 });
 BookingHeaderSchema.index({ customerId: 1, tenantId: 1 });
 BookingHeaderSchema.index({ tenantId: 1, travelDate: 1 });

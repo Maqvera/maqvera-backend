@@ -208,6 +208,56 @@ class PaymentService {
   }
 
   /**
+   * Records a payment that was already collected through an external
+   * channel this call did not itself initiate the capture for (e.g. a
+   * Stripe Checkout Session confirmed via webhook, via BookingFinanceLinkService)
+   * — same real-money-already-moved situation
+   * TenantSubscriptionService.recordManualPayment handles for subscription
+   * billing. Creates the Payment row directly in "Captured" status with no
+   * gateway authorize/capture call — attempting either here would be a
+   * second, spurious charge/capture attempt against money that has already
+   * genuinely settled.
+   */
+  static async recordExternalPayment(data, tenantId, userId) {
+    const config = getFinanceConfig();
+    const { paymentType = config.defaultPaymentType, partyType = null, partyId = null, amount, currency, paymentMethod, gateway, reference = null, gatewayTransactionId = null, transactionDate } = data;
+
+    if (!amount || amount <= 0 || !currency || !paymentMethod || !gateway) {
+      throw new Error("amount, currency, paymentMethod, and gateway are required.");
+    }
+
+    const roundedAmount = roundCurrency(amount);
+    const paymentNumber = await PaymentService._generatePaymentNumber(tenantId);
+
+    const payment = await PaymentModel.create({
+      tenantId,
+      paymentNumber,
+      paymentType,
+      partyType,
+      partyId,
+      amount: roundedAmount,
+      currency,
+      paymentMethod,
+      gateway,
+      status: "Captured",
+      reference,
+      transactionDate: transactionDate ? new Date(transactionDate) : new Date(),
+      unallocatedAmount: roundedAmount,
+      gatewayDetails: { transactionId: gatewayTransactionId, capturedAt: new Date() },
+      timeline: [{ event: "PaymentCaptured", description: `${roundedAmount} ${currency} recorded — already collected externally via ${gateway}.`, performedBy: userId || null }],
+      createdBy: userId || null
+    });
+
+    await AuditLogModel.create({ action: "finance.payment.record_external", module: "Finance", resource: "Payment", resourceId: payment._id.toString(), userId: userId || null, tenantId, details: { paymentNumber, amount: roundedAmount, currency, gateway } });
+
+    publishEvent("PaymentCreated", { tenantId, paymentId: payment._id.toString(), paymentNumber, amount: roundedAmount, currency, riskScore: 0, performedBy: userId || null });
+    publishEvent("PaymentCaptured", { tenantId, paymentId: payment._id.toString(), bankAccountId: null, performedBy: userId || null });
+    publishEvent("PaymentVerificationCompleted", { tenantId, paymentId: payment._id.toString(), gateway, gatewayTransactionId, performedBy: userId || null });
+
+    return payment.toJSON();
+  }
+
+  /**
    * POST /api/v1/customer-payments/{collectionId}/capture (Part 18 Part 3)
    * — completes a payment left in "Authorized" status by a Manual/
    * Authorize Only/Delayed/Partial Capture `createPayment` call. `amount`

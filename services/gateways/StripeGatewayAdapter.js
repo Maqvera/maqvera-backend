@@ -47,7 +47,7 @@ class StripeGatewayAdapter extends BaseGatewayAdapter {
    * can never double-charge at the gateway, even if this codebase's own
    * DB-level atomic claim already prevented a concurrent double-process.
    */
-  async authorize({ amount, currency, reference, paymentMethodId, idempotencyKey = null }) {
+  async authorize({ amount, currency, reference, paymentMethodId, customerId = null, offSession = false, idempotencyKey = null }) {
     const client = await this._requireClient();
     try {
       const intent = await client.paymentIntents.create({
@@ -56,6 +56,8 @@ class StripeGatewayAdapter extends BaseGatewayAdapter {
         capture_method: "manual",
         description: reference || undefined,
         payment_method: paymentMethodId || undefined,
+        customer: customerId || undefined,
+        off_session: offSession || undefined,
         confirm: !!paymentMethodId
       }, idempotencyKey ? { idempotencyKey } : undefined);
       const authorized = intent.status === "requires_capture" || intent.status === "requires_confirmation" || intent.status === "requires_payment_method";

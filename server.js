@@ -78,6 +78,7 @@ import AIObservabilityAlertScheduler from "./services/aiObservabilityAlertSchedu
 import ReceivableOverdueScheduler from "./services/receivableOverdueScheduler.js";
 import AccountsReceivableService from "./services/AccountsReceivableService.js";
 import InvoiceService from "./services/InvoiceService.js";
+import BookingFinanceLinkService from "./services/BookingFinanceLinkService.js";
 import RefundService from "./services/RefundService.js";
 import BankAccountService from "./services/BankAccountService.js";
 import CustomerCollectionService from "./services/CustomerCollectionService.js";
@@ -248,6 +249,7 @@ const startServer = async () => {
     CustomerStatisticsEngine.init();
     AccountsReceivableService.initEventListeners();
     InvoiceService.initEventListeners();
+    BookingFinanceLinkService.initEventListeners();
     RefundService.initEventListeners();
     BankAccountService.initEventListeners();
     CustomerCollectionService.initEventListeners();

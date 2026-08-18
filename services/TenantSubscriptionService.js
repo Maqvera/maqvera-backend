@@ -361,7 +361,7 @@ class TenantSubscriptionService {
     if (invoice.status === "Paid") throw new Error("Invoice is already paid.");
 
     const billingAccount = await TenantBillingAccountModel.findOne({ tenantId: invoice.tenantId }).lean();
-    if (!billingAccount || billingAccount.paymentMethod !== "Stripe" || !billingAccount.stripePaymentMethodId) {
+    if (!billingAccount || billingAccount.paymentMethod !== "Stripe" || !billingAccount.stripePaymentMethodId || !billingAccount.stripeCustomerId) {
       const reason = "No Stripe payment method on file for auto-debit.";
       invoice.failureReason = reason;
       invoice.timeline.push({ event: "PaymentFailed", description: reason, performedBy: userId });
@@ -371,7 +371,12 @@ class TenantSubscriptionService {
     }
 
     const adapter = getGatewayAdapter("Stripe");
-    const authResult = await adapter.authorize({ amount: invoice.amount, currency: invoice.currency, reference: invoice.invoiceNumber, paymentMethodId: billingAccount.stripePaymentMethodId, idempotencyKey });
+    // The saved payment method is already attached to this Stripe Customer
+    // (via the original Checkout Session's setup_future_usage: "off_session")
+    // — Stripe requires `customer` on the PaymentIntent to reuse it, or the
+    // charge is rejected outright. `off_session: true` tells Stripe this is
+    // an unattended, merchant-initiated charge, not a live checkout.
+    const authResult = await adapter.authorize({ amount: invoice.amount, currency: invoice.currency, reference: invoice.invoiceNumber, paymentMethodId: billingAccount.stripePaymentMethodId, customerId: billingAccount.stripeCustomerId, offSession: true, idempotencyKey });
     if (authResult.status !== "Authorized") {
       invoice.failureReason = authResult.failureReason || "Stripe authorization failed.";
       invoice.timeline.push({ event: "PaymentFailed", description: invoice.failureReason, performedBy: userId });
