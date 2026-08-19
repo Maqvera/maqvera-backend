@@ -80,6 +80,7 @@ import ReceivableOverdueScheduler from "./services/receivableOverdueScheduler.js
 import AccountsReceivableService from "./services/AccountsReceivableService.js";
 import InvoiceService from "./services/InvoiceService.js";
 import BookingFinanceLinkService from "./services/BookingFinanceLinkService.js";
+import { closeBrowser as closeHtmlPdfBrowser } from "./services/HtmlPdfRenderer.js";
 import RefundService from "./services/RefundService.js";
 import BankAccountService from "./services/BankAccountService.js";
 import CustomerCollectionService from "./services/CustomerCollectionService.js";
@@ -266,3 +267,15 @@ const startServer = async () => {
 };
 
 startServer();
+
+// PRD "HTML-Template PDF Architecture Migration" Issue 2b — this codebase
+// had no existing SIGTERM/graceful-shutdown handler to append to (verified
+// by grep across every *.js file before adding this), so this is a new,
+// standalone hook, not an addition to something pre-existing. Releases the
+// shared headless-Chromium process HtmlPdfRenderer.js lazily launches, so a
+// container restart/redeploy doesn't leave an orphaned Chromium process.
+process.on("SIGTERM", async () => {
+  console.log("SIGTERM received — closing shared Puppeteer browser instance.");
+  await closeHtmlPdfBrowser().catch((err) => console.error("Failed to close Puppeteer browser on shutdown:", err.message));
+  process.exit(0);
+});

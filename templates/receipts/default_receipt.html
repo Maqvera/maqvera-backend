@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>{{{sharedCss}}}</style>
+</head>
+<body>
+  {{> companyHeader}}
+
+  <h1 class="doc-title">{{title}}</h1>
+
+  <div class="meta-block">
+    <div>Receipt Number: {{receiptNumber}}</div>
+    <div>Issue Date: {{formatDate issueDate}}</div>
+    <div>Payment Number: {{paymentNumber}}</div>
+    {{#if partyName}}<div>Issued To: {{partyName}}</div>{{/if}}
+  </div>
+
+  <div class="totals-block">
+    <div class="grand-total">Amount: {{formatNumber amount}} {{currency}}</div>
+  </div>
+
+  {{#if allocations.length}}
+  <div class="section-title">Applied To</div>
+  {{#each allocations}}
+    <div>{{this.targetType}} ({{this.targetId}}) — {{formatNumber this.amount}} {{../currency}}</div>
+  {{/each}}
+  {{/if}}
+
+  {{#if qrDataUri}}
+  <div class="section-title">Scan to Verify</div>
+  <img src="{{qrDataUri}}" style="width:120px;">
+  {{/if}}
+</body>
+</html>

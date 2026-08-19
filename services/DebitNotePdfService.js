@@ -1,56 +1,37 @@
-import PDFDocument from "pdfkit";
+import path from "path";
+import { renderHtmlToPdfBuffer, TEMPLATES_DIR } from "./HtmlPdfRenderer.js";
+
+const TEMPLATE_PATH = path.join(TEMPLATES_DIR, "debit-notes", "default_debit_note.html");
 
 /**
- * Real PDF generation (`pdfkit`, same dependency as
- * services/CreditNotePdfService.js) — party-aware: labels the counterparty
- * row "Customer"/"Vendor" and the reference row "Against Invoice"/"Against
- * Payable" depending on partyType, since a Debit Note can target either.
+ * HTML-template + headless-Chromium PDF generation (services/HtmlPdfRenderer.js)
+ * — PRD "HTML-Template PDF Architecture Migration". Same public contract as
+ * the pdfkit-era version this replaced — party-aware: labels the
+ * counterparty row "Customer"/"Vendor" and the reference row "Against
+ * Invoice"/"Against Payable" depending on partyType, since a Debit Note can
+ * target either. The party-aware label choice is resolved here in JS
+ * (rather than replicated as ternaries in the template) to keep the
+ * template a pure rendering layer.
  */
 class DebitNotePdfService {
-  // `company` (name/logoUrl/vatNumber/registrationNumber/address) — booking-
-  // module PRD item B4, sourced from TenantProfileModel via
-  // utils/tenantBranding.js. Optional: a tenant with no profile set up yet
-  // still gets a valid debit note, just without a branding header.
   static async generatePdfBuffer({ debitNumber, status, issuedAt, partyType, invoiceNumber, customerName, vendorName, reason, currency, items, debitAmount, taxAdjustmentTotal, grandTotal, company }) {
-    return new Promise((resolve, reject) => {
-      const doc = new PDFDocument({ margin: 50, size: "A4" });
-      const chunks = [];
-      doc.on("data", (chunk) => chunks.push(chunk));
-      doc.on("end", () => resolve(Buffer.concat(chunks)));
-      doc.on("error", reject);
-
-      if (company?.name) doc.fontSize(14).text(company.name, { align: "center" });
-      if (company?.address) doc.fontSize(9).fillColor("gray").text(company.address, { align: "center" }).fillColor("black");
-      doc.fontSize(20).text("DEBIT NOTE", { align: "center" });
-      if (status === "Draft") doc.fontSize(10).fillColor("gray").text("DRAFT — NOT YET ISSUED", { align: "center" }).fillColor("black");
-      doc.moveDown();
-
-      doc.fontSize(10);
-      doc.text(`Debit Note Number: ${debitNumber}`);
-      if (company?.vatNumber) doc.text(`VAT Number: ${company.vatNumber}`);
-      if (company?.registrationNumber) doc.text(`Registration Number: ${company.registrationNumber}`);
-      doc.text(`${partyType === "Vendor" ? "Against Payable" : "Against Invoice"}: ${invoiceNumber}`);
-      doc.text(`Date: ${new Date(issuedAt || Date.now()).toISOString().split("T")[0]}`);
-      doc.text(`${partyType === "Vendor" ? "Vendor" : "Customer"}: ${partyType === "Vendor" ? vendorName : customerName}`);
-      doc.text(`Reason: ${reason}`);
-      doc.moveDown();
-
-      doc.fontSize(11).text("Debited Items", { underline: true });
-      doc.fontSize(9);
-      items.forEach((item) => {
-        doc.text(`${item.description} = ${item.amount.toLocaleString()} ${currency}` +
-          (item.taxCode ? ` [${item.taxCode}: +${item.taxAdjustment.toLocaleString()}]` : "") +
-          ` = ${item.lineTotal.toLocaleString()} ${currency}`);
-      });
-      doc.moveDown();
-
-      doc.fontSize(10);
-      doc.text(`Debit Amount: ${debitAmount.toLocaleString()} ${currency}`);
-      if (taxAdjustmentTotal > 0) doc.text(`Tax Adjustment: +${taxAdjustmentTotal.toLocaleString()} ${currency}`);
-      doc.fontSize(14).text(`Grand Total Debited: ${grandTotal.toLocaleString()} ${currency}`, { align: "left" });
-      doc.fontSize(9).text(`This document increases the outstanding balance of the referenced ${partyType === "Vendor" ? "payable" : "invoice"}.`);
-
-      doc.end();
+    const isVendor = partyType === "Vendor";
+    return renderHtmlToPdfBuffer(TEMPLATE_PATH, {
+      isDraft: status === "Draft",
+      debitNumber,
+      issuedAt: issuedAt || new Date(),
+      invoiceNumber,
+      referenceLabel: isVendor ? "Against Payable" : "Against Invoice",
+      partyLabel: isVendor ? "Vendor" : "Customer",
+      partyName: isVendor ? vendorName : customerName,
+      referencedThing: isVendor ? "payable" : "invoice",
+      reason,
+      currency,
+      items,
+      debitAmount,
+      taxAdjustmentTotal,
+      grandTotal,
+      company
     });
   }
 }

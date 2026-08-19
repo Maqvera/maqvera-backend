@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>{{{sharedCss}}}</style>
+</head>
+<body>
+  {{> companyHeader}}
+
+  <h1 class="doc-title">{{title}}</h1>
+  {{#if isDraft}}<div class="draft-banner">DRAFT — NOT YET ISSUED</div>{{/if}}
+
+  <div class="meta-block">
+    <div>Invoice Number: {{invoiceNumber}}</div>
+    <div>Issue Date: {{formatDate issueDate}}</div>
+    <div>Due Date: {{formatDate dueDate}}</div>
+    <div>Bill To: {{customerName}}</div>
+    {{#if bookingDetails.guestName}}<div>Guest: {{bookingDetails.guestName}}</div>{{/if}}
+    {{#if bookingDetails.paxCount}}<div>PAX: {{bookingDetails.paxCount}}</div>{{/if}}
+  </div>
+
+  {{#if bookingDetails.hotels.length}}
+  <div class="section-title">Hotel / Room Details</div>
+  {{#each bookingDetails.hotels}}
+    <div>
+      <strong>{{this.hotelName}}{{#if this.hotelConfirmationNumber}} (CNF: {{this.hotelConfirmationNumber}}){{/if}}</strong><br>
+      Room: {{this.roomType}}{{#if this.view}} ({{this.view}}){{/if}} |
+      Check-In: {{formatDate this.checkIn}} | Check-Out: {{formatDate this.checkOut}} | Nights: {{this.nights}}<br>
+      {{#if this.adultCount}}PAX: {{this.adultCount}} Adult{{#if this.childCount}}, {{this.childCount}} Child{{/if}}{{#if this.infantCount}}, {{this.infantCount}} Infant{{/if}}<br>{{/if}}
+      {{#if this.mealPlan}}Meal Plan: {{this.mealPlan}}<br>{{/if}}
+    </div>
+  {{/each}}
+  {{/if}}
+
+  <div class="section-title">Items</div>
+  <table class="doc-table">
+    <thead><tr><th>Description</th><th>Qty</th><th>Unit Price</th><th>Tax</th><th>Discount</th><th>Line Total</th></tr></thead>
+    <tbody>
+      {{#each items}}
+      <tr>
+        <td>{{this.description}}</td>
+        <td>{{this.quantity}}</td>
+        <td>{{formatNumber this.unitPrice}} {{../currency}}</td>
+        <td>{{#if this.taxCode}}{{this.taxCode}}: +{{formatNumber this.lineTaxAmount}}{{/if}}</td>
+        <td>{{#if (gt this.lineDiscountAmount 0)}}-{{formatNumber this.lineDiscountAmount}}{{/if}}</td>
+        <td>{{formatNumber this.lineTotal}} {{../currency}}</td>
+      </tr>
+      {{/each}}
+    </tbody>
+  </table>
+
+  <div class="totals-block">
+    <div>Subtotal: {{formatNumber subtotal}} {{currency}}</div>
+    {{#if (gt discountTotal 0)}}<div>Discount: -{{formatNumber discountTotal}} {{currency}}</div>{{/if}}
+    {{#if (gt taxTotal 0)}}<div>Tax: +{{formatNumber taxTotal}} {{currency}}</div>{{/if}}
+    <div class="grand-total">Grand Total: {{formatNumber grandTotal}} {{currency}}</div>
+  </div>
+
+  {{#if company.bankDetails}}
+  <div class="section-title">Payment Details</div>
+  <div class="meta-block">
+    {{#if company.bankDetails.bankName}}<div>Bank Name: {{company.bankDetails.bankName}}</div>{{/if}}
+    {{#if company.bankDetails.accountName}}<div>Account Name: {{company.bankDetails.accountName}}</div>{{/if}}
+    {{#if company.bankDetails.iban}}<div>IBAN: {{company.bankDetails.iban}}</div>{{/if}}
+    {{#if company.bankDetails.swiftCode}}<div>SWIFT/BIC: {{company.bankDetails.swiftCode}}</div>{{/if}}
+    {{#if company.bankDetails.accountNumberLast4}}<div>Account: ****{{company.bankDetails.accountNumberLast4}}</div>{{/if}}
+  </div>
+  {{/if}}
+
+  {{#if documentSettings.termsAndConditions}}
+  <div class="terms-block">
+    <div class="terms-title">Terms &amp; Conditions</div>
+    <p>{{documentSettings.termsAndConditions}}</p>
+  </div>
+  {{/if}}
+  {{#if documentSettings.cancellationPolicy}}
+  <div class="terms-block">
+    <div class="terms-title">Cancellation Policy</div>
+    <p>{{documentSettings.cancellationPolicy}}</p>
+  </div>
+  {{/if}}
+  {{#if documentSettings.operationalContacts}}
+  <div class="terms-block">
+    <div class="terms-title">Operational Contacts</div>
+    <p>{{documentSettings.operationalContacts}}</p>
+  </div>
+  {{/if}}
+</body>
+</html>

@@ -1,11 +1,16 @@
-import PDFDocument from "pdfkit";
 import ExcelJS from "exceljs";
+import path from "path";
 import { storeDocumentPdf } from "../utils/documentPdfStorage.js";
+import { renderHtmlToPdfBuffer, TEMPLATES_DIR } from "./HtmlPdfRenderer.js";
+
+const PDF_TEMPLATE_PATH = path.join(TEMPLATES_DIR, "reports", "financial_report.html");
 
 /**
  * "Export Formats: PDF, Excel, CSV, JSON, API, Scheduled Email." Real
- * generation for PDF (`pdfkit`, the same real package every other
- * Finance PDF service this session already uses), Excel (`exceljs`,
+ * generation for PDF (HTML-template + headless-Chromium via
+ * services/HtmlPdfRenderer.js, the same renderer every other Finance PDF
+ * service now uses — PRD "HTML-Template PDF Architecture Migration"),
+ * Excel (`exceljs`,
  * already installed for Part 14's real statement PARSING — now used for
  * real WRITING), and CSV. "JSON" is simply the report's own already-
  * stored `data` field — no separate generation step. "API" is the
@@ -68,43 +73,38 @@ class FinancialReportExportService {
     return { buffer: Buffer.from(buffer), mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", filename: `${report.reportType}-${report._id}.xlsx` };
   }
 
-  /** Real PDF — report header (type/period/currency/generated date) + the same flattened table. */
+  /**
+   * Real PDF — report header (type/period/currency/generated date) + the
+   * same flattened table, now HTML-template + headless-Chromium rendering
+   * (services/HtmlPdfRenderer.js), PRD "HTML-Template PDF Architecture
+   * Migration". Same public contract as the pdfkit-era version this
+   * replaced. Cell values are pre-formatted to display strings here (Date
+   * -> YYYY-MM-DD, object -> JSON, everything else -> String()) — the
+   * template only renders them, same "no business logic in the template"
+   * discipline as every other migrated *PdfService.js. Pagination across
+   * the 8-column x 500-row table is now Puppeteer's natural CSS
+   * page-break flow, replacing the pdfkit-era manual doc.addPage() loop.
+   */
   static async generatePdfBuffer(report) {
     const rows = flattenReportRows(report.reportType, report.data);
-    const headers = [...new Set(rows.flatMap((r) => Object.keys(r)))].slice(0, 8); // A4 width realistically fits ~8 columns.
+    const headers = [...new Set(rows.flatMap((r) => Object.keys(r)))].slice(0, 8); // A4 landscape width realistically fits ~8 columns.
 
-    return new Promise((resolve, reject) => {
-      const doc = new PDFDocument({ margin: 40, size: "A4", layout: "landscape" });
-      const chunks = [];
-      doc.on("data", (chunk) => chunks.push(chunk));
-      doc.on("end", () => resolve(Buffer.concat(chunks)));
-      doc.on("error", reject);
+    const formatCell = (value) => {
+      if (value instanceof Date) return value.toISOString().slice(0, 10);
+      if (typeof value === "object" && value !== null) return JSON.stringify(value);
+      return String(value ?? "");
+    };
 
-      doc.fontSize(16).text(report.reportType.replace(/([A-Z])/g, " $1").trim(), { align: "center" });
-      doc.moveDown(0.5);
-      doc.fontSize(9).text(`Period: ${report.period || "N/A"}    Currency: ${report.currency || "All"}    Generated: ${new Date(report.generatedAt).toISOString().slice(0, 19)}`, { align: "center" });
-      doc.moveDown(1);
+    const displayRows = rows.slice(0, 500).map((row) => headers.map((h) => formatCell(row[h])));
 
-      const colWidth = (doc.page.width - 80) / headers.length;
-      let y = doc.y;
-      doc.fontSize(8).font("Helvetica-Bold");
-      headers.forEach((h, i) => doc.text(h, 40 + i * colWidth, y, { width: colWidth, ellipsis: true }));
-      doc.moveDown(0.5);
-      doc.font("Helvetica");
-
-      for (const row of rows.slice(0, 500)) {
-        y = doc.y;
-        if (y > doc.page.height - 60) { doc.addPage({ margin: 40, size: "A4", layout: "landscape" }); y = doc.y; }
-        headers.forEach((h, i) => {
-          const value = row[h];
-          const text = value instanceof Date ? value.toISOString().slice(0, 10) : (typeof value === "object" && value !== null ? JSON.stringify(value) : String(value ?? ""));
-          doc.text(text, 40 + i * colWidth, y, { width: colWidth, ellipsis: true });
-        });
-        doc.moveDown(0.4);
-      }
-
-      doc.end();
-    });
+    return renderHtmlToPdfBuffer(PDF_TEMPLATE_PATH, {
+      title: report.reportType.replace(/([A-Z])/g, " $1").trim(),
+      period: report.period || "N/A",
+      currency: report.currency || "All",
+      generatedAt: new Date(report.generatedAt).toISOString().slice(0, 19),
+      headers,
+      displayRows
+    }, { landscape: true, margin: { top: "12mm", bottom: "12mm", left: "10mm", right: "10mm" } });
   }
 
   /**

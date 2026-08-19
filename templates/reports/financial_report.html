@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+{{{sharedCss}}}
+/* Landscape financial reports have genuinely dynamic column sets
+   (trial-balance rows vs cash-flow lines vs balance-sheet sections vs
+   aging buckets) — narrower cell padding/font than the shared table style
+   so up to 8 columns still fit A4 landscape width. */
+table.report-table th, table.report-table td { padding: 3pt 5pt; font-size: 8pt; }
+table.report-table { table-layout: fixed; word-wrap: break-word; }
+</style>
+</head>
+<body>
+  <h1 class="doc-title" style="font-size:16pt;">{{title}}</h1>
+  <div class="draft-banner" style="color:#444;">Period: {{period}}&nbsp;&nbsp;&nbsp;&nbsp;Currency: {{currency}}&nbsp;&nbsp;&nbsp;&nbsp;Generated: {{generatedAt}}</div>
+
+  <table class="doc-table report-table">
+    <thead>
+      <tr>
+        {{#each headers}}<th>{{this}}</th>{{/each}}
+      </tr>
+    </thead>
+    <tbody>
+      {{#each displayRows}}
+      <tr>
+        {{#each this}}<td>{{this}}</td>{{/each}}
+      </tr>
+      {{/each}}
+    </tbody>
+  </table>
+</body>
+</html>

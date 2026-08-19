@@ -2,6 +2,7 @@ import test, { after } from "node:test";
 import assert from "node:assert/strict";
 import dotenv from "dotenv";
 import mongoose from "mongoose";
+import { closeBrowser } from "../services/HtmlPdfRenderer.js";
 
 dotenv.config();
 
@@ -117,5 +118,6 @@ test("BookingVoucherService.generateVoucher blocks generation when the booking h
 });
 
 after(async () => {
+  await closeBrowser();
   if (dbAvailable) await mongoose.disconnect();
 });

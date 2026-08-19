@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>{{{sharedCss}}}</style>
+</head>
+<body>
+  {{> companyHeader}}
+
+  <h1 class="doc-title">CLIENT VOUCHER</h1>
+
+  <div class="meta-block">
+    <div>Voucher Number: {{voucherNumber}}</div>
+    <div>Booking Reference: {{booking.bookingNumber}}</div>
+    <div>Generated: {{formatDate generatedAt}}{{#if generatedBy}} by {{generatedBy}}{{/if}}</div>
+  </div>
+
+  <div class="section-title">Client Details</div>
+  <div class="meta-block">
+    <div>Name: {{customer.name}}</div>
+    {{#if customer.email}}<div>Email: {{customer.email}}</div>{{/if}}
+    {{#if customer.phone}}<div>Phone: {{customer.phone}}</div>{{/if}}
+  </div>
+
+  <div class="section-title">Service Details</div>
+  <div class="meta-block">
+    <div>Booking Type: {{booking.bookingType}}</div>
+    {{#if booking.travelDate}}<div>Travel Date: {{formatDate booking.travelDate}}</div>{{/if}}
+    {{#if booking.returnDate}}<div>Return Date: {{formatDate booking.returnDate}}</div>{{/if}}
+  </div>
+
+  {{#if typeDetails.hotels.length}}
+  <div class="section-title">Hotels</div>
+  {{#each typeDetails.hotels}}
+    <div>Hotel {{inc @index}}: {{this.hotelName}} ({{#if this.city}}{{this.city}}{{else}}N/A{{/if}}) — {{this.roomType}}, {{this.mealPlan}},
+      Check-in {{formatDate this.checkIn}}, Check-out {{formatDate this.checkOut}}, {{this.roomsCount}} room(s), {{this.guestsCount}} guest(s)</div>
+  {{/each}}
+  {{/if}}
+
+  {{#if typeDetails.flights.length}}
+  <div class="section-title">Flights</div>
+  {{#each typeDetails.flights}}
+    <div>Flight {{inc @index}}: {{#if this.reservationNumber}}{{this.reservationNumber}}{{else}}{{#if this.providerConfirmationNumber}}{{this.providerConfirmationNumber}}{{else}}N/A{{/if}}{{/if}}</div>
+  {{/each}}
+  {{/if}}
+
+  {{#if typeDetails.carRentals.length}}
+  <div class="section-title">Car Rentals</div>
+  {{#each typeDetails.carRentals}}
+    <div>Car Rental {{inc @index}}: {{this.rentalCompany}} — {{#if this.vehicleType}}{{this.vehicleType}}{{else}}N/A{{/if}},
+      Pickup {{this.pickupLocation}} ({{formatDateTime this.pickupDateTime}}), Dropoff {{this.dropoffLocation}} ({{formatDateTime this.dropoffDateTime}})</div>
+  {{/each}}
+  {{/if}}
+
+  {{#if documentSettings.termsAndConditions}}
+  <div class="terms-block">
+    <div class="terms-title">Terms &amp; Conditions</div>
+    <p>{{documentSettings.termsAndConditions}}</p>
+  </div>
+  {{/if}}
+  {{#if documentSettings.cancellationPolicy}}
+  <div class="terms-block">
+    <div class="terms-title">Cancellation Policy</div>
+    <p>{{documentSettings.cancellationPolicy}}</p>
+  </div>
+  {{/if}}
+  {{#if documentSettings.operationalContacts}}
+  <div class="terms-block">
+    <div class="terms-title">Operational Contacts</div>
+    <p>{{documentSettings.operationalContacts}}</p>
+  </div>
+  {{/if}}
+</body>
+</html>
