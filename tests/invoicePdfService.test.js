@@ -110,6 +110,28 @@ test("InvoicePdfService still generates a valid PDF (never throws) when the logo
   assert.ok(Buffer.isBuffer(buffer) && buffer.length > 0);
 });
 
+// Invoice/Voucher Template Refactor PRD Issue 2/3/6 — the QR image, the
+// bilingual header's licenseNumber/companyNameArabic, the Company (Client)
+// vs Guest Name split, and the Municipality Fee line all render without
+// throwing and visibly add content to the PDF.
+test("InvoicePdfService renders the QR code, structured client, and municipality fee line", async () => {
+  const withoutExtras = await InvoicePdfService.generatePdfBuffer({ ...baseInvoice });
+  const withExtras = await InvoicePdfService.generatePdfBuffer({
+    ...baseInvoice,
+    client: { companyName: "Amal Holidays", individualName: null },
+    company: { name: "Maqvera Travel", companyNameArabic: "مقفرة للسفر", licenseNumber: "LIC-999", registrationNumber: "REG456", vatNumber: "VAT123" },
+    municipalityFeeRate: 2,
+    municipalityFeeAmount: 20,
+    paidAmount: 500,
+    printedBy: "tester",
+    hijriDateFormatted: "14 Muharram 1448H",
+    qrCodeDataUri: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+  });
+
+  assert.ok(Buffer.isBuffer(withExtras) && withExtras.length > 0);
+  assert.ok(withExtras.length > withoutExtras.length, "rendering the QR/client/municipality-fee blocks must produce a larger PDF");
+});
+
 after(async () => {
   await closeBrowser();
 });

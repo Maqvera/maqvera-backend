@@ -51,7 +51,7 @@ export const CreateOrUpdateTenantProfile = async (req, res) => {
     }
 
     const {
-      companyName, registrationNumber, vatNumber, address, city, country, phone, email,
+      companyName, registrationNumber, licenseNumber, vatNumber, companyNameArabic, address, city, country, phone, email,
       defaultBankAccountId, documentSettings
     } = req.body;
 
@@ -64,7 +64,9 @@ export const CreateOrUpdateTenantProfile = async (req, res) => {
     const update = {
       companyName,
       registrationNumber: registrationNumber ?? null,
+      licenseNumber: licenseNumber ?? null,
       vatNumber: vatNumber ?? null,
+      companyNameArabic: companyNameArabic ?? null,
       address: address ?? null,
       city: city ?? null,
       country: country ?? null,

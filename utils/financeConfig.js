@@ -413,6 +413,14 @@ export const getFinanceConfig = () => {
     // against).
     invoiceApprovalRequired: parseBoolean(process.env.INVOICE_APPROVAL_REQUIRED, true),
     invoiceNumberPrefix: process.env.INVOICE_NUMBER_PREFIX || 'INV',
+    // A genuinely new financial concept a real reference invoice showed
+    // (Sub Total -> Municipality Fee -> VAT -> Final Total) with no existing
+    // extension point in this Finance module's tax engine to slot into.
+    // Smallest possible addition: one config-driven rate, defaulting to 0%
+    // (a no-op for every tenant that hasn't been told to charge one) —
+    // deliberately not a general multi-fee-type engine, which nothing here
+    // asked for.
+    municipalityFeeRate: parseFloat(process.env.MUNICIPALITY_FEE_RATE || '0'),
     // `taxCodes` (the original minimal tax-code -> rate lookup) moved
     // below to the Finance Module Part 20 (Tax Engine) config block,
     // where it now serves as that engine's own last-resort fallback —

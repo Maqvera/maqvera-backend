@@ -1,0 +1,26 @@
+<div class="inv-header">
+  <div class="inv-header-col inv-header-left">
+    {{#if company.logoUrl}}<img class="logo" src="{{company.logoUrl}}" alt="logo">{{/if}}
+    {{#if company.name}}<div class="company-name">{{company.name}}</div>{{/if}}
+    {{#if company.companyNameArabic}}<div class="company-name-ar">{{company.companyNameArabic}}</div>{{/if}}
+    {{#if documentSettings.tagline}}<div class="company-tagline">{{documentSettings.tagline}}</div>{{/if}}
+    {{#if company.address}}<div class="company-address">{{company.address}}</div>{{/if}}
+    {{#if company.registrationNumber}}<div class="company-meta">Registration No <span class="ar-label">السجل التجاري</span>: {{company.registrationNumber}}</div>{{/if}}
+    {{#if company.licenseNumber}}<div class="company-meta">License No <span class="ar-label">رقم الترخيص</span>: {{company.licenseNumber}}</div>{{/if}}
+    {{#if company.email}}<div class="company-meta">{{company.email}}</div>{{/if}}
+    {{#if company.vatNumber}}<div class="company-meta">VAT# <span class="ar-label">الرقم الضريبي</span>: {{company.vatNumber}}</div>{{/if}}
+  </div>
+  <div class="inv-header-col inv-header-center">
+    {{#if qrCodeDataUri}}<img class="qr-code" src="{{qrCodeDataUri}}" alt="QR code">{{/if}}
+  </div>
+  <div class="inv-header-col inv-header-right">
+    <div class="doc-heading">{{title}}<br><span class="ar-label">فاتورة ضريبية مبسطة</span></div>
+    <div class="ref-line">REF# {{invoiceNumber}}</div>
+    {{#if bookingDetails.bookingStatus}}<div class="ref-line">Booking Status: {{bookingDetails.bookingStatus}}</div>{{/if}}
+    {{#with bookingDetails.hotels.[0] as |hotel|}}
+      {{#if hotel.season}}<div class="ref-line">Season: {{hotel.season}}{{#if hotel.city}}, {{hotel.city}}{{/if}}</div>{{/if}}
+      {{#if hotel.hotelName}}<div class="ref-line">{{hotel.hotelName}}</div>{{/if}}
+      {{#if hotel.hotelConfirmationNumber}}<div class="ref-line">Hotel CNF# {{hotel.hotelConfirmationNumber}}</div>{{/if}}
+    {{/with}}
+  </div>
+</div>

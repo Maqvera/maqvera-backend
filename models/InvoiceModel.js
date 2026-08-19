@@ -106,6 +106,11 @@ const InvoiceSchema = new mongoose.Schema({
   subtotal: { type: Number, required: true },
   taxTotal: { type: Number, required: true },
   discountTotal: { type: Number, required: true },
+  // Config-driven (utils/financeConfig.js municipalityFeeRate), defaulting
+  // to 0 — see InvoiceService.js's own doc comment on why this is a
+  // separate line from taxTotal/VAT, not folded into it.
+  municipalityFeeRate: { type: Number, default: 0 },
+  municipalityFeeAmount: { type: Number, default: 0 },
   grandTotal: { type: Number, required: true },
   // "Invoice Versioning... Historical versions preserved." Snapshotted on
   // every PATCH to a Draft invoice, before the new values are applied.
@@ -132,6 +137,11 @@ const InvoiceSchema = new mongoose.Schema({
     storageProvider: { type: String, default: null },
     generatedAt: { type: Date, default: null }
   },
+  // Per-document QR access token — generated once, immutable for the life
+  // of the invoice (same stability guarantee as invoiceNumber), so a QR
+  // printed on a PDF weeks ago still resolves. See services/
+  // InvoiceDocumentQrService.js.
+  qrAccessToken: { type: String, default: null, unique: true, sparse: true },
   attachments: [{
     url: { type: String, required: true },
     filename: { type: String, default: null },

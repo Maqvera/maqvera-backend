@@ -23,9 +23,15 @@ export const resolveTenantBranding = async (tenantId) => {
 
   return {
     name: tenantProfile.companyName,
+    // Optional Arabic company name — see TenantProfileModel.js's own doc
+    // comment; renders as a second line under the English name when set.
+    companyNameArabic: tenantProfile.companyNameArabic,
     logoUrl: tenantProfile.logoUrl,
     vatNumber: tenantProfile.vatNumber,
     registrationNumber: tenantProfile.registrationNumber,
+    // Distinct from registrationNumber (Commercial Registration) — see
+    // TenantProfileModel.js's own doc comment.
+    licenseNumber: tenantProfile.licenseNumber,
     address: tenantProfile.address,
     phone: tenantProfile.phone,
     email: tenantProfile.email,

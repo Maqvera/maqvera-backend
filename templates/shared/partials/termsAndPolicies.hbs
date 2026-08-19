@@ -1,0 +1,18 @@
+{{#if documentSettings.termsAndConditions}}
+<div class="terms-block">
+  <div class="terms-title">Terms &amp; Conditions <span class="ar-label">الشروط والأحكام</span></div>
+  {{{numberedList documentSettings.termsAndConditions}}}
+</div>
+{{/if}}
+{{#if documentSettings.cancellationPolicy}}
+<div class="terms-block">
+  <div class="terms-title">Cancellation Policy <span class="ar-label">سياسة الإلغاء</span></div>
+  {{{numberedList documentSettings.cancellationPolicy}}}
+</div>
+{{/if}}
+{{#if documentSettings.operationalContacts}}
+<div class="terms-block">
+  <div class="terms-title">Operational Assistance Contacts <span class="ar-label">جهات الاتصال التشغيلية</span></div>
+  {{{numberedList documentSettings.operationalContacts}}}
+</div>
+{{/if}}

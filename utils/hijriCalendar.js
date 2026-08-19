@@ -46,3 +46,16 @@ export const hasCrossedMuharramPeriod = (period, gregorianDate = new Date()) => 
   const time = new Date(gregorianDate).getTime();
   return time < new Date(period.periodStart).getTime() || time >= new Date(period.periodEnd).getTime();
 };
+
+/**
+ * Single-date Hijri display string (e.g. "14 Muharram 1448H") for document
+ * footers (Invoice/Voucher PRD) — distinct from getCurrentMuharramPeriod's
+ * cycle-boundary math above, but built on the same UTC-anchored, Umm
+ * al-Qura `moment-hijri` authority rather than a second Hijri conversion
+ * dependency.
+ */
+export const formatHijriDate = (gregorianDate = new Date()) => {
+  const asOf = moment.utc(gregorianDate);
+  if (!asOf.isValid()) return null;
+  return `${asOf.format("iD iMMMM iYYYY")}H`;
+};

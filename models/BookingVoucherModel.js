@@ -29,6 +29,10 @@ const BookingVoucherSchema = new mongoose.Schema({
     type: String,
     default: null
   },
+  // Per-document QR access token — generated once, immutable for the life
+  // of the voucher (same stability guarantee as voucherNumber). See
+  // services/InvoiceDocumentQrService.js.
+  qrAccessToken: { type: String, default: null, unique: true, sparse: true },
   // Snapshot-over-live (PRD Part B item #12's flagged-but-unresolved
   // question — implemented per this codebase's own existing convention:
   // InvoiceLineItemSchema already denormalizes tax amounts "so a historical

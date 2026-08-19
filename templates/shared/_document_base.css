@@ -63,3 +63,58 @@ table.doc-table th { background: #f2f2f2; font-weight: bold; }
 .terms-block { font-size: 9pt; margin-top: 10pt; }
 .terms-block .terms-title { font-weight: bold; margin-bottom: 2pt; }
 .terms-block p { white-space: pre-wrap; margin: 0 0 8pt 0; }
+.terms-block .numbered-list { margin: 0 0 8pt 0; padding-left: 16pt; }
+.terms-block .numbered-list li { margin-bottom: 2pt; }
+
+/* Invoice/Voucher Template Refactor PRD — bilingual chrome label (fixed
+   document wording, e.g. "Terms & Conditions / الشروط والأحكام"), never
+   tenant data. */
+.ar-label { color: #555; font-size: 0.85em; direction: rtl; unicode-bidi: embed; }
+
+.table-scroll { overflow-x: auto; }
+
+/* Invoice header — three-column layout (branding / QR / reference block),
+   scoped to templates/shared/partials/invoiceHeader.hbs only. */
+.inv-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10pt; gap: 8pt; }
+.inv-header-col { flex: 1; }
+.inv-header-left .logo { max-width: 110px; max-height: 55px; margin-bottom: 3pt; }
+.inv-header-left .company-name { font-size: 13pt; font-weight: bold; }
+.inv-header-left .company-name-ar { font-size: 11pt; font-weight: bold; direction: rtl; }
+.inv-header-left .company-tagline { font-size: 9pt; color: #555; margin-bottom: 3pt; }
+.inv-header-left .company-address,
+.inv-header-left .company-meta { font-size: 8pt; color: #555; }
+.inv-header-center { text-align: center; flex: 0 0 110px; }
+.inv-header-center .qr-code { width: 90px; height: 90px; }
+.inv-header-right { text-align: right; font-size: 9pt; }
+.inv-header-right .doc-heading { font-weight: bold; font-size: 11pt; margin-bottom: 4pt; }
+.inv-header-right .ref-line { margin-bottom: 2pt; }
+
+.draft-banner { text-align: center; color: #888; font-size: 10pt; margin-bottom: 8pt; }
+
+.guest-block { display: flex; border: 1px solid #ccc; margin-bottom: 8pt; }
+.guest-block-col { flex: 1; padding: 6pt 8pt; border-right: 1px solid #ccc; font-size: 9pt; }
+.guest-block-col:last-child { border-right: none; }
+.guest-block-col .guest-label { display: block; font-weight: bold; color: #555; font-size: 8pt; }
+.guest-block-col .guest-value { display: block; margin-top: 2pt; }
+
+.summary-row { display: flex; justify-content: space-between; gap: 16pt; margin-top: 8pt; }
+.summary-row .bank-block { flex: 1; }
+.summary-row .totals-block { flex: 1; font-size: 10pt; }
+.summary-row .totals-block div { margin-bottom: 2pt; }
+.summary-row .totals-block .grand-total { font-size: 13pt; font-weight: bold; margin-top: 4pt; }
+
+.doc-footer { margin-top: 14pt; padding-top: 6pt; border-top: 1px solid #ccc; font-size: 7.5pt; color: #555; text-align: center; }
+.doc-footer div { margin-bottom: 2pt; }
+.doc-footer .footer-disclaimer { font-style: italic; }
+
+/* Voucher header — teal branded band, three columns. */
+.voucher-header { display: flex; justify-content: space-between; gap: 10pt; background: #0f6b6b; color: #fff; padding: 10pt; margin-bottom: 10pt; }
+.voucher-header-col { flex: 1; font-size: 9pt; }
+.voucher-header-col .logo-sm { max-width: 90px; max-height: 45px; margin-bottom: 4pt; background: #fff; padding: 2pt; }
+.voucher-header .vh-line { margin-bottom: 2pt; }
+.voucher-header .vh-strong { font-weight: bold; }
+.voucher-header-right { text-align: right; }
+.voucher-header-right .vh-heading { font-weight: bold; font-size: 12pt; margin-bottom: 4pt; }
+.voucher-header-right .qr-code-sm { width: 60px; height: 60px; margin-top: 4pt; background: #fff; padding: 2pt; }
+
+.greeting-line { font-size: 9pt; margin: 0 0 10pt 0; }

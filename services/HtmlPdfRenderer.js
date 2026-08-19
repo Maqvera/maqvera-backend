@@ -30,6 +30,22 @@ handlebars.registerHelper("formatDateTime", (value) => (value ? new Date(value).
 handlebars.registerHelper("eq", (a, b) => a === b);
 handlebars.registerHelper("gt", (a, b) => a > b);
 handlebars.registerHelper("inc", (index) => index + 1);
+// Room-row PAX total (adultCount + childCount + infantCount) — the last
+// argument is Handlebars' own injected options object, not a real operand.
+handlebars.registerHelper("addNums", (...args) => args.slice(0, -1).reduce((sum, n) => sum + (Number(n) || 0), 0));
+// Invoice/Voucher Template Refactor PRD Issue 3 — renders a tenant's
+// free-text documentSettings field (termsAndConditions/cancellationPolicy/
+// operationalContacts) as a numbered list without requiring the tenant to
+// type "1. 2. 3." themselves: one <li> per non-blank line when the stored
+// text is newline-separated, or a single numbered item for a plain
+// paragraph. Formatting only — no data transformation.
+handlebars.registerHelper("numberedList", (text) => {
+  if (!text) return "";
+  const lines = String(text).split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  if (lines.length === 0) return "";
+  const items = lines.map((line) => `<li>${handlebars.Utils.escapeExpression(line)}</li>`).join("");
+  return new handlebars.SafeString(`<ol class="numbered-list">${items}</ol>`);
+});
 
 // Compiled-template cache — templates are static files on disk, safe to
 // cache indefinitely (unlike tenant DATA, which utils/tenantBranding.js

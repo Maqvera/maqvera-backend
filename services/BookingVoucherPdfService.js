@@ -20,16 +20,20 @@ const TEMPLATE_PATH = path.join(TEMPLATES_DIR, "vouchers", "hotel_voucher.html")
  * {{#if}}, via the shared companyHeader partial for the branding block).
  */
 class BookingVoucherPdfService {
-  static async generatePdfBuffer({ voucherNumber, generatedAt, generatedBy, company, customer, booking, typeDetails, documentSettings }) {
+  static async generatePdfBuffer({ voucherNumber, generatedAt, generatedBy, printedBy, company, customer, guest, client, booking, typeDetails, documentSettings, qrCodeDataUri }) {
     return renderHtmlToPdfBuffer(TEMPLATE_PATH, {
       voucherNumber,
       generatedAt,
       generatedBy,
+      printedBy,
       company,
       customer,
+      guest,
+      client,
       booking,
       typeDetails,
-      documentSettings
+      documentSettings,
+      qrCodeDataUri
     });
   }
 }

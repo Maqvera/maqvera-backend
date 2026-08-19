@@ -14,7 +14,10 @@ import { subscribeEvent, publishEvent } from "../utils/eventBus.js";
 import { getFinanceConfig } from "../utils/financeConfig.js";
 import BookingServiceModel from "../models/BookingServiceModel.js";
 import BookingTravelerModel from "../models/BookingTravelerModel.js";
+import BookingHeaderModel from "../models/BookingHeaderModel.js";
 import { effectiveNights } from "../utils/hotelServiceDetails.js";
+import InvoiceDocumentQrService from "./InvoiceDocumentQrService.js";
+import { formatHijriDate } from "../utils/hijriCalendar.js";
 
 const roundCurrency = (value) => Math.round((Number(value) || 0) * 100) / 100;
 
@@ -73,6 +76,19 @@ export const computeInvoiceTotals = (computedItems) => {
   const taxTotal = roundCurrency(computedItems.reduce((sum, i) => sum + i.lineTaxAmount, 0));
   const grandTotal = roundCurrency(computedItems.reduce((sum, i) => sum + i.lineTotal, 0));
   return { subtotal, discountTotal, taxTotal, grandTotal };
+};
+
+/**
+ * Municipality Fee (PRD Issue 3a) — a genuinely new, invoice-level fee
+ * distinct from the per-line taxTotal above, applied against subtotal.
+ * Deliberately a separate step from computeInvoiceTotals rather than folded
+ * into it, so that function's own existing, already-tested contract never
+ * changes. `rate` is a percentage (e.g. 0, 2); defaults to 0, a no-op.
+ */
+export const applyMunicipalityFee = (totals, rate = 0) => {
+  const municipalityFeeRate = Number(rate) || 0;
+  const municipalityFeeAmount = roundCurrency(totals.subtotal * municipalityFeeRate / 100);
+  return { ...totals, municipalityFeeRate, municipalityFeeAmount, grandTotal: roundCurrency(totals.grandTotal + municipalityFeeAmount) };
 };
 
 const EDITABLE_STATUSES = new Set(["Draft"]);
@@ -206,46 +222,97 @@ class InvoiceService {
   static async _resolveBookingDetailsForPdf(invoiceDoc) {
     if (!invoiceDoc.bookingId) return null;
 
-    const [travelers, hotelServices] = await Promise.all([
+    const [travelers, hotelServices, booking] = await Promise.all([
       BookingTravelerModel.find({ bookingId: invoiceDoc.bookingId, tenantId: invoiceDoc.tenantId, status: "active" }).lean(),
-      BookingServiceModel.find({ bookingId: invoiceDoc.bookingId, tenantId: invoiceDoc.tenantId, serviceType: "hotel", status: "active" }).lean()
+      BookingServiceModel.find({ bookingId: invoiceDoc.bookingId, tenantId: invoiceDoc.tenantId, serviceType: "hotel", status: "active" }).lean(),
+      BookingHeaderModel.findOne({ _id: invoiceDoc.bookingId, tenantId: invoiceDoc.tenantId }).lean()
     ]);
 
     const primaryTraveler = travelers.find((t) => t.isPrimary || t.isPrimaryTraveler) || travelers[0] || null;
 
     return {
       guestName: primaryTraveler ? `${primaryTraveler.firstName || ""} ${primaryTraveler.lastName || ""}`.trim() : null,
+      // BookingTravelerModel has no dedicated top-level "mobile" field —
+      // the traveler's own contact number lives on the booking-time
+      // customerSnapshot instead (PRD Issue 1's re-traced source).
+      nationality: primaryTraveler?.nationality || null,
+      mobile: primaryTraveler?.customerSnapshot?.snapshotPhone || null,
       paxCount: travelers.length,
+      bookingStatus: booking?.status || null,
       hotels: hotelServices.map((s) => {
         const d = s.details || {};
+        // BookingServiceModel.details' per-night rate field is named
+        // `ratePerNight` (utils/hotelServiceDetails.js's own normalization
+        // schema) — aliased to `roomRatePerNight` here so this object's
+        // shape matches HotelBookingModel's GDS-leg field name, same
+        // convention BookingVoucherService already uses for its own
+        // manual-vs-GDS hotel leg normalization.
+        const nights = effectiveNights(d);
+        const roomRatePerNight = d.ratePerNight != null ? Number(d.ratePerNight) : null;
         return {
           hotelName: d.hotelName || s.serviceName,
           hotelConfirmationNumber: d.hotelConfirmationNumber || null,
           roomType: d.roomType || null,
           view: d.view || null,
+          city: d.city || null,
+          season: d.season || null,
           checkIn: d.checkIn || null,
           checkOut: d.checkOut || null,
-          nights: effectiveNights(d),
+          nights,
           adultCount: d.adultCount || null,
           childCount: d.childCount || 0,
           infantCount: d.infantCount || 0,
-          mealPlan: d.mealPlan || null
+          mealPlan: d.mealPlan || null,
+          mealPrice: d.mealPrice != null ? Number(d.mealPrice) : null,
+          roomRatePerNight,
+          // Presentation-layer needs a per-room total; computed here (not
+          // in the template) per this codebase's "template does
+          // presentation, Finance does math" discipline — this is not a
+          // billed invoice line, just a display rollup of the room rate.
+          lineTotal: roomRatePerNight != null && nights ? roundCurrency(roomRatePerNight * nights) : null
         };
       })
     };
   }
 
   static async _generatePdf(invoiceDoc, customerName) {
-    const [company, bookingDetails, documentSettings] = await Promise.all([
+    const config = getFinanceConfig();
+    const [company, bookingDetails, documentSettings, customer, receivable] = await Promise.all([
       resolveTenantBranding(invoiceDoc.tenantId),
       InvoiceService._resolveBookingDetailsForPdf(invoiceDoc),
-      resolveTenantDocumentSettings(invoiceDoc.tenantId)
+      resolveTenantDocumentSettings(invoiceDoc.tenantId),
+      CustomerModel.findOne({ _id: invoiceDoc.customerId, tenantId: invoiceDoc.tenantId }).lean(),
+      AccountsReceivableModel.findOne({ tenantId: invoiceDoc.tenantId, invoiceNumber: invoiceDoc.invoiceNumber }).lean()
     ]);
+
+    // Immutable once minted (same stability contract as invoiceNumber) —
+    // only generated the first time a PDF is produced for this invoice, so
+    // a QR on an already-printed copy keeps resolving after a later edit.
+    if (!invoiceDoc.qrAccessToken) invoiceDoc.qrAccessToken = InvoiceDocumentQrService.generateAccessToken();
+    const viewUrl = InvoiceDocumentQrService.buildViewUrl(config.receiptVerificationBaseUrl, invoiceDoc.qrAccessToken);
+    const qrPngBuffer = await InvoiceDocumentQrService.generateQrPngBuffer(viewUrl);
+
+    // PRD Issue 6c — "Company (Client)" and "Guest Name" must render
+    // simultaneously; customerName (the collapsed fallback string) is left
+    // completely untouched for every other caller of this service.
+    const client = customer ? {
+      companyName: customer.companyName || null,
+      individualName: `${customer.firstName || ""} ${customer.lastName || ""}`.trim() || null
+    } : null;
+
     const buffer = await InvoicePdfService.generatePdfBuffer({
       invoiceNumber: invoiceDoc.invoiceNumber, invoiceType: invoiceDoc.invoiceType, status: invoiceDoc.status,
-      issueDate: invoiceDoc.issueDate, dueDate: invoiceDoc.dueDate, customerName, currency: invoiceDoc.currency,
+      issueDate: invoiceDoc.issueDate, dueDate: invoiceDoc.dueDate, customerName, client, currency: invoiceDoc.currency,
       items: invoiceDoc.items, subtotal: invoiceDoc.subtotal, taxTotal: invoiceDoc.taxTotal,
-      discountTotal: invoiceDoc.discountTotal, grandTotal: invoiceDoc.grandTotal, company, bookingDetails, documentSettings
+      discountTotal: invoiceDoc.discountTotal, municipalityFeeRate: invoiceDoc.municipalityFeeRate, municipalityFeeAmount: invoiceDoc.municipalityFeeAmount,
+      grandTotal: invoiceDoc.grandTotal, company, bookingDetails, documentSettings,
+      qrCodeDataUri: `data:image/png;base64,${qrPngBuffer.toString("base64")}`,
+      hijriDateFormatted: formatHijriDate(invoiceDoc.issueDate),
+      // Live-joined the same way InvoiceService._withLiveBalance already
+      // does for outstandingBalance — 0 before any AR receivable exists yet
+      // (Draft/Approved invoices), not fabricated.
+      paidAmount: receivable ? receivable.paidAmount : 0,
+      printedBy: invoiceDoc.issuedBy || invoiceDoc.updatedBy || invoiceDoc.createdBy || null
     });
     const stored = await storeDocumentPdf({ tenantId: invoiceDoc.tenantId, folder: "invoices", filename: `${invoiceDoc.invoiceNumber}.pdf`, buffer });
     return { url: stored.url, storageKey: stored.storageKey, storageProvider: stored.storageProvider, generatedAt: new Date() };
@@ -280,7 +347,7 @@ class InvoiceService {
     const pricedItems = await InvoiceService._resolveCatalogPricing(rawItems, customer, currency, tenantId);
     const resolvedTaxCodes = await InvoiceService._resolveTaxCodes(pricedItems, customer, tenantId);
     const computedItems = pricedItems.map((item) => ({ ...computeLineTotals(item, resolvedTaxCodes), productCode: item.productCode || null }));
-    const totals = computeInvoiceTotals(computedItems);
+    const totals = applyMunicipalityFee(computeInvoiceTotals(computedItems), config.municipalityFeeRate);
     const invoiceNumber = await InvoiceService._generateInvoiceNumber(tenantId);
     const customerName = `${customer.firstName || ""} ${customer.lastName || ""}`.trim() || customer.companyName || "Customer";
 
@@ -404,7 +471,7 @@ class InvoiceService {
       const pricedItems = await InvoiceService._resolveCatalogPricing(rawItems, customer, invoice.currency, tenantId);
       const resolvedTaxCodes = await InvoiceService._resolveTaxCodes(pricedItems, customer, tenantId);
       const computedItems = pricedItems.map((item) => ({ ...computeLineTotals(item, resolvedTaxCodes), productCode: item.productCode || null }));
-      const totals = computeInvoiceTotals(computedItems);
+      const totals = applyMunicipalityFee(computeInvoiceTotals(computedItems), config.municipalityFeeRate);
       changedFields.items = computedItems;
       Object.assign(changedFields, totals);
     }

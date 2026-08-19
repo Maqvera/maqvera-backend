@@ -1873,6 +1873,14 @@ Not yet implemented (require deferred features above to have meaning): `Recurrin
 
 ---
 
+# Endpoint Contract: GET /api/v1/documents/view/{token}
+
+*(Public — same "capability URL" pattern as `GET /api/v1/receipts/verify/{token}` above: the 24-random-byte token itself, not authentication, is access control. Invoice/Voucher Template Refactor PRD Issue 2.)*
+
+Every generated Invoice and Client Voucher PDF now embeds a per-document QR code encoding this URL (`services/InvoiceDocumentQrService.js`). Scanning it — no ERP login required — checks the token against both `InvoiceModel.qrAccessToken` and `BookingVoucherModel.qrAccessToken` (a single indexed-field match per model) and 302-redirects to that exact document's stored PDF. Unknown/mistyped token → 404, never a stack trace. The token is minted once per document and never regenerated, so a QR on an already-printed copy keeps resolving after the invoice is later edited/reissued.
+
+---
+
 # Part 10 — Enterprise Credit Note APIs
 
 ## Overview

@@ -44,23 +44,34 @@ const TEMPLATE_PATH = path.join(TEMPLATES_DIR, "invoices", "default_invoice.html
  * `subtotal`/`taxTotal`/`grandTotal`; the template only renders them.
  */
 class InvoicePdfService {
-  static async generatePdfBuffer({ invoiceNumber, invoiceType, status, issueDate, dueDate, customerName, currency, items, subtotal, taxTotal, discountTotal, grandTotal, company, bookingDetails, documentSettings }) {
+  static async generatePdfBuffer({
+    invoiceNumber, invoiceType, status, issueDate, dueDate, customerName, client, currency, items, subtotal, taxTotal, discountTotal,
+    municipalityFeeRate, municipalityFeeAmount, grandTotal, company, bookingDetails, documentSettings, qrCodeDataUri, hijriDateFormatted, paidAmount, printedBy
+  }) {
     return renderHtmlToPdfBuffer(TEMPLATE_PATH, {
       title: TYPE_TITLES[invoiceType] || TYPE_TITLES.Custom,
       isDraft: status === "Draft",
       invoiceNumber,
+      status,
       issueDate,
       dueDate,
       customerName,
+      client,
       currency,
       items,
       subtotal,
       taxTotal,
       discountTotal,
+      municipalityFeeRate,
+      municipalityFeeAmount,
       grandTotal,
       company,
       bookingDetails,
-      documentSettings
+      documentSettings,
+      qrCodeDataUri,
+      hijriDateFormatted,
+      paidAmount,
+      printedBy
     });
   }
 }

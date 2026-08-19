@@ -3692,7 +3692,11 @@ export const tenantProfileSchemas = {
       'string.empty': 'companyName is required'
     }),
     registrationNumber: Joi.string().trim().max(100).optional().allow(null, ''),
+    // Distinct from registrationNumber (Commercial Registration) — see
+    // TenantProfileModel.js's own doc comment.
+    licenseNumber: Joi.string().trim().max(100).optional().allow(null, ''),
     vatNumber: Joi.string().trim().max(100).optional().allow(null, ''),
+    companyNameArabic: Joi.string().trim().max(200).optional().allow(null, ''),
     address: Joi.string().trim().max(500).optional().allow(null, ''),
     city: Joi.string().trim().max(100).optional().allow(null, ''),
     country: Joi.string().trim().max(100).optional().allow(null, ''),
@@ -3703,7 +3707,9 @@ export const tenantProfileSchemas = {
       invoiceDisplayName: Joi.string().trim().max(200).optional().allow(null, ''),
       termsAndConditions: Joi.string().trim().max(5000).optional().allow(null, ''),
       cancellationPolicy: Joi.string().trim().max(5000).optional().allow(null, ''),
-      operationalContacts: Joi.string().trim().max(2000).optional().allow(null, '')
+      operationalContacts: Joi.string().trim().max(2000).optional().allow(null, ''),
+      tagline: Joi.string().trim().max(200).optional().allow(null, ''),
+      greetingText: Joi.string().trim().max(2000).optional().allow(null, '')
     }).optional()
   })
 };

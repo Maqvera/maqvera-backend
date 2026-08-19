@@ -32,11 +32,25 @@ const TenantProfileSchema = new mongoose.Schema({
     type: String,
     default: null
   },
+  // Commercial Registration number (السجل التجاري).
   registrationNumber: {
     type: String,
     default: null
   },
+  // License Number (رقم الترخيص) — genuinely distinct from the Commercial
+  // Registration number above (confirmed against a real reference invoice
+  // showing both simultaneously), not a rename/duplicate of it.
+  licenseNumber: {
+    type: String,
+    default: null
+  },
   vatNumber: {
+    type: String,
+    default: null
+  },
+  // Optional Arabic company name, rendered as a second line under the
+  // English name when present — never fabricated/transliterated when absent.
+  companyNameArabic: {
     type: String,
     default: null
   },
@@ -69,7 +83,14 @@ const TenantProfileSchema = new mongoose.Schema({
     invoiceDisplayName: { type: String, default: null },
     termsAndConditions: { type: String, default: null },
     cancellationPolicy: { type: String, default: null },
-    operationalContacts: { type: String, default: null }
+    operationalContacts: { type: String, default: null },
+    // Short line under the company name on generated documents (e.g. "for
+    // Organizing Trips") — genuinely per-tenant, never a fixed string baked
+    // into the template for every tenant.
+    tagline: { type: String, default: null },
+    // Voucher opening greeting line — tenant-overridable; the template
+    // falls back to a fixed default boilerplate when this is unset.
+    greetingText: { type: String, default: null }
   },
   profileCompletedAt: {
     type: Date,

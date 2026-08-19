@@ -6,6 +6,7 @@ import { enterpriseRateLimit } from "../middleware/rateLimiter.js";
 import idempotency from "../middleware/idempotency.js";
 import validate, { accountSchemas, journalSchemas, receivableSchemas, paymentSchemas, payableSchemas, vendorSchemas, receiptSchemas, invoiceSchemas, creditNoteSchemas, debitNoteSchemas, refundSchemas, chargebackSchemas, bankAccountSchemas, bankReconciliationSchemas, cashManagementSchemas, expenseSchemas, vendorPaymentSchemas, customerCollectionSchemas, currencySchemas, taxSchemas, pricingSchemas, approvalWorkflowSchemas, settlementSchemas, financialReportSchemas, financialDashboardSchemas, financialAnalyticsSchemas, auditComplianceSchemas, planningSchemas, treasurySchemas, governanceSchemas, financePlatformSchemas, walletSchemas, subscriptionSchemas, collectionCampaignSchemas, webhookSchemas } from "../middleware/validateRequest.js";
 import { processFinancialRequest, getPlatformArchitecture, getPlatformHealthStatus } from "../controllers/FinancePlatformOrchestrationController.js";
+import { viewDocumentByToken } from "../controllers/DocumentViewController.js";
 
 import {
   createBudget,
@@ -587,6 +588,13 @@ router.get("/customer-payments/pay/:token", limiter, viewCollectionByToken);
 // routes above; GET-only (see CustomerPortalService's own doc comment for
 // why). Do not move this below the router.use() line.
 router.get("/customer-portal/:token", limiter, viewCustomerPortalByToken);
+
+// Invoice/Client Voucher QR documents — Invoice/Voucher Template Refactor
+// PRD Issue 2. Same public-token-as-access-control convention as the
+// routes above (controllers/DocumentViewController.js's own doc comment
+// has the full reasoning); scanning a printed QR code has no ERP login to
+// present. Do not move this below the router.use() line.
+router.get("/documents/view/:token", limiter, viewDocumentByToken);
 
 // Finance data is tenant-owned (customer/company financial records) — never
 // public, matching every other tenant-scoped route group in this codebase.
