@@ -19,7 +19,11 @@ const IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "imag
 // regex extractors below this remain as tested, standalone building blocks
 // (label-pattern documentation + a unit-testable oracle for the field set)
 // but are no longer what parseHotelDocument itself calls.
-const HOTEL_EXTRACTION_TOOL = {
+// Exported — Voice-Based Booking Creation PRD Step 1 reuses this exact tool
+// schema/prompt for Mode A's voice-upload path (BookingVoiceParserService)
+// rather than a second, parallel hotel-field schema. Values/behavior
+// unchanged by this export; only visibility changed.
+export const HOTEL_EXTRACTION_TOOL = {
   name: "extract_hotel_booking_fields",
   description: "Extract structured hotel booking fields from the text of a supplier/hotel confirmation document. Use null for any field genuinely not present in the text — never invent or guess a value that isn't there.",
   parameters: {
@@ -39,10 +43,10 @@ const HOTEL_EXTRACTION_TOOL = {
   }
 };
 
-const HOTEL_EXTRACTION_SYSTEM_PROMPT = "You extract structured fields from hotel supplier confirmation documents for a travel agency's booking system. Call extract_hotel_booking_fields exactly once with your best-effort reading of the document text. Never fabricate a value for a field that isn't genuinely present — use null instead.";
+export const HOTEL_EXTRACTION_SYSTEM_PROMPT = "You extract structured fields from hotel supplier confirmation documents for a travel agency's booking system. Call extract_hotel_booking_fields exactly once with your best-effort reading of the document text. Never fabricate a value for a field that isn't genuinely present — use null instead.";
 
-/** Parses an ISO/near-ISO date string into a Date, or null if not parseable — the AI is asked for YYYY-MM-DD but this tolerates minor drift rather than throwing. */
-const parseAIDate = (value) => {
+/** Parses an ISO/near-ISO date string into a Date, or null if not parseable — the AI is asked for YYYY-MM-DD but this tolerates minor drift rather than throwing. Exported for reuse by the other voice/document extraction schemas (utils/voiceBookingExtractionRegistry.js). */
+export const parseAIDate = (value) => {
   if (!value) return null;
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? null : date;

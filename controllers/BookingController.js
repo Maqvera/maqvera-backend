@@ -21,6 +21,8 @@ import InvoiceModel from "../models/InvoiceModel.js";
 import InvoiceService from "../services/InvoiceService.js";
 import { validateBookingForDocumentGeneration } from "../utils/bookingDocumentValidation.js";
 import BookingDocumentParserService from "../services/BookingDocumentParserService.js";
+import BookingVoiceParserService from "../services/BookingVoiceParserService.js";
+import { SUPPORTED_VOICE_BOOKING_TYPES } from "../utils/voiceBookingExtractionRegistry.js";
 import multer from "multer";
 import AuditLogModel from "../models/AuditLogmodel.js";
 import EnterpriseDocumentService from "../services/EnterpriseDocumentService.js";
@@ -3200,6 +3202,48 @@ export const ParseSupplierDocument = async (req, res) => {
   } catch (error) {
     console.error("ParseSupplierDocument error:", error);
     return sendError(res, 500, "Unable to parse supplier document.", requestId);
+  }
+};
+
+// Voice-Based Booking Creation PRD B3.3 — same multer memory-storage
+// pattern as uploadSupplierDocumentFile above (BookingVoiceParserService
+// needs a raw Buffer, not a disk path). Audio files run larger than
+// typical PDFs for a comparable recording length, hence the higher ceiling.
+export const uploadVoiceBookingFile = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 25 * 1024 * 1024 }
+}).single("audio");
+
+/**
+ * POST /api/v1/bookings/parse-voice-booking — Voice-Based Booking Creation
+ * PRD B3, Mode A (Record -> Upload -> Confirm). Same "extraction only,
+ * never saves anything" contract as ParseSupplierDocument above. Body also
+ * carries `bookingType` (hotel | car_rental | flight_search |
+ * generic_service — utils/voiceBookingExtractionRegistry.js).
+ */
+export const ParseVoiceBooking = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    const permissions = req.auth?.permissions || [];
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+
+    if (!permissions.includes("bookings.create") && !permissions.includes("booking.create") &&
+        !permissions.includes("bookings.update") && !permissions.includes("booking.update")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
+
+    if (!req.file?.buffer?.length) return sendError(res, 422, "An audio file is required.", requestId);
+    if (!req.body.bookingType) return sendError(res, 422, "bookingType is required.", requestId);
+    if (!SUPPORTED_VOICE_BOOKING_TYPES.includes(req.body.bookingType)) {
+      return sendError(res, 422, `Unsupported bookingType '${req.body.bookingType}'. Must be one of: ${SUPPORTED_VOICE_BOOKING_TYPES.join(", ")}.`, requestId);
+    }
+
+    const result = await BookingVoiceParserService.parseVoiceBooking(req.file.buffer, req.file.mimetype, scope.tenantId, req.body.bookingType);
+    return sendSuccess(res, 200, "Voice booking parsed.", result, requestId);
+  } catch (error) {
+    console.error("ParseVoiceBooking error:", error);
+    return sendError(res, 500, "Unable to parse voice booking.", requestId);
   }
 };
 

@@ -3482,3 +3482,99 @@
 {"automatic":false,"level":"info","message":"Tenant test-reactivate-1787129152953 reactivated.","service":"maqvera-api","tenantId":"test-reactivate-1787129152953","timestamp":"2026-08-19 13:45:56"}
 {"error":"Invalid login: 535-5.7.8 Username and Password not accepted. For more information, go to\n535 5.7.8  https://support.google.com/mail/?p=BadCredentials 5b1f17b1804b1-499a9ded661sm36580665e9.2 - gsmtp","level":"warn","message":"SMTP transport not available","service":"maqvera-api","timestamp":"2026-08-19 13:46:05"}
 {"error":"Invalid login: 535-5.7.8 Username and Password not accepted. For more information, go to\n535 5.7.8  https://support.google.com/mail/?p=BadCredentials 5b1f17b1804b1-499a9aa7e8dsm27843325e9.0 - gsmtp","level":"warn","message":"SMTP transport not available","service":"maqvera-api","timestamp":"2026-08-19 13:46:05"}
+{"error":"Invalid login: 535-5.7.8 Username and Password not accepted. For more information, go to\n535 5.7.8  https://support.google.com/mail/?p=BadCredentials 5b1f17b1804b1-499aaef1665sm49179305e9.5 - gsmtp","level":"warn","message":"SMTP transport not available","service":"maqvera-api","timestamp":"2026-08-19 15:30:19"}
+{"error":"Invalid login: 535-5.7.8 Username and Password not accepted. For more information, go to\n535 5.7.8  https://support.google.com/mail/?p=BadCredentials 5b1f17b1804b1-499aa0fda98sm78451665e9.1 - gsmtp","level":"warn","message":"SMTP transport not available","service":"maqvera-api","timestamp":"2026-08-19 15:30:19"}
+{"level":"info","message":"CacheManager initialized with backend: memory","service":"maqvera-api","timestamp":"2026-08-19 15:30:20"}
+{"level":"info","message":"CacheManager initialized with backend: memory","service":"maqvera-api","timestamp":"2026-08-19 15:30:20"}
+{"level":"info","message":"AnalyticsScheduler started — incremental: \"*/5 * * * *\", nightly: \"0 2 * * *\"","service":"maqvera-api","timestamp":"2026-08-19 15:30:20"}
+{"level":"info","message":"DocumentExpiryScheduler started — schedule: \"0 3 * * *\", reminder window: 30 days.","service":"maqvera-api","timestamp":"2026-08-19 15:30:20"}
+{"level":"info","message":"AppointmentReminderScheduler started — schedule: \"*/15 * * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:30:20"}
+{"level":"info","message":"IncidentSlaScheduler started — schedule: \"*/10 * * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:30:20"}
+{"level":"info","message":"ReferenceDataScheduler started — schedule: \"0 3 * * *\"","service":"maqvera-api","timestamp":"2026-08-19 15:30:20"}
+{"level":"info","message":"AnalyticsScheduler started — incremental: \"*/5 * * * *\", nightly: \"0 2 * * *\"","service":"maqvera-api","timestamp":"2026-08-19 15:30:20"}
+{"level":"info","message":"DocumentExpiryScheduler started — schedule: \"0 3 * * *\", reminder window: 30 days.","service":"maqvera-api","timestamp":"2026-08-19 15:30:20"}
+{"level":"info","message":"AppointmentReminderScheduler started — schedule: \"*/15 * * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:30:20"}
+{"level":"info","message":"IncidentSlaScheduler started — schedule: \"*/10 * * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:30:20"}
+{"level":"info","message":"ReferenceDataScheduler started — schedule: \"0 3 * * *\"","service":"maqvera-api","timestamp":"2026-08-19 15:30:20"}
+{"error":"Invalid login: 535-5.7.8 Username and Password not accepted. For more information, go to\n535 5.7.8  https://support.google.com/mail/?p=BadCredentials ffacd0b85a97d-482b14d9783sm4689230f8f.37 - gsmtp","level":"warn","message":"SMTP transport not available","service":"maqvera-api","timestamp":"2026-08-19 15:30:20"}
+{"error":"Invalid login: 535-5.7.8 Username and Password not accepted. For more information, go to\n535 5.7.8  https://support.google.com/mail/?p=BadCredentials 5b1f17b1804b1-499aa0d6964sm48273755e9.9 - gsmtp","level":"warn","message":"SMTP transport not available","service":"maqvera-api","timestamp":"2026-08-19 15:30:21"}
+{"level":"info","message":"FlightScheduleSyncScheduler started — standard: \"*/15 * * * *\", high-priority: \"*/5 * * * *\"","service":"maqvera-api","timestamp":"2026-08-19 15:30:27"}
+{"level":"info","message":"ReceivableOverdueScheduler started — schedule: \"0 4 * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:30:27"}
+{"level":"info","message":"CustomerCollectionScheduler started — schedule: \"0 9 * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:30:27"}
+{"level":"info","message":"SubscriptionBillingScheduler started — schedule: \"0 6 * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:30:27"}
+{"level":"info","message":"CurrencyRevaluationScheduler started — schedule: \"0 1 1 * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:30:27"}
+{"level":"info","message":"TaxRuleExpiryScheduler started — schedule: \"0 2 1 * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:30:27"}
+{"level":"info","message":"PricingRuleExpiryScheduler started — schedule: \"0 3 1 * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:30:27"}
+{"level":"info","message":"ApprovalEscalationScheduler started — schedule: \"0 * * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:30:27"}
+{"level":"info","message":"FinancialReportScheduler started — schedule: \"0 5 * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:30:27"}
+{"level":"info","message":"AuditRetentionScheduler started — schedule: \"0 3 * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:30:27"}
+{"level":"info","message":"WebhookRetryScheduler started — schedule: \"* * * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:30:27"}
+{"level":"info","message":"RecurringJournalScheduler started — schedule: \"0 3 * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:30:27"}
+{"level":"info","message":"AIWorkflowRecoveryScheduler started — schedule: \"*/5 * * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:30:27"}
+{"level":"info","message":"AIContextExpiryScheduler started — schedule: \"*/15 * * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:30:27"}
+{"level":"info","message":"AIApprovalTimeoutScheduler started — schedule: \"*/15 * * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:30:27"}
+{"level":"info","message":"AIObservabilityAlertScheduler started — schedule: \"*/10 * * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:30:27"}
+{"level":"info","message":"TenantSubscriptionScheduler started — schedule: \"5 0 * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:30:27"}
+{"level":"info","message":"SubscriptionSuspensionEnforcementScheduler started — schedule: \"*/30 * * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:30:27"}
+{"level":"info","message":"SubscriptionRenewalEngineScheduler started — schedule: \"15 0 * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:30:27"}
+{"level":"info","message":"PaymentRetryEngineScheduler started — schedule: \"*/15 * * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:30:27"}
+{"level":"info","message":"MuharramPeriodScheduler started — schedule: \"0 2 * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:30:27"}
+{"level":"info","message":"FlightScheduleSyncScheduler started — standard: \"*/15 * * * *\", high-priority: \"*/5 * * * *\"","service":"maqvera-api","timestamp":"2026-08-19 15:30:28"}
+{"level":"info","message":"CacheManager initialized with backend: memory","service":"maqvera-api","timestamp":"2026-08-19 15:31:31"}
+{"level":"info","message":"AnalyticsScheduler started — incremental: \"*/5 * * * *\", nightly: \"0 2 * * *\"","service":"maqvera-api","timestamp":"2026-08-19 15:31:32"}
+{"level":"info","message":"DocumentExpiryScheduler started — schedule: \"0 3 * * *\", reminder window: 30 days.","service":"maqvera-api","timestamp":"2026-08-19 15:31:32"}
+{"level":"info","message":"AppointmentReminderScheduler started — schedule: \"*/15 * * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:31:32"}
+{"level":"info","message":"IncidentSlaScheduler started — schedule: \"*/10 * * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:31:32"}
+{"level":"info","message":"ReferenceDataScheduler started — schedule: \"0 3 * * *\"","service":"maqvera-api","timestamp":"2026-08-19 15:31:32"}
+{"error":"Invalid login: 535-5.7.8 Username and Password not accepted. For more information, go to\n535 5.7.8  https://support.google.com/mail/?p=BadCredentials ffacd0b85a97d-482b145c9d7sm5377845f8f.15 - gsmtp","level":"warn","message":"SMTP transport not available","service":"maqvera-api","timestamp":"2026-08-19 15:31:32"}
+{"error":"Invalid login: 535-5.7.8 Username and Password not accepted. For more information, go to\n535 5.7.8  https://support.google.com/mail/?p=BadCredentials 5b1f17b1804b1-499a9e784a4sm51999505e9.1 - gsmtp","level":"warn","message":"SMTP transport not available","service":"maqvera-api","timestamp":"2026-08-19 15:31:33"}
+{"level":"info","message":"FlightScheduleSyncScheduler started — standard: \"*/15 * * * *\", high-priority: \"*/5 * * * *\"","service":"maqvera-api","timestamp":"2026-08-19 15:31:39"}
+{"level":"info","message":"ReceivableOverdueScheduler started — schedule: \"0 4 * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:31:39"}
+{"level":"info","message":"CustomerCollectionScheduler started — schedule: \"0 9 * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:31:39"}
+{"level":"info","message":"SubscriptionBillingScheduler started — schedule: \"0 6 * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:31:39"}
+{"level":"info","message":"CurrencyRevaluationScheduler started — schedule: \"0 1 1 * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:31:39"}
+{"level":"info","message":"TaxRuleExpiryScheduler started — schedule: \"0 2 1 * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:31:39"}
+{"level":"info","message":"PricingRuleExpiryScheduler started — schedule: \"0 3 1 * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:31:39"}
+{"level":"info","message":"ApprovalEscalationScheduler started — schedule: \"0 * * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:31:39"}
+{"level":"info","message":"FinancialReportScheduler started — schedule: \"0 5 * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:31:39"}
+{"level":"info","message":"AuditRetentionScheduler started — schedule: \"0 3 * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:31:39"}
+{"level":"info","message":"WebhookRetryScheduler started — schedule: \"* * * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:31:39"}
+{"level":"info","message":"RecurringJournalScheduler started — schedule: \"0 3 * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:31:39"}
+{"level":"info","message":"AIWorkflowRecoveryScheduler started — schedule: \"*/5 * * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:31:39"}
+{"level":"info","message":"AIContextExpiryScheduler started — schedule: \"*/15 * * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:31:39"}
+{"level":"info","message":"AIApprovalTimeoutScheduler started — schedule: \"*/15 * * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:31:40"}
+{"level":"info","message":"AIObservabilityAlertScheduler started — schedule: \"*/10 * * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:31:40"}
+{"level":"info","message":"TenantSubscriptionScheduler started — schedule: \"5 0 * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:31:40"}
+{"level":"info","message":"SubscriptionSuspensionEnforcementScheduler started — schedule: \"*/30 * * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:31:40"}
+{"level":"info","message":"SubscriptionRenewalEngineScheduler started — schedule: \"15 0 * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:31:40"}
+{"level":"info","message":"PaymentRetryEngineScheduler started — schedule: \"*/15 * * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:31:40"}
+{"level":"info","message":"MuharramPeriodScheduler started — schedule: \"0 2 * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:31:40"}
+{"error":"Invalid login: 535-5.7.8 Username and Password not accepted. For more information, go to\n535 5.7.8  https://support.google.com/mail/?p=BadCredentials 5b1f17b1804b1-499a9e09905sm65485235e9.4 - gsmtp","level":"warn","message":"SMTP transport not available","service":"maqvera-api","timestamp":"2026-08-19 15:32:54"}
+{"error":"Invalid login: 535-5.7.8 Username and Password not accepted. For more information, go to\n535 5.7.8  https://support.google.com/mail/?p=BadCredentials 5b1f17b1804b1-499a9ddee1esm32899285e9.2 - gsmtp","level":"warn","message":"SMTP transport not available","service":"maqvera-api","timestamp":"2026-08-19 15:32:54"}
+{"level":"info","message":"CacheManager initialized with backend: memory","service":"maqvera-api","timestamp":"2026-08-19 15:32:54"}
+{"level":"info","message":"AnalyticsScheduler started — incremental: \"*/5 * * * *\", nightly: \"0 2 * * *\"","service":"maqvera-api","timestamp":"2026-08-19 15:32:54"}
+{"level":"info","message":"DocumentExpiryScheduler started — schedule: \"0 3 * * *\", reminder window: 30 days.","service":"maqvera-api","timestamp":"2026-08-19 15:32:54"}
+{"level":"info","message":"AppointmentReminderScheduler started — schedule: \"*/15 * * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:32:54"}
+{"level":"info","message":"IncidentSlaScheduler started — schedule: \"*/10 * * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:32:54"}
+{"level":"info","message":"ReferenceDataScheduler started — schedule: \"0 3 * * *\"","service":"maqvera-api","timestamp":"2026-08-19 15:32:54"}
+{"level":"info","message":"FlightScheduleSyncScheduler started — standard: \"*/15 * * * *\", high-priority: \"*/5 * * * *\"","service":"maqvera-api","timestamp":"2026-08-19 15:33:00"}
+{"level":"info","message":"ReceivableOverdueScheduler started — schedule: \"0 4 * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:33:00"}
+{"level":"info","message":"CustomerCollectionScheduler started — schedule: \"0 9 * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:33:00"}
+{"level":"info","message":"SubscriptionBillingScheduler started — schedule: \"0 6 * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:33:00"}
+{"level":"info","message":"CurrencyRevaluationScheduler started — schedule: \"0 1 1 * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:33:00"}
+{"level":"info","message":"TaxRuleExpiryScheduler started — schedule: \"0 2 1 * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:33:00"}
+{"level":"info","message":"PricingRuleExpiryScheduler started — schedule: \"0 3 1 * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:33:00"}
+{"level":"info","message":"ApprovalEscalationScheduler started — schedule: \"0 * * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:33:00"}
+{"level":"info","message":"FinancialReportScheduler started — schedule: \"0 5 * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:33:00"}
+{"level":"info","message":"AuditRetentionScheduler started — schedule: \"0 3 * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:33:00"}
+{"level":"info","message":"WebhookRetryScheduler started — schedule: \"* * * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:33:00"}
+{"level":"info","message":"RecurringJournalScheduler started — schedule: \"0 3 * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:33:00"}
+{"level":"info","message":"AIWorkflowRecoveryScheduler started — schedule: \"*/5 * * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:33:00"}
+{"level":"info","message":"AIContextExpiryScheduler started — schedule: \"*/15 * * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:33:00"}
+{"level":"info","message":"AIApprovalTimeoutScheduler started — schedule: \"*/15 * * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:33:00"}
+{"level":"info","message":"AIObservabilityAlertScheduler started — schedule: \"*/10 * * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:33:00"}
+{"level":"info","message":"TenantSubscriptionScheduler started — schedule: \"5 0 * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:33:00"}
+{"level":"info","message":"SubscriptionSuspensionEnforcementScheduler started — schedule: \"*/30 * * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:33:00"}
+{"level":"info","message":"SubscriptionRenewalEngineScheduler started — schedule: \"15 0 * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:33:00"}
+{"level":"info","message":"PaymentRetryEngineScheduler started — schedule: \"*/15 * * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:33:00"}
+{"level":"info","message":"MuharramPeriodScheduler started — schedule: \"0 2 * * *\".","service":"maqvera-api","timestamp":"2026-08-19 15:33:00"}

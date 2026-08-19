@@ -1,4 +1,5 @@
 import express from "express";
+import http from "http";
 import mongoose from "mongoose";
 import dotenv from "dotenv";
 import cors from "cors";
@@ -81,6 +82,7 @@ import AccountsReceivableService from "./services/AccountsReceivableService.js";
 import InvoiceService from "./services/InvoiceService.js";
 import BookingFinanceLinkService from "./services/BookingFinanceLinkService.js";
 import { closeBrowser as closeHtmlPdfBrowser } from "./services/HtmlPdfRenderer.js";
+import { attachVoiceBookingWebSocketServer } from "./services/BookingVoiceSocketServer.js";
 import RefundService from "./services/RefundService.js";
 import BankAccountService from "./services/BankAccountService.js";
 import CustomerCollectionService from "./services/CustomerCollectionService.js";
@@ -259,7 +261,17 @@ const startServer = async () => {
     BankAccountService.initEventListeners();
     CustomerCollectionService.initEventListeners();
     WebhookService.initEventListeners();
-    app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
+
+    // Voice-Based Booking Creation PRD B4.4/Step 3 — Express itself cannot
+    // handle a WebSocket upgrade, so the bare `app.listen(PORT)` this
+    // codebase previously had (verified — no existing http.createServer
+    // wrapper before this change) becomes an explicit http.Server that
+    // both Express and the Mode B voice-session WS endpoint attach to.
+    // Every scheduler/event-listener .init() above still runs first,
+    // unchanged in order.
+    const httpServer = http.createServer(app);
+    attachVoiceBookingWebSocketServer(httpServer);
+    httpServer.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
   } catch (error) {
     console.error("Application bootstrap failed:", error.message);
     process.exitCode = 1;

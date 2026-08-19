@@ -33,7 +33,11 @@ export const getAIConfig = () => ({
   openai: {
     apiKey: process.env.OPENAI_API_KEY || null,
     model: process.env.OPENAI_MODEL || "gpt-4o-mini",
-    baseUrl: process.env.OPENAI_BASE_URL || undefined
+    baseUrl: process.env.OPENAI_BASE_URL || undefined,
+    // Voice-Based Booking Creation PRD B3.1 — same apiKey/client this
+    // provider already resolves for chatWithTools; only the model name for
+    // the separate audio/transcriptions endpoint is new.
+    transcriptionModel: process.env.OPENAI_TRANSCRIPTION_MODEL || "whisper-1"
   },
   anthropic: {
     apiKey: process.env.ANTHROPIC_API_KEY || null,

@@ -39,7 +39,9 @@ import {
   ListBookingVouchers,
   GenerateBookingInvoice,
   uploadSupplierDocumentFile,
-  ParseSupplierDocument
+  ParseSupplierDocument,
+  uploadVoiceBookingFile,
+  ParseVoiceBooking
 } from "../controllers/BookingController.js";
 
 const router = express.Router();
@@ -64,6 +66,11 @@ router.get("/search", limiter, SearchBookings);
 // registered before "/:bookingId" so this literal path isn't shadowed by
 // the param route, same reasoning as "/dashboard"/"/search" above.
 router.post("/parse-supplier-document", limiter, uploadSupplierDocumentFile, ParseSupplierDocument);
+
+// Voice-Based Booking Creation PRD B3.4 — Mode A (Record -> Upload ->
+// Confirm). Same "registered before /:bookingId" reasoning as the
+// supplier-document route above.
+router.post("/parse-voice-booking", limiter, uploadVoiceBookingFile, ParseVoiceBooking);
 
 // Booking CRUD & State transitions
 router.get("/", limiter, ListBookings);
