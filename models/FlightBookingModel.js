@@ -127,6 +127,14 @@ const FlightBookingSchema = new mongoose.Schema(
     ],
     totalPrice: { type: Number, required: true },
     currency: { type: String, default: "PKR" },
+    // Multi-currency balance entry — see multi-currency-booking-and-statement-
+    // requirements.md §2.4a/§7. Populated only when the flight booking was
+    // created with an explicit convertedCurrency; null otherwise.
+    convertedAmount: { type: Number, default: null },
+    convertedCurrency: { type: String, default: null },
+    conversionRate: { type: Number, default: null },
+    conversionRateId: { type: mongoose.Schema.Types.ObjectId, ref: "exchange_rate", default: null },
+    conversionAsOf: { type: Date, default: null },
     ticketingDeadline: { type: Date, default: null },
     travelers: [
       {

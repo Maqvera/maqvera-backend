@@ -27,6 +27,7 @@ import multer from "multer";
 import AuditLogModel from "../models/AuditLogmodel.js";
 import EnterpriseDocumentService from "../services/EnterpriseDocumentService.js";
 import NumberGeneratorService from "../services/NumberGeneratorService.js";
+import CurrencyService from "../services/CurrencyService.js";
 import { sendError, sendSuccess } from "../utils/apiResponse.js";
 import { publishEvent } from "../utils/eventBus.js";
 import { createRequestId } from "../utils/authTokens.js";
@@ -391,7 +392,8 @@ export const CreateBooking = async (req, res) => {
       totalAmount = 0,
       priority = bookingConfig.defaultPriority,
       paymentStatus = bookingConfig.defaultPaymentStatus,
-      visaStatus = bookingConfig.defaultVisaStatus
+      visaStatus = bookingConfig.defaultVisaStatus,
+      convertedCurrency = null
     } = req.body;
 
     if (!customerId) return sendError(res, 422, "customerId is required.", requestId);
@@ -405,6 +407,9 @@ export const CreateBooking = async (req, res) => {
     // hardcoded list duplicated here.
     if (!bookingConfig.supportedCurrencies.includes(currencyId.toLowerCase())) {
       return sendError(res, 422, `Currency "${currencyId}" is not supported. Allowed: ${bookingConfig.supportedCurrencies.join(", ")}.`, requestId);
+    }
+    if (convertedCurrency && !bookingConfig.supportedCurrencies.includes(convertedCurrency.toLowerCase())) {
+      return sendError(res, 422, `Currency "${convertedCurrency}" is not supported. Allowed: ${bookingConfig.supportedCurrencies.join(", ")}.`, requestId);
     }
 
     // Validation Rule: "Travel Date Valid"
@@ -461,6 +466,31 @@ export const CreateBooking = async (req, res) => {
 
     const initialAmount = Number(totalAmount) || 0;
 
+    // Multi-currency balance entry — server-side authoritative recompute.
+    // Never trust a client-sent convertedAmount for anything that could
+    // later be posted to Finance; CurrencyService.convert() is the single
+    // source of truth for rates (see CurrencyService.getRate/convert,
+    // services/CurrencyService.js lines ~721-808).
+    let conversionFields = {
+      convertedAmount: null, convertedCurrency: null,
+      conversionRate: null, conversionRateId: null, conversionAsOf: null
+    };
+    if (convertedCurrency && initialAmount > 0) {
+      try {
+        const conversion = await CurrencyService.convert(initialAmount, currencyId, convertedCurrency, tenantId);
+        conversionFields = {
+          convertedAmount: conversion.convertedAmount,
+          convertedCurrency: convertedCurrency.toUpperCase(),
+          conversionRate: conversion.rate,
+          conversionRateId: conversion.rateId || null,
+          conversionAsOf: new Date()
+        };
+      } catch (conversionError) {
+        console.error("Booking creation currency conversion error:", conversionError);
+        return sendError(res, 422, conversionError.message || `Unable to convert ${currencyId} to ${convertedCurrency}.`, requestId);
+      }
+    }
+
     let booking;
     try {
       booking = await BookingHeaderModel.create({
@@ -494,6 +524,7 @@ export const CreateBooking = async (req, res) => {
           outstandingBalance: initialAmount,
           refundAmount: 0,
           currency: currencyId,
+          ...conversionFields,
           paymentStatus,
           lastCalculatedAt: new Date()
         }

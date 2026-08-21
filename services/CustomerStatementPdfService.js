@@ -14,7 +14,7 @@ const TEMPLATE_PATH = path.join(TEMPLATES_DIR, "statements", "customer_statement
  */
 class CustomerStatementPdfService {
   static async generatePdfBuffer(statement) {
-    const currency = statement.rows[0]?.currency || "USD";
+    const currency = statement.totals?.currency || statement.rows[0]?.currency || "USD";
     return renderHtmlToPdfBuffer(TEMPLATE_PATH, {
       ...statement,
       currency,

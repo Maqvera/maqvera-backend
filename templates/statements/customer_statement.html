@@ -25,7 +25,7 @@
         <td>{{formatNumber this.debit}} {{this.currency}}</td>
         <td>{{formatNumber this.credit}} {{this.currency}}</td>
         <td>{{formatNumber this.balance}} {{this.currency}}</td>
-        <td>{{this.status}}</td>
+        <td>{{this.status}}{{#if this.originalCurrency}}{{#unless (eq this.originalCurrency this.currency)}} <span class="original-currency">(orig. {{this.originalCurrency}})</span>{{/unless}}{{/if}}</td>
       </tr>
       {{/each}}
     </tbody>

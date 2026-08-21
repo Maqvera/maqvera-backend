@@ -66,3 +66,19 @@ export const createVendor = async (req, res) => {
     return sendError(res, statusFromError(error), error.message || "Failed to create vendor.", requestId);
   }
 };
+
+export const updateVendor = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "finance.vendor.update", "finance.vendor.create")) return sendError(res, 403, "Permission denied.", requestId);
+    const userId = req.auth?.userId || req.auth?.id || null;
+
+    const vendor = await VendorService.updateVendor(req.params.vendorId, req.body, scope.tenantId, userId);
+    return sendSuccess(res, 200, "Vendor updated successfully.", vendor, requestId);
+  } catch (error) {
+    console.error("updateVendor error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to update vendor.", requestId);
+  }
+};

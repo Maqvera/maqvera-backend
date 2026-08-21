@@ -348,6 +348,27 @@ class PaymentService {
     return { items, pagination: { total, page, pageSize, totalPages: Math.ceil(total / pageSize) } };
   }
 
+  /**
+   * Payments allocated against a specific target (e.g. targetType "Visa",
+   * targetId a visaCaseId) — the generic query module-scoped convenience
+   * wrappers (e.g. VisaController.getVisaCasePayments) delegate to, per
+   * CLAUDE.md's "explicit service calls" cross-context pattern, rather than
+   * duplicating the allocations[] query inline in each caller.
+   */
+  static async listPaymentsForTarget(targetType, targetId, tenantId, query = {}) {
+    const page = Math.max(parseInt(query.page, 10) || 1, 1);
+    const pageSize = Math.min(Math.max(parseInt(query.pageSize, 10) || 20, 1), 100);
+    const skip = (page - 1) * pageSize;
+
+    const filter = { tenantId, allocations: { $elemMatch: { targetType, targetId } } };
+    const [items, total] = await Promise.all([
+      PaymentModel.find(filter).sort({ transactionDate: -1 }).skip(skip).limit(pageSize).lean(),
+      PaymentModel.countDocuments(filter)
+    ]);
+
+    return { items, pagination: { total, page, pageSize, totalPages: Math.ceil(total / pageSize) } };
+  }
+
   /** Persistence lookup — delegates to the Payment Repository (domain/payment/PaymentRepository.js) rather than the Mongoose model directly (Improvement 16: "Repositories MUST abstract persistence only"). */
   static async getPaymentById(paymentId, tenantId) {
     return PaymentRepository.findById(paymentId, tenantId);

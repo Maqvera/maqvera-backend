@@ -120,6 +120,15 @@ const BookingHeaderSchema = new mongoose.Schema({
     outstandingBalance: { type: Number, default: 0 },
     refundAmount: { type: Number, default: 0 },
     currency: { type: String, default: "USD" },
+    // Multi-currency balance entry — see multi-currency-booking-and-statement-
+    // requirements.md §2.4a. Populated only when the booking was created/updated
+    // with an explicit convertedCurrency; null otherwise (fully backward
+    // compatible with every booking created before this field existed).
+    convertedAmount: { type: Number, default: null },
+    convertedCurrency: { type: String, default: null },
+    conversionRate: { type: Number, default: null },
+    conversionRateId: { type: mongoose.Schema.Types.ObjectId, ref: "exchange_rate", default: null },
+    conversionAsOf: { type: Date, default: null },
     paymentStatus: { type: String, default: "unpaid" },
     lastCalculatedAt: { type: Date, default: Date.now },
     // Set by BookingFinanceLinkService once a real Finance-module Invoice

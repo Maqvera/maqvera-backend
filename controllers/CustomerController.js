@@ -3055,9 +3055,9 @@ export const GetCustomerAccountStatement = async (req, res) => {
     }
 
     const { customerId } = req.params;
-    const { dateFrom, dateTo, status } = req.query;
+    const { dateFrom, dateTo, status, viewCurrency } = req.query;
 
-    const statement = await CustomerAccountStatementService.getStatement(customerId, scope.tenantId, { dateFrom, dateTo, status });
+    const statement = await CustomerAccountStatementService.getStatement(customerId, scope.tenantId, { dateFrom, dateTo, status, viewCurrency });
     return sendSuccess(res, 200, "Account statement loaded.", statement, requestId);
   } catch (error) {
     if (error.message === "Customer not found.") return sendError(res, 404, error.message, requestId);
@@ -3087,9 +3087,9 @@ export const GetCustomerAccountStatementPdf = async (req, res) => {
     }
 
     const { customerId } = req.params;
-    const { dateFrom, dateTo, status } = req.query;
+    const { dateFrom, dateTo, status, viewCurrency } = req.query;
 
-    const statement = await CustomerAccountStatementService.getStatement(customerId, scope.tenantId, { dateFrom, dateTo, status });
+    const statement = await CustomerAccountStatementService.getStatement(customerId, scope.tenantId, { dateFrom, dateTo, status, viewCurrency });
     const buffer = await CustomerStatementPdfService.generatePdfBuffer(statement);
     const filename = `statement-${statement.customer.customerCode || statement.customer.customerId}-${Date.now()}.pdf`;
     const stored = await storeDocumentPdf({ tenantId: scope.tenantId, folder: "customer-statements", filename, buffer });

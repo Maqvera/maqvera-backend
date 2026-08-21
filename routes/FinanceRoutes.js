@@ -115,7 +115,8 @@ import {
 import {
   listVendors,
   getVendor,
-  createVendor
+  createVendor,
+  updateVendor
 } from "../controllers/VendorController.js";
 import {
   listReceipts,
@@ -860,6 +861,7 @@ router.post("/accounts-payable/:payableId/schedule-payment", limiter, validate(p
 router.get("/vendors", limiter, listVendors);
 router.post("/vendors", limiter, validate(vendorSchemas.createVendor), createVendor);
 router.get("/vendors/:vendorId", limiter, getVendor);
+router.patch("/vendors/:vendorId", limiter, validate(vendorSchemas.updateVendor), updateVendor);
 
 // Enterprise Receipts — docs/05-api/07-finance-api.md Part 8. The public
 // verify/download routes for this same resource are registered above,
@@ -1187,6 +1189,10 @@ router.post("/webhook-deliveries/:deliveryId/replay", limiter, replayWebhookDeli
 // Part 19. Static routes registered BEFORE the dynamic
 // "/currencies/:currencyId" routes below — same static-before-dynamic
 // ordering used repeatedly this session.
+// Also used as the debounced "live quote" endpoint by booking-creation UIs
+// (no side effects — CurrencyService.convert only persists a
+// CurrencyConversionModel row when a `source` option is passed, which this
+// handler never does).
 router.get("/currencies/convert", limiter, convertCurrency);
 // File 7 Part 3 — "POST /api/v1/currency/convert" (singular, distinct
 // base path from every other /currencies route above/below).

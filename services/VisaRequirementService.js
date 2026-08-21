@@ -6,6 +6,14 @@ import AuditLogModel from "../models/AuditLogmodel.js";
 import { publishEvent } from "../utils/eventBus.js";
 import mongoose from "mongoose";
 
+// Visa Module PRD §8/§12 pricing formula — Vendor Cost + Government Fee +
+// Insurance + Service Charges + Other Charges - Discount = Selling Price.
+// Pure function so both VisaType admin pricing (createVisaType/updateVisaType
+// below) and per-case application pricing (VisaService.updateApplicationPricing)
+// compute it identically, never duplicated inline.
+export const calculateVisaSellingPrice = ({ vendorCost = 0, governmentFee = 0, insuranceFee = 0, serviceCharges = 0, otherCharges = 0, discount = 0 }) =>
+  Math.max(0, (Number(vendorCost) || 0) + (Number(governmentFee) || 0) + (Number(insuranceFee) || 0) + (Number(serviceCharges) || 0) + (Number(otherCharges) || 0) - (Number(discount) || 0));
+
 class VisaRequirementService {
   /**
    * Returns supported visa types catalog (from DB or default constants)
@@ -252,6 +260,158 @@ class VisaRequirementService {
     });
 
     return newProfile;
+  }
+
+  /**
+   * Create Visa Type — PRD §8 "Admin define kare" (Vendor Cost, Selling
+   * Price, Currency per Visa Type). sellingPrice is computed server-side
+   * from the pricing fields, never trusted from the client.
+   */
+  static async createVisaType(data, tenantId, userId) {
+    const { code, name, category = "Tourism", description = null, defaultProcessingDays = 7, defaultValidityDays = 90,
+      vendorCost = 0, governmentFee = 0, insuranceFee = 0, serviceCharges = 0, otherCharges = 0, discount = 0, currency = "USD" } = data;
+
+    if (!code || !name) throw new Error("code and name are required.");
+
+    const existing = await VisaTypeModel.findOne({ tenantId, code: code.toLowerCase() }).lean();
+    if (existing) throw new Error(`Visa type "${code}" already exists for this tenant.`);
+
+    const sellingPrice = calculateVisaSellingPrice({ vendorCost, governmentFee, insuranceFee, serviceCharges, otherCharges, discount });
+
+    const visaType = await VisaTypeModel.create({
+      tenantId, code: code.toLowerCase(), name, category, description,
+      defaultProcessingDays, defaultValidityDays,
+      vendorCost, governmentFee, insuranceFee, serviceCharges, otherCharges, discount, sellingPrice, currency: currency.toUpperCase(),
+      isActive: true
+    });
+
+    await AuditLogModel.create({
+      tenantId, userId: userId || "system", action: "CREATE_VISA_TYPE", resource: "VisaType",
+      resourceId: visaType._id.toString(), details: { code: visaType.code, sellingPrice }
+    }).catch((err) => console.error("Audit error:", err));
+
+    publishEvent("VisaTypeCreated", { visaTypeId: visaType._id, tenantId, code: visaType.code, sellingPrice });
+
+    return visaType;
+  }
+
+  /**
+   * Update Visa Type — recomputes sellingPrice whenever any pricing field
+   * changes, same formula as createVisaType.
+   */
+  static async updateVisaType(visaTypeId, updateData, tenantId, userId) {
+    const visaType = await VisaTypeModel.findOne({ _id: visaTypeId, tenantId });
+    if (!visaType) throw new Error("Visa type not found.");
+
+    const editableFields = ["name", "category", "description", "defaultProcessingDays", "defaultValidityDays",
+      "vendorCost", "governmentFee", "insuranceFee", "serviceCharges", "otherCharges", "discount", "isActive"];
+    const pricingFields = ["vendorCost", "governmentFee", "insuranceFee", "serviceCharges", "otherCharges", "discount"];
+    let pricingChanged = false;
+
+    editableFields.forEach((key) => {
+      if (updateData[key] === undefined) return;
+      visaType[key] = updateData[key];
+      if (pricingFields.includes(key)) pricingChanged = true;
+    });
+    if (updateData.currency !== undefined) {
+      visaType.currency = updateData.currency.toUpperCase();
+      pricingChanged = true;
+    }
+
+    if (pricingChanged) {
+      visaType.sellingPrice = calculateVisaSellingPrice({
+        vendorCost: visaType.vendorCost, governmentFee: visaType.governmentFee, insuranceFee: visaType.insuranceFee,
+        serviceCharges: visaType.serviceCharges, otherCharges: visaType.otherCharges, discount: visaType.discount
+      });
+    }
+
+    await visaType.save();
+
+    await AuditLogModel.create({
+      tenantId, userId: userId || "system", action: "UPDATE_VISA_TYPE", resource: "VisaType",
+      resourceId: visaType._id.toString(), details: { updateData, sellingPrice: visaType.sellingPrice }
+    }).catch((err) => console.error("Audit error:", err));
+
+    publishEvent("VisaTypeUpdated", { visaTypeId: visaType._id, tenantId, sellingPrice: visaType.sellingPrice });
+
+    return visaType;
+  }
+
+  /**
+   * List Countries — PRD §7. CountryMasterModel was already the real country
+   * master (VisaService.resolveCountry, createRequirementProfile both
+   * validate against it) but had no admin-facing read/write surface.
+   */
+  static async listCountries(query, tenantId) {
+    const { page = 1, pageSize = 50, status, search } = query;
+    const limit = Math.min(Math.max(parseInt(pageSize, 10), 1), 200);
+    const skip = (Math.max(parseInt(page, 10), 1) - 1) * limit;
+
+    const filter = { tenantId };
+    if (status !== undefined && status !== null && status !== "") {
+      filter.isActive = status === "true" || status === true || status === "active";
+    }
+    if (search) {
+      filter.$or = [{ name: new RegExp(search, "i") }, { code: new RegExp(search, "i") }];
+    }
+
+    const [items, total] = await Promise.all([
+      CountryMasterModel.find(filter).sort({ name: 1 }).skip(skip).limit(limit).lean(),
+      CountryMasterModel.countDocuments(filter)
+    ]);
+
+    return { items, pagination: { total, page: parseInt(page, 10), pageSize: limit, totalPages: Math.ceil(total / limit) } };
+  }
+
+  /**
+   * Create Country — PRD §7 "Country Name, Currency, Processing Time, Active/Inactive".
+   */
+  static async createCountry(data, tenantId, userId) {
+    const { countryId, code, name, defaultCurrency = "USD", defaultProcessingDays = 7 } = data;
+    if (!countryId || !code || !name) throw new Error("countryId, code, and name are required.");
+
+    const existing = await CountryMasterModel.findOne({ tenantId, $or: [{ countryId }, { code: code.toUpperCase() }] }).lean();
+    if (existing) throw new Error(`Country "${code}" already exists for this tenant.`);
+
+    const country = await CountryMasterModel.create({
+      tenantId, countryId, code: code.toUpperCase(), name,
+      defaultCurrency: defaultCurrency.toUpperCase(), defaultProcessingDays, isActive: true
+    });
+
+    await AuditLogModel.create({
+      tenantId, userId: userId || "system", action: "CREATE_COUNTRY", resource: "CountryMaster",
+      resourceId: country._id.toString(), details: { code: country.code, name: country.name }
+    }).catch((err) => console.error("Audit error:", err));
+
+    publishEvent("CountryCreated", { countryId: country._id, tenantId, code: country.code });
+
+    return country;
+  }
+
+  /**
+   * Update Country — PRD §7. Editable fields only; countryId/code are
+   * immutable identifiers other records (Visa Cases, Requirement Profiles)
+   * already reference by value.
+   */
+  static async updateCountry(countryMasterId, updateData, tenantId, userId) {
+    const country = await CountryMasterModel.findOne({ _id: countryMasterId, tenantId });
+    if (!country) throw new Error("Country not found.");
+
+    if (updateData.name !== undefined) country.name = updateData.name;
+    if (updateData.defaultProcessingDays !== undefined) country.defaultProcessingDays = updateData.defaultProcessingDays;
+    if (updateData.defaultCurrency !== undefined) country.defaultCurrency = updateData.defaultCurrency.toUpperCase();
+    if (updateData.isActive !== undefined) country.isActive = Boolean(updateData.isActive);
+
+    await country.save();
+
+    await AuditLogModel.create({
+      tenantId, userId: userId || "system", action: "UPDATE_COUNTRY", resource: "CountryMaster",
+      resourceId: country._id.toString(), details: updateData
+    }).catch((err) => console.error("Audit error:", err));
+
+    publishEvent("CountryUpdated", { countryId: country._id, tenantId, isActive: country.isActive });
+
+    return country;
   }
 }
 

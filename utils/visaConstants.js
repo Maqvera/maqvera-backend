@@ -67,8 +67,19 @@ export const VISA_DOMAIN_EVENTS = {
   WORKFLOW_ESCALATED: "WorkflowEscalated",
   WORKFLOW_CANCELLED: "WorkflowCancelled",
   SLA_BREACHED: "SLABreached",
-  APPROVAL_COMPLETED: "ApprovalCompleted"
+  APPROVAL_COMPLETED: "ApprovalCompleted",
+  // Visa Module PRD §13 "Accounts Integration" — fired once an application's
+  // sellingPrice is first set to a non-zero value, so VisaFinanceLinkService
+  // (Part 2 of the Visa gap-closing work) can post the matching Invoice +
+  // AccountsReceivable row automatically.
+  VISA_CASE_INVOICED: "VisaCaseInvoiced"
 };
+
+// Visa Module PRD §15 "Refunds: Refund Reason (e.g. Visa Rejected, Customer
+// Cancellation)" — used to restrict the visa-scoped refund convenience
+// endpoint (VisaController.createVisaCaseRefund) to real, expected reasons,
+// same config-driven-domain-values discipline as utils/bookingConfig.js.
+export const VISA_REFUND_REASONS = ["Visa Rejected", "Customer Cancellation", "Duplicate Payment", "Service Not Rendered", "Other"];
 
 export const PASSPORT_STATUSES = {
   RECEIVED: "Received",

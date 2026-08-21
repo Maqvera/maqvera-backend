@@ -565,6 +565,18 @@ class KPIEngine {
               },
             },
           },
+          // Visa Module PRD §12 "Automatic calculation: Cost / Sale / Profit"
+          // — same $reduce shape as revenueFromCases, summing vendorCost
+          // instead of feeAmount, so financeMetrics can expose a real profit.
+          vendorCostFromCases: {
+            $sum: {
+              $reduce: {
+                input: { $ifNull: ["$applications", []] },
+                initialValue: 0,
+                in: { $add: ["$$value", { $ifNull: ["$$this.vendorCost", 0] }] },
+              },
+            },
+          },
           avgProcessingTimeMs: {
             $avg: {
               $cond: [
@@ -950,6 +962,8 @@ class KPIEngine {
         paidBookings: finance.paidBookings || 0,
         totalBookings: finance.totalBookings || 0,
         caseFeesRevenue: stats.revenueFromCases || 0,
+        caseFeesVendorCost: stats.vendorCostFromCases || 0,
+        caseFeesProfit: (stats.revenueFromCases || 0) - (stats.vendorCostFromCases || 0),
       },
     };
   }

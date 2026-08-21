@@ -14,6 +14,7 @@
     "seed:gds-voucher-numbering": "node scripts/seedGdsVoucherNumberingScheme.js",
     "seed:voucher-numbering": "node scripts/seedVoucherNumberingScheme.js",
     "seed:visa-workflow": "node scripts/seedVisaWorkflowDefinition.js",
+    "seed:visa-communication-templates": "node scripts/seedVisaCommunicationTemplates.js",
     "seed:incident-policy": "node scripts/seedIncidentPolicy.js",
     "seed:timeline-policy": "node scripts/seedTimelinePolicy.js",
     "seed:chart-templates": "node scripts/seedChartTemplates.js",

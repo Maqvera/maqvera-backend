@@ -8,6 +8,7 @@ import { throwStructured } from "./AmadeusFlightBookingService.js";
 import { recordCanonicalDomainEvent } from "../controllers/TravelNotesTimelineController.js";
 import { publishEvent } from "../utils/eventBus.js";
 import { getHotelBookingPolicy } from "../utils/gdsConfig.js";
+import CurrencyService from "./CurrencyService.js";
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PHONE_PATTERN = /^\+?[0-9][0-9\s-]{6,14}[0-9]$/;
@@ -36,7 +37,7 @@ const PHONE_PATTERN = /^\+?[0-9][0-9\s-]{6,14}[0-9]$/;
  * Management").
  */
 class AmadeusHotelBookingService {
-  static async createBooking({ tenantId, userId, userName, travelPlanId, hotelOfferId, guests, contact, specialRequests, currency, requestId }) {
+  static async createBooking({ tenantId, userId, userName, travelPlanId, hotelOfferId, guests, contact, specialRequests, currency, convertedCurrency = null, requestId }) {
     // §10 "Hotel Offer Valid".
     if (!hotelOfferId) {
       throwStructured("hotelOfferId is required.", "INVALID_REQUEST", 400);
@@ -149,6 +150,24 @@ class AmadeusHotelBookingService {
     }
     const reservationNumber = `HB-${new Date().getFullYear()}-${String(Date.now()).slice(-6)}`;
 
+    // Multi-currency balance entry — server-side authoritative recompute,
+    // same pattern as BookingController.CreateBooking (§4/§7 of the
+    // multi-currency requirements doc).
+    let conversionFields = {
+      convertedAmount: null, convertedCurrency: null,
+      conversionRate: null, conversionRateId: null, conversionAsOf: null
+    };
+    if (convertedCurrency && pricing.total > 0) {
+      const conversion = await CurrencyService.convert(pricing.total, pricing.currency, convertedCurrency, tenantId);
+      conversionFields = {
+        convertedAmount: conversion.convertedAmount,
+        convertedCurrency: convertedCurrency.toUpperCase(),
+        conversionRate: conversion.rate,
+        conversionRateId: conversion.rateId || null,
+        conversionAsOf: new Date()
+      };
+    }
+
     const hotelBooking = await HotelBookingModel.create({
       tenantId,
       travelPlanId: travelPlanId || null,
@@ -173,6 +192,7 @@ class AmadeusHotelBookingService {
       guests: guests.map((g) => ({ firstName: g.firstName, lastName: g.lastName, dateOfBirth: g.dateOfBirth ? new Date(g.dateOfBirth) : null, isLeadGuest: false })),
       totalPrice: pricing.total,
       currency: pricing.currency,
+      ...conversionFields,
       cancellationPolicy: pricing.refundable ? `Free cancellation until ${pricing.freeCancellationUntil}` : "Non-refundable",
       // EXT-024 needs structured data (not just the display string above)
       // to compute a real refund/penalty at cancellation time.

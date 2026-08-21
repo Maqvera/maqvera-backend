@@ -90,6 +90,14 @@ const HotelBookingSchema = new mongoose.Schema(
     // than fabricating an average.
     roomRatePerNight: { type: Number, default: null },
     currency: { type: String, default: "PKR" },
+    // Multi-currency balance entry — see multi-currency-booking-and-statement-
+    // requirements.md §2.4a/§7. Populated only when the hotel booking was
+    // created with an explicit convertedCurrency; null otherwise.
+    convertedAmount: { type: Number, default: null },
+    convertedCurrency: { type: String, default: null },
+    conversionRate: { type: Number, default: null },
+    conversionRateId: { type: mongoose.Schema.Types.ObjectId, ref: "exchange_rate", default: null },
+    conversionAsOf: { type: Date, default: null },
     cancellationPolicy: { type: String, default: "Free cancellation up to 48 hours before check-in" },
     // EXT-024 — structured cancellation-policy data, captured once at
     // booking creation from EXT-021's real pricing verification (itself

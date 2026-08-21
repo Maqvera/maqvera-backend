@@ -4,6 +4,7 @@ import { getFinanceConfig } from "../utils/financeConfig.js";
 import { getPlatformConfig } from "../utils/platformConfig.js";
 import { getOrganisationConfig } from "../utils/organisationConfig.js";
 import { getNumberingConfig } from "../utils/numberingConfig.js";
+import { getPackagePricingConfig } from "../utils/packagePricingConfig.js";
 import { AppError, sendStandardError, fieldDetailsFromJoiError } from "../utils/errorContract.js";
 
 const getBookingValidationValues = () => {
@@ -369,6 +370,7 @@ const buildBookingSchemas = () => {
       priority: Joi.string().trim().valid("normal", "medium", "high", "vip").optional(),
       paymentStatus: Joi.string().trim().valid(...paymentStatusValues).optional().default(defaultPaymentStatus),
       visaStatus: Joi.string().trim().valid(...visaStatusValues).optional().default(defaultVisaStatus),
+      convertedCurrency: Joi.string().trim().min(1).max(10).optional().allow(null, ""),
     }),
 
     // Section 31 "Editable Fields" — status/paymentStatus/visaStatus/totalAmount
@@ -970,18 +972,43 @@ export const payableSchemas = new Proxy({}, {
 const buildVendorSchemas = () => {
   const config = getFinanceConfig();
 
+  // Visa Module PRD §11 "Vendor details" — populated only for vendors that
+  // actually handle visa submissions (see VendorModel.visaVendorProfile's
+  // own doc comment); every field optional here too.
+  const visaVendorProfileSchema = Joi.object({
+    country: Joi.string().trim().max(100).optional().allow(null, ""),
+    processingTime: Joi.number().integer().min(0).optional().allow(null),
+    defaultCost: Joi.number().min(0).optional().allow(null),
+    currency: Joi.string().trim().uppercase().valid(...config.supportedCurrencies.map((c) => c.toUpperCase())).optional().allow(null)
+  }).optional();
+
   return {
     createVendor: Joi.object({
       name: Joi.string().trim().min(1).max(200).required(),
       contactEmail: Joi.string().trim().email({ tlds: false }).optional().allow(""),
       contactPhone: Joi.string().trim().max(50).optional().allow(""),
+      contactPerson: Joi.string().trim().max(200).optional().allow(""),
+      whatsapp: Joi.string().trim().max(50).optional().allow(""),
+      visaVendorProfile: visaVendorProfileSchema,
       currency: Joi.string().trim().uppercase().valid(...config.supportedCurrencies.map((c) => c.toUpperCase())).required(),
       paymentTermsDays: Joi.number().integer().min(0).optional()
+    }),
+
+    updateVendor: Joi.object({
+      name: Joi.string().trim().min(1).max(200).optional(),
+      contactEmail: Joi.string().trim().email({ tlds: false }).optional().allow(""),
+      contactPhone: Joi.string().trim().max(50).optional().allow(""),
+      contactPerson: Joi.string().trim().max(200).optional().allow(""),
+      whatsapp: Joi.string().trim().max(50).optional().allow(""),
+      visaVendorProfile: visaVendorProfileSchema,
+      currency: Joi.string().trim().uppercase().valid(...config.supportedCurrencies.map((c) => c.toUpperCase())).optional(),
+      paymentTermsDays: Joi.number().integer().min(0).optional(),
+      status: Joi.string().trim().valid("Active", "Inactive").optional()
     })
   };
 };
 
-const VENDOR_SCHEMA_KEYS = new Set(["createVendor"]);
+const VENDOR_SCHEMA_KEYS = new Set(["createVendor", "updateVendor"]);
 
 export const vendorSchemas = new Proxy({}, {
   get(_target, prop) {
@@ -3713,5 +3740,285 @@ export const tenantProfileSchemas = {
     }).optional()
   })
 };
+
+// Package Pricing Engine — Global-Package-Pricing-Engine-PRD-v2.1. Same
+// config-driven Proxy pattern as pricingSchemas/numberingSchemas above; every
+// `.valid(...)` list is pulled from getPackagePricingConfig() rather than a
+// literal array, so a new rateBasis/chargeBasis/scope value only needs a
+// config change, never a schema edit.
+const buildPackagePricingSchemas = () => {
+  const config = getPackagePricingConfig();
+  const rateStatus = Joi.string().trim().valid(...config.rateStatuses).optional();
+  const rateSource = Joi.string().trim().valid(...config.rateSourceTypes).optional();
+
+  return {
+    createRoomType: Joi.object({
+      name: Joi.string().trim().min(1).max(100).required(),
+      defaultOccupancy: Joi.number().integer().min(1).required(),
+      sortOrder: Joi.number().integer().optional()
+    }),
+
+    createTransportVehicle: Joi.object({
+      name: Joi.string().trim().min(1).max(100).required(),
+      minCapacity: Joi.number().integer().min(1).required(),
+      maxCapacity: Joi.number().integer().min(1).required(),
+      luggageCapacity: Joi.number().min(0).optional().allow(null),
+      category: Joi.string().trim().max(100).optional().allow(null, "")
+    }),
+
+    createHotelRate: Joi.object({
+      hotelCatalogId: objectIdRef.required(),
+      roomTypeId: objectIdRef.required(),
+      mealPlan: Joi.string().trim().max(100).optional().allow(null, ""),
+      currency: Joi.string().trim().length(3).uppercase().required(),
+      pricePerNight: Joi.number().min(0).required(),
+      occupancy: Joi.number().integer().min(1).required(),
+      rateBasis: Joi.string().trim().valid(...config.hotelRateBasisTypes).required(),
+      date: Joi.date().optional().allow(null),
+      validFrom: Joi.date().optional().allow(null),
+      validTo: Joi.date().optional().allow(null),
+      daysOfWeek: Joi.array().items(Joi.number().integer().min(0).max(6)).optional(),
+      season: Joi.string().trim().max(100).optional().allow(null, ""),
+      supplier: Joi.string().trim().max(200).optional().allow(null, ""),
+      status: rateStatus,
+      source: rateSource
+    }),
+
+    createTransportRate: Joi.object({
+      origin: Joi.string().trim().min(1).max(200).required(),
+      destination: Joi.string().trim().min(1).max(200).required(),
+      vehicleId: objectIdRef.required(),
+      currency: Joi.string().trim().length(3).uppercase().required(),
+      rate: Joi.number().min(0).required(),
+      direction: Joi.string().trim().valid(...config.transportDirectionTypes).optional(),
+      validFrom: Joi.date().optional().allow(null),
+      validTo: Joi.date().optional().allow(null),
+      supplier: Joi.string().trim().max(200).optional().allow(null, ""),
+      status: rateStatus,
+      source: rateSource
+    }),
+
+    createFlightRate: Joi.object({
+      route: Joi.string().trim().min(1).max(200).required(),
+      airline: Joi.string().trim().max(200).optional().allow(null, ""),
+      cabin: Joi.string().trim().max(100).optional().allow(null, ""),
+      currency: Joi.string().trim().length(3).uppercase().required(),
+      costPerPerson: Joi.number().min(0).required(),
+      direction: Joi.string().trim().valid(...config.transportDirectionTypes).optional(),
+      validFrom: Joi.date().optional().allow(null),
+      validTo: Joi.date().optional().allow(null),
+      status: rateStatus,
+      source: rateSource
+    }),
+
+    createVisaRate: Joi.object({
+      country: Joi.string().trim().min(1).max(100).required(),
+      visaType: Joi.string().trim().min(1).max(100).required(),
+      nationality: Joi.string().trim().max(100).optional().allow(null, ""),
+      currency: Joi.string().trim().length(3).uppercase().required(),
+      adultCost: Joi.number().min(0).required(),
+      childCost: Joi.number().min(0).optional().allow(null),
+      infantCost: Joi.number().min(0).optional().allow(null),
+      processingTime: Joi.string().trim().max(100).optional().allow(null, ""),
+      validFrom: Joi.date().optional().allow(null),
+      validTo: Joi.date().optional().allow(null),
+      status: rateStatus,
+      source: rateSource
+    }),
+
+    createServiceRate: Joi.object({
+      name: Joi.string().trim().min(1).max(150).required(),
+      chargeBasis: Joi.string().trim().valid(...config.serviceChargeBasisTypes).required(),
+      currency: Joi.string().trim().length(3).uppercase().required(),
+      amount: Joi.number().min(0).required(),
+      validFrom: Joi.date().optional().allow(null),
+      validTo: Joi.date().optional().allow(null),
+      status: rateStatus,
+      source: rateSource
+    }),
+
+    createMarkupRule: Joi.object({
+      name: Joi.string().trim().max(150).optional().allow(null, ""),
+      scope: Joi.string().trim().valid(...config.markupScopeTypes).required(),
+      type: Joi.string().trim().valid(...config.markupTypes).required(),
+      value: Joi.number().min(0).required(),
+      priceListType: Joi.string().trim().valid(...config.priceListTypes).required()
+    }),
+
+    createSupplier: Joi.object({
+      name: Joi.string().trim().min(1).max(200).required(),
+      category: Joi.string().trim().valid(...config.supplierCategories).required(),
+      contactName: Joi.string().trim().max(150).optional().allow(null, ""),
+      phone: Joi.string().trim().max(50).optional().allow(null, ""),
+      email: Joi.string().trim().email().optional().allow(null, ""),
+      currency: Joi.string().trim().length(3).uppercase().optional().allow(null, ""),
+      notes: Joi.string().trim().max(2000).optional().allow(null, "")
+    }),
+
+    createCommissionRule: Joi.object({
+      name: Joi.string().trim().max(150).optional().allow(null, ""),
+      scope: Joi.string().trim().valid(...config.commissionScopeTypes).required(),
+      type: Joi.string().trim().valid(...config.markupTypes).required(),
+      value: Joi.number().min(0).required(),
+      agentUserId: Joi.string().trim().optional().allow(null, ""),
+      destinationCountry: Joi.string().trim().max(150).optional().allow(null, ""),
+      hotelCatalogId: objectIdRef.optional().allow(null, "")
+    }),
+
+    // Generic partial-update body shared by every rate/master PATCH route —
+    // each service method only reads the fields relevant to its own model,
+    // so this stays permissive rather than duplicating every model's full
+    // create schema with everything optional.
+    updateRecord: Joi.object({
+      reason: Joi.string().trim().max(1000).optional().allow(null, "")
+    }).unknown(true),
+
+    createQuotation: Joi.object({
+      roomTypeId: objectIdRef.required(),
+      paymentTerms: Joi.string().trim().max(2000).optional().allow(null, ""),
+      validUntil: Joi.date().optional().allow(null),
+      termsAndConditions: Joi.string().trim().max(5000).optional().allow(null, "")
+    }),
+
+    linkBooking: Joi.object({
+      bookingId: objectIdRef.required()
+    }),
+
+    convertToBooking: Joi.object({
+      roomTypeId: objectIdRef.required(),
+      rooms: Joi.number().integer().min(1).optional(),
+      bookingId: objectIdRef.optional().allow(null, ""),
+      bookingType: Joi.string().trim().optional().allow(null, "")
+    }),
+
+    generateFlyer: Joi.object({
+      template: Joi.string().trim().valid(...config.flyerTemplates).optional(),
+      format: Joi.string().trim().valid(...config.flyerFormats).optional(),
+      dimensionPreset: Joi.string().trim().valid(...Object.keys(config.flyerDimensionPresets)).optional(),
+      roomTypeIds: Joi.array().items(objectIdRef).optional()
+    }),
+
+    sendWhatsAppMessage: Joi.object({
+      phone: Joi.string().trim().max(30).optional().allow(null, ""),
+      roomTypeIds: Joi.array().items(objectIdRef).optional()
+    }),
+
+    updatePackage: Joi.object({
+      name: Joi.string().trim().max(200).optional().allow(null, ""),
+      customerId: objectIdRef.optional().allow(null, ""),
+      agentUserId: Joi.string().trim().optional().allow(null, ""),
+      travelStartDate: Joi.date().optional(),
+      travelEndDate: Joi.date().optional(),
+      travelers: Joi.object({
+        adults: Joi.number().integer().min(1).optional(),
+        children: Joi.number().integer().min(0).optional(),
+        infants: Joi.number().integer().min(0).optional()
+      }).optional(),
+      segments: Joi.array().items(Joi.object({
+        city: Joi.string().trim().min(1).max(150).required(),
+        country: Joi.string().trim().max(150).optional().allow(null, ""),
+        hotelCatalogId: objectIdRef.required(),
+        checkIn: Joi.date().required(),
+        checkOut: Joi.date().required(),
+        mealPlan: Joi.string().trim().max(100).optional().allow(null, ""),
+        rooms: Joi.number().integer().min(1).optional(),
+        sortOrder: Joi.number().integer().optional()
+      })).optional(),
+      transportLegs: Joi.array().items(Joi.object({
+        origin: Joi.string().trim().min(1).max(200).required(),
+        destination: Joi.string().trim().min(1).max(200).required(),
+        direction: Joi.string().trim().valid(...config.transportDirectionTypes).optional().allow(null),
+        vehicleId: objectIdRef.optional().allow(null),
+        sortOrder: Joi.number().integer().optional()
+      })).optional(),
+      flightSelections: Joi.array().items(Joi.object({ flightRateId: objectIdRef.required() })).optional(),
+      visaSelections: Joi.array().items(Joi.object({ visaRateId: objectIdRef.required() })).optional(),
+      serviceSelections: Joi.array().items(Joi.object({
+        serviceRateId: objectIdRef.required(),
+        quantity: Joi.number().min(0).optional()
+      })).optional(),
+      vehicleSelectionRule: Joi.string().trim().valid(...config.vehicleSelectionRules).optional(),
+      priceListType: Joi.string().trim().valid(...config.priceListTypes).optional(),
+      sellingCurrency: Joi.string().trim().length(3).uppercase().optional(),
+      markupRuleIds: Joi.array().items(objectIdRef).optional(),
+      commissionRuleIds: Joi.array().items(objectIdRef).optional(),
+      roundingRule: Joi.string().trim().valid(...config.roundingRuleTypes).optional(),
+      discount: Joi.object({
+        type: Joi.string().trim().valid(...config.discountTypes).required(),
+        value: Joi.number().min(0).required(),
+        scope: Joi.string().trim().valid(...config.discountScopeTypes).optional().allow(null, ""),
+        reason: Joi.string().trim().max(500).optional().allow(null, "")
+      }).optional().allow(null),
+      reason: Joi.string().trim().max(1000).optional().allow(null, "")
+    }),
+
+    createPackage: Joi.object({
+      name: Joi.string().trim().max(200).optional().allow(null, ""),
+      customerId: objectIdRef.optional().allow(null, ""),
+      agentUserId: Joi.string().trim().optional().allow(null, ""),
+      travelStartDate: Joi.date().required(),
+      travelEndDate: Joi.date().required(),
+      travelers: Joi.object({
+        adults: Joi.number().integer().min(1).required(),
+        children: Joi.number().integer().min(0).optional(),
+        infants: Joi.number().integer().min(0).optional()
+      }).required(),
+      segments: Joi.array().items(Joi.object({
+        city: Joi.string().trim().min(1).max(150).required(),
+        country: Joi.string().trim().max(150).optional().allow(null, ""),
+        hotelCatalogId: objectIdRef.required(),
+        checkIn: Joi.date().required(),
+        checkOut: Joi.date().required(),
+        mealPlan: Joi.string().trim().max(100).optional().allow(null, ""),
+        rooms: Joi.number().integer().min(1).optional(),
+        sortOrder: Joi.number().integer().optional()
+      })).optional(),
+      transportLegs: Joi.array().items(Joi.object({
+        origin: Joi.string().trim().min(1).max(200).required(),
+        destination: Joi.string().trim().min(1).max(200).required(),
+        direction: Joi.string().trim().valid(...config.transportDirectionTypes).optional().allow(null),
+        vehicleId: objectIdRef.optional().allow(null),
+        sortOrder: Joi.number().integer().optional()
+      })).optional(),
+      flightSelections: Joi.array().items(Joi.object({ flightRateId: objectIdRef.required() })).optional(),
+      visaSelections: Joi.array().items(Joi.object({ visaRateId: objectIdRef.required() })).optional(),
+      serviceSelections: Joi.array().items(Joi.object({
+        serviceRateId: objectIdRef.required(),
+        quantity: Joi.number().min(0).optional()
+      })).optional(),
+      vehicleSelectionRule: Joi.string().trim().valid(...config.vehicleSelectionRules).optional(),
+      priceListType: Joi.string().trim().valid(...config.priceListTypes).optional(),
+      sellingCurrency: Joi.string().trim().length(3).uppercase().required(),
+      markupRuleIds: Joi.array().items(objectIdRef).optional(),
+      commissionRuleIds: Joi.array().items(objectIdRef).optional(),
+      roundingRule: Joi.string().trim().valid(...config.roundingRuleTypes).optional(),
+      discount: Joi.object({
+        type: Joi.string().trim().valid(...config.discountTypes).required(),
+        value: Joi.number().min(0).required(),
+        scope: Joi.string().trim().valid(...config.discountScopeTypes).optional().allow(null, ""),
+        reason: Joi.string().trim().max(500).optional().allow(null, "")
+      }).optional().allow(null)
+    }),
+
+    calculatePackage: Joi.object({
+      recalculate: Joi.boolean().optional()
+    })
+  };
+};
+
+const PACKAGE_PRICING_SCHEMA_KEYS = new Set([
+  "createRoomType", "createTransportVehicle", "createHotelRate", "createTransportRate", "createFlightRate", "createVisaRate",
+  "createServiceRate", "createMarkupRule", "createSupplier", "createCommissionRule", "updateRecord", "createPackage",
+  "updatePackage", "linkBooking", "convertToBooking", "createQuotation", "generateFlyer", "sendWhatsAppMessage", "calculatePackage"
+]);
+
+export const packagePricingSchemas = new Proxy({}, {
+  get(_target, prop) {
+    if (PACKAGE_PRICING_SCHEMA_KEYS.has(prop)) {
+      return buildPackagePricingSchemas()[prop];
+    }
+    return undefined;
+  }
+});
 
 export default validate;

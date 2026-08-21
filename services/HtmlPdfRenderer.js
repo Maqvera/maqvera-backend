@@ -170,4 +170,30 @@ export const renderHtmlToPdfBuffer = async (templatePath, data, pdfOptions = {})
   }
 };
 
-export default { renderHtmlToPdfBuffer, getBrowser, closeBrowser, TEMPLATES_DIR };
+/**
+ * Package Pricing Engine — Flyer Generator (PRD §55-§62). Same chokepoint
+ * as renderHtmlToPdfBuffer, sharing its compiled-template cache and
+ * getSharedCss()/registerPartials() — a screenshot instead of a print, for
+ * flyer/social-image output rather than a printable document. `viewport`
+ * sets the canvas size (default matches a portrait A4-ish flyer; callers
+ * pass Instagram-post/story or other social dimensions per PRD §62).
+ */
+export const renderHtmlToImageBuffer = async (templatePath, data, { viewport = { width: 1080, height: 1350 }, type = "png", ...screenshotOptions } = {}) => {
+  await registerPartials();
+  const template = await getCompiledTemplate(templatePath);
+  const sharedCss = await getSharedCss();
+  const html = template({ ...data, sharedCss });
+
+  const browser = await getBrowser();
+  const page = await browser.newPage();
+  try {
+    await page.setViewport({ width: viewport.width, height: viewport.height, deviceScaleFactor: 2 });
+    await page.setContent(html, { waitUntil: "load" });
+    const imageBytes = await page.screenshot({ type, fullPage: !screenshotOptions.clip, ...screenshotOptions });
+    return Buffer.from(imageBytes);
+  } finally {
+    await page.close();
+  }
+};
+
+export default { renderHtmlToPdfBuffer, renderHtmlToImageBuffer, getBrowser, closeBrowser, TEMPLATES_DIR };

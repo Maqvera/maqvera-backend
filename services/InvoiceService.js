@@ -331,7 +331,7 @@ class InvoiceService {
    */
   static async createInvoice(data, tenantId, userId) {
     const config = getFinanceConfig();
-    const { customerId, invoiceType = config.defaultInvoiceType, currency, issueDate, dueDate, items: rawItems, notes = null, attachments = [], bookingId = null } = data;
+    const { customerId, invoiceType = config.defaultInvoiceType, currency, issueDate, dueDate, items: rawItems, notes = null, attachments = [], bookingId = null, visaCaseId = null } = data;
 
     if (!customerId || !currency || !dueDate || !Array.isArray(rawItems) || rawItems.length === 0) {
       throw new Error("customerId, currency, dueDate, and at least one item are required.");
@@ -357,6 +357,7 @@ class InvoiceService {
       invoiceType,
       customerId,
       bookingId: bookingId || null,
+      visaCaseId: visaCaseId || null,
       customerName,
       status: config.defaultInvoiceStatus,
       currency,

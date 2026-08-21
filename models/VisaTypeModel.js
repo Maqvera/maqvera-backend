@@ -32,6 +32,18 @@ const VisaTypeSchema = new mongoose.Schema({
     type: Number,
     default: 90
   },
+  // Visa Module PRD §8/§12 pricing — Vendor Cost + Government Fee +
+  // Insurance + Service Charges + Other Charges - Discount = Selling Price.
+  // `sellingPrice` is computed (VisaRequirementService.calculateVisaSellingPrice)
+  // and stored, not derived on read, so it can be queried/reported directly.
+  vendorCost: { type: Number, default: 0 },
+  governmentFee: { type: Number, default: 0 },
+  insuranceFee: { type: Number, default: 0 },
+  serviceCharges: { type: Number, default: 0 },
+  otherCharges: { type: Number, default: 0 },
+  discount: { type: Number, default: 0 },
+  sellingPrice: { type: Number, default: 0 },
+  currency: { type: String, default: "USD" },
   isActive: {
     type: Boolean,
     default: true,

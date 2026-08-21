@@ -1,6 +1,7 @@
 import CustomerModel from "../models/CustomerModel.js";
 import BookingHeaderModel from "../models/BookingHeaderModel.js";
 import AccountsReceivableModel from "../models/AccountsReceivableModel.js";
+import CurrencyService from "./CurrencyService.js";
 
 const roundCurrency = (value) => Math.round((Number(value) || 0) * 100) / 100;
 
@@ -47,8 +48,33 @@ class CustomerAccountStatementService {
       : [];
     const bookingByInvoiceNumber = new Map(bookings.map((b) => [b.financialSnapshot.invoiceNumber, b]));
 
+    // §1/§2 — receivables can be billed in different currencies; summing them
+    // raw (or displaying them raw) would silently mix currencies into a
+    // meaningless number. Resolve one "totals currency" and, when a caller
+    // explicitly wants everything shown in one currency (viewCurrency),
+    // reuse the exact same rate cache for the per-row amounts too — see
+    // multi-currency-booking-and-statement-requirements.md §1/§2.
+    const viewCurrency = query.viewCurrency ? query.viewCurrency.toUpperCase() : null;
+    const distinctCurrencies = [...new Set(receivables.map((r) => r.currency).filter(Boolean))];
+    const allSameCurrency = distinctCurrencies.length <= 1;
+    const totalsCurrency = viewCurrency || (allSameCurrency ? (receivables[0]?.currency || null) : await CurrencyService.getBaseCurrency(tenantId));
+
+    const rateCache = new Map(); // fromCurrency -> rate into totalsCurrency
+    if (totalsCurrency) {
+      const uniqueFromCurrencies = distinctCurrencies.filter((c) => c && c !== totalsCurrency);
+      for (const from of uniqueFromCurrencies) {
+        const { rate } = await CurrencyService.getRate(tenantId, from, totalsCurrency);
+        rateCache.set(from, rate);
+      }
+    }
+    const toTotalsCurrency = (amount, fromCurrency) =>
+      !totalsCurrency || fromCurrency === totalsCurrency ? amount : roundCurrency(amount * (rateCache.get(fromCurrency) || 1));
+
     const rows = receivables.map((receivable, index) => {
       const booking = bookingByInvoiceNumber.get(receivable.invoiceNumber) || null;
+      const originalCurrency = receivable.currency;
+      const displayCurrency = viewCurrency || originalCurrency;
+      const convert = (amount) => toTotalsCurrency(amount, originalCurrency);
       return {
         rowNumber: index + 1,
         referenceNumber: booking?.bookingNumber || receivable.invoiceNumber,
@@ -59,18 +85,20 @@ class CustomerAccountStatementService {
         dueDate: receivable.dueDate,
         description: booking ? `Booking ${booking.bookingNumber}` : `Invoice ${receivable.invoiceNumber}`,
         invoiceNumber: receivable.invoiceNumber,
-        currency: receivable.currency,
-        debit: receivable.originalAmount,
-        credit: receivable.paidAmount,
-        balance: receivable.outstandingBalance,
+        currency: displayCurrency,
+        originalCurrency,
+        debit: viewCurrency ? convert(receivable.originalAmount) : receivable.originalAmount,
+        credit: viewCurrency ? convert(receivable.paidAmount) : receivable.paidAmount,
+        balance: viewCurrency ? convert(receivable.outstandingBalance) : receivable.outstandingBalance,
         status: receivable.status
       };
     });
 
     const totals = {
-      totalDebit: roundCurrency(receivables.reduce((sum, r) => sum + r.originalAmount, 0)),
-      totalCredit: roundCurrency(receivables.reduce((sum, r) => sum + r.paidAmount, 0)),
-      totalBalance: roundCurrency(receivables.reduce((sum, r) => sum + r.outstandingBalance, 0))
+      totalDebit: roundCurrency(receivables.reduce((sum, r) => sum + toTotalsCurrency(r.originalAmount, r.currency), 0)),
+      totalCredit: roundCurrency(receivables.reduce((sum, r) => sum + toTotalsCurrency(r.paidAmount, r.currency), 0)),
+      totalBalance: roundCurrency(receivables.reduce((sum, r) => sum + toTotalsCurrency(r.outstandingBalance, r.currency), 0)),
+      currency: totalsCurrency
     };
 
     return {
@@ -80,6 +108,7 @@ class CustomerAccountStatementService {
         name: `${customer.firstName || ""} ${customer.lastName || ""}`.trim() || customer.companyName || "Customer"
       },
       period: { dateFrom: query.dateFrom || null, dateTo: query.dateTo || null },
+      viewCurrency: viewCurrency || null,
       totals,
       rows,
       generatedAt: new Date()

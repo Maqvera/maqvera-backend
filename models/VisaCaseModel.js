@@ -94,8 +94,37 @@ const VisaCaseSchema = new mongoose.Schema({
       status: { type: String, default: "draft" },
       submissionDate: { type: Date, default: null },
       referenceNumber: { type: String, default: null },
+      // Visa Module PRD §8/§12 pricing breakdown, mirroring VisaTypeModel's
+      // fields. `feeAmount` remains the final billed amount for backward
+      // compatibility with anything already reading it — once priced via
+      // VisaService.updateApplicationPricing it equals `sellingPrice`.
+      vendorCost: { type: Number, default: 0 },
+      governmentFee: { type: Number, default: 0 },
+      insuranceFee: { type: Number, default: 0 },
+      serviceCharges: { type: Number, default: 0 },
+      otherCharges: { type: Number, default: 0 },
+      discount: { type: Number, default: 0 },
+      sellingPrice: { type: Number, default: 0 },
       feeAmount: { type: Number, default: 0 },
       currency: { type: String, default: "USD" },
+      // Multi-currency balance entry — see multi-currency-booking-and-statement-
+      // requirements.md §2.4a/§7. Populated only when the application was
+      // created with an explicit convertedCurrency; null otherwise.
+      convertedAmount: { type: Number, default: null },
+      convertedCurrency: { type: String, default: null },
+      conversionRate: { type: Number, default: null },
+      conversionRateId: { type: mongoose.Schema.Types.ObjectId, ref: "exchange_rate", default: null },
+      conversionAsOf: { type: Date, default: null },
+      // Set by VisaFinanceLinkService once a real Finance-module Invoice has
+      // been issued for this application's sellingPrice — null for
+      // applications never priced, or priced at 0 (nothing to bill). Same
+      // pattern as BookingHeaderModel.financialSnapshot.invoiceId/invoiceNumber.
+      invoiceId: { type: mongoose.Schema.Types.ObjectId, ref: "invoice", default: null },
+      invoiceNumber: { type: String, default: null },
+      // Set by VisaFinanceLinkService once a real Finance-module
+      // AccountsPayable row has been posted for this application's
+      // vendorCost — null when there's no vendor cost, or none set yet.
+      payableId: { type: mongoose.Schema.Types.ObjectId, ref: "accounts_payable", default: null },
       notes: { type: String, default: null },
       createdBy: { type: String, default: null },
       createdAt: { type: Date, default: Date.now }
@@ -139,6 +168,13 @@ const VisaCaseSchema = new mongoose.Schema({
     {
       submissionNumber: { type: String, required: true },
       embassyName: { type: String, default: null },
+      // Visa Module PRD §11/§17 — the AP-payable vendor/agent who handled
+      // this submission, distinct from `embassyName` (the destination
+      // processing center, still owned by EmbassyMasterModel). Optional:
+      // not every submission goes through a paid third-party vendor.
+      // Denormalization pattern matches BookingHeaderModel.customerName
+      // alongside customerId.
+      vendorId: { type: mongoose.Schema.Types.ObjectId, ref: "vendor", default: null },
       submissionDate: { type: Date, default: Date.now },
       trackingNumber: { type: String, default: null },
       status: { type: String, default: "submitted" },
@@ -146,6 +182,19 @@ const VisaCaseSchema = new mongoose.Schema({
       submittedBy: { type: String, default: null }
     }
   ],
+  // NOT dead code (corrected from an earlier trace's assumption) —
+  // SchedulingEngineService.scheduleAppointment() genuinely pushes a summary
+  // row here on every appointment created, for a cheap denormalized read off
+  // the case aggregate without joining VisaAppointmentModel (the real,
+  // detailed appointments table — reads/list go through that one, not this
+  // array). Real bug, not addressed here (out of scope for this change):
+  // it is write-once — updateAppointment/recordAppointmentAttendance/
+  // recordAppointmentResult never sync back to this array, so an entry here
+  // goes stale (wrong status/date) the moment its appointment is rescheduled,
+  // cancelled, or completed. Flagging rather than fixing to keep this diff
+  // reviewable; a future change should either sync all appointment mutations
+  // here too, or drop this summary array and have callers read
+  // VisaAppointmentModel directly.
   appointments: [
     {
       appointmentType: { type: String, enum: ["biometrics", "interview", "medical", "submission", "custom"], default: "biometrics" },

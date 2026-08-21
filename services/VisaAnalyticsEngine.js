@@ -216,6 +216,8 @@ class VisaAnalyticsEngine {
         paidBookings: finance.paidBookings || 0,
         totalBookings: finance.totalBookings || 0,
         caseFeesRevenue: finance.caseFeesRevenue || 0,
+        caseFeesVendorCost: finance.caseFeesVendorCost || 0,
+        profit: finance.caseFeesProfit ?? ((finance.caseFeesRevenue || 0) - (finance.caseFeesVendorCost || 0)),
         generatedAt: summary.generatedAt,
         pendingRefresh: summary.pendingRefresh || false,
       };

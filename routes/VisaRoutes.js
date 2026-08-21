@@ -9,6 +9,12 @@ import {
   updateVisaCase,
   deleteVisaCase,
   getVisaTypes,
+  createVisaType,
+  updateVisaType,
+  updateVisaCaseApplicationPricing,
+  listCountries,
+  createCountry,
+  updateCountry,
   getCountryVisaRequirements,
   createRequirementProfile,
   getVisaWorkflowDefinition,
@@ -46,7 +52,9 @@ import {
   getVisaCaseTimeline,
   addVisaCaseNote,
   getVisaCaseAIContext,
-  getTimelineEventById
+  getTimelineEventById,
+  getVisaCasePayments,
+  createVisaCaseRefund
 } from "../controllers/VisaController.js";
 
 const router = express.Router();
@@ -76,6 +84,20 @@ const limiter = rateLimit({
 
 // Visa Types Catalog endpoint (public — static, tenant-agnostic catalog)
 router.get("/visa-types", limiter, getVisaTypes);
+// Visa Types admin pricing endpoints (write — creates/updates tenant pricing config)
+router.post("/visa-types", authenticateAccessToken, limiter, createVisaType);
+router.patch("/visa-types/:visaTypeId", authenticateAccessToken, limiter, updateVisaType);
+
+// Visa Case Application Pricing endpoint (write — PRD §8/§12)
+router.patch("/visa-cases/:visaCaseId/applications/:applicationNumber/pricing", authenticateAccessToken, limiter, updateVisaCaseApplicationPricing);
+
+// Country Master endpoints (PRD §7). List is public reference data, matching
+// visa-types above; write endpoints require auth. Registered before the
+// dynamic "/countries/:countryId/visa-requirements" GET below — same
+// static-before-dynamic convention used elsewhere (routes/FinanceRoutes.js).
+router.get("/countries", limiter, listCountries);
+router.post("/countries", authenticateAccessToken, limiter, createCountry);
+router.patch("/countries/:countryMasterId", authenticateAccessToken, limiter, updateCountry);
 
 // Country Visa Requirements Rule Engine endpoint (public — reference data)
 router.get("/countries/:countryId/visa-requirements", limiter, getCountryVisaRequirements);
@@ -134,6 +156,12 @@ router.get("/visa-cases/:visaCaseId/timeline", authenticateAccessToken, limiter,
 router.post("/visa-cases/:visaCaseId/notes", authenticateAccessToken, limiter, addVisaCaseNote);
 router.get("/visa-cases/:visaCaseId/ai-context", authenticateAccessToken, limiter, getVisaCaseAIContext);
 router.get("/timeline/:eventId", authenticateAccessToken, limiter, getTimelineEventById);
+
+// Visa-scoped Payment/Refund convenience endpoints (PRD §14/§15) — thin
+// wrappers over the generic Finance Payment/Refund engines, not a parallel
+// payment system.
+router.get("/visa-cases/:visaCaseId/payments", authenticateAccessToken, limiter, getVisaCasePayments);
+router.post("/visa-cases/:visaCaseId/refunds", authenticateAccessToken, limiter, createVisaCaseRefund);
 
 // Visa Case CRUD endpoints. GET (list/detail) were previously public — but
 // visa cases carry customer PII (passport numbers, traveler details) and are

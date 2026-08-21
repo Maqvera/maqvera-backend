@@ -27,13 +27,13 @@ export const CreateAmadeusFlightBooking = async (req, res) => {
       return sendError(res, 403, "Permission denied.", requestId);
     }
 
-    const { travelPlanId, flightAssignmentId, flightOffer, travelers, contact } = req.body;
+    const { travelPlanId, flightAssignmentId, flightOffer, travelers, contact, convertedCurrency } = req.body;
     if (!flightOffer) {
       return sendError(res, 400, "flightOffer is required (the exact object returned by EXT-002's search endpoint).", requestId, { code: "INVALID_FLIGHT_OFFER" });
     }
 
     const result = await AmadeusFlightBookingService.createBooking({
-      tenantId, userId, userName, travelPlanId, flightAssignmentId, flightOffer, travelers, contact, requestId
+      tenantId, userId, userName, travelPlanId, flightAssignmentId, flightOffer, travelers, contact, convertedCurrency, requestId
     });
 
     if (result.priceChanged) {

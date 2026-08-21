@@ -76,6 +76,14 @@ const CarRentalBookingSchema = new mongoose.Schema({
     type: String,
     default: "PKR"
   },
+  // Multi-currency balance entry — see multi-currency-booking-and-statement-
+  // requirements.md §2.4a/§7. Populated only when the rental was created
+  // with an explicit convertedCurrency; null otherwise.
+  convertedAmount: { type: Number, default: null },
+  convertedCurrency: { type: String, default: null },
+  conversionRate: { type: Number, default: null },
+  conversionRateId: { type: mongoose.Schema.Types.ObjectId, ref: "exchange_rate", default: null },
+  conversionAsOf: { type: Date, default: null },
   status: {
     type: String,
     enum: ["Reserved", "Confirmed", "Modified", "Cancelled", "Completed"],

@@ -71,6 +71,15 @@ const InvoiceSchema = new mongoose.Schema({
     default: null,
     index: true
   },
+  // Set only for invoices generated from a Visa Case application
+  // (VisaFinanceLinkService, Visa Module PRD §13) — same purpose/pattern as
+  // bookingId above, for the Visa side.
+  visaCaseId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "visa_case",
+    default: null,
+    index: true
+  },
   customerName: {
     type: String,
     required: true
