@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import RoomTypeModel from "../models/RoomTypeModel.js";
 import HotelRateModel from "../models/HotelRateModel.js";
 import TransportVehicleModel from "../models/TransportVehicleModel.js";
@@ -7,6 +8,7 @@ import VisaRateModel from "../models/VisaRateModel.js";
 import ServiceRateModel from "../models/ServiceRateModel.js";
 import MarkupRuleModel from "../models/MarkupRuleModel.js";
 import PackageModel from "../models/PackageModel.js";
+import PackageTemplateModel from "../models/PackageTemplateModel.js";
 import RateSnapshotModel from "../models/RateSnapshotModel.js";
 import HotelCatalogModel from "../models/HotelCatalogModel.js";
 import SupplierModel from "../models/SupplierModel.js";
@@ -58,23 +60,50 @@ export const computeNights = (checkIn, checkOut) => Math.max(0, Math.round((new 
  * here). Only "usable" (Active) rates are ever considered — a missing or
  * Stop-Sale/expired rate resolves to `null`, never a silent zero.
  */
-export const resolveHotelRate = (rates, { roomTypeId, date }, config = getPackagePricingConfig()) => {
-  const targetRoomTypeId = roomTypeId?.toString();
+const matchRateByPriority = (candidates, date, config) => {
   const targetDate = new Date(date);
   const dayOfWeek = targetDate.getUTCDay();
-  const candidates = (rates || []).filter((r) => r.roomTypeId?.toString() === targetRoomTypeId && isRateUsable(r, config));
-
   for (const basis of config.hotelRateBasisPriority) {
     const tier = candidates.filter((r) => r.rateBasis === basis);
     let match = null;
     if (basis === "ExactDate") match = tier.find((r) => r.date && sameCalendarDay(r.date, targetDate));
     else if (basis === "Weekend" || basis === "Weekday") match = tier.find((r) => Array.isArray(r.daysOfWeek) && r.daysOfWeek.includes(dayOfWeek) && isWithinWindow(targetDate, r.validFrom, r.validTo));
     else match = tier.find((r) => isWithinWindow(targetDate, r.validFrom, r.validTo)); // DateRange, Season, Standard
-
     if (match) return match;
   }
   return null;
 };
+
+export const resolveHotelRate = (rates, { roomTypeId, date }, config = getPackagePricingConfig()) => {
+  const targetRoomTypeId = roomTypeId?.toString();
+  const candidates = (rates || []).filter((r) => r.roomTypeId?.toString() === targetRoomTypeId && isRateUsable(r, config));
+  return matchRateByPriority(candidates, date, config);
+};
+
+/**
+ * Same priority resolution as resolveHotelRate, but also matches On
+ * Request/Stop Sale/Sold Out rates (never Draft/Expired/Archived) so a
+ * caller can distinguish "genuinely missing" from "exists but not
+ * auto-confirmable" (PRD §54/§78-79). Never price a row directly off this
+ * result — check classifyRateAvailability() first and only use the rate
+ * when it comes back "usable".
+ */
+export const resolveHotelRateAnyStatus = (rates, { roomTypeId, date }, config = getPackagePricingConfig()) => {
+  const targetRoomTypeId = roomTypeId?.toString();
+  const nonResolvable = new Set(config.rateStatuses.filter((s) => !config.usableRateStatuses.includes(s) && !config.onRequestLikeStatuses.includes(s)));
+  const candidates = (rates || []).filter((r) => r.roomTypeId?.toString() === targetRoomTypeId && !nonResolvable.has(r.status));
+  return matchRateByPriority(candidates, date, config);
+};
+
+/** Classifies a resolved rate's real-world availability (PRD §54/§78-79): "usable" (Active), one of the on-request-like statuses, or "missing" (no rate / Draft / Expired / Archived). */
+export const classifyRateAvailability = (rate, config = getPackagePricingConfig()) => {
+  if (!rate) return "missing";
+  if (config.usableRateStatuses.includes(rate.status)) return "usable";
+  if (config.onRequestLikeStatuses.includes(rate.status)) return rate.status;
+  return "missing";
+};
+
+const RATE_AVAILABILITY_ISSUE_CODES = { OnRequest: "RATE_ON_REQUEST", StopSale: "RATE_STOP_SALE", SoldOut: "RATE_SOLD_OUT" };
 
 /** "Overlapping/conflicting rates must be detected and flagged, never silently resolved" (PRD §5). */
 export const detectOverlappingHotelRates = (rates) => {
@@ -106,6 +135,15 @@ export const detectOverlappingHotelRates = (rates) => {
 export const computeHotelCostPerPerson = (pricePerNight, nights, rooms, occupancy) => {
   if (!occupancy || occupancy <= 0) return 0;
   return roundCurrency((Number(pricePerNight) * Number(nights) * Number(rooms || 1)) / occupancy);
+};
+
+/** PRD §23 "Extra Bed" — total charge (not yet divided across occupants) for `extraOccupants` beyond a room's own occupancy, already in the target currency. */
+export const computeExtraBedCost = (extraOccupants, extraBedRate, extraBedBasis, nights) => {
+  const count = Number(extraOccupants) || 0;
+  const rate = Number(extraBedRate) || 0;
+  if (count <= 0 || rate <= 0) return 0;
+  if (extraBedBasis === "PerNight") return roundCurrency(count * rate * (Number(nights) || 0));
+  return roundCurrency(count * rate); // PerStay / PerPerson — one flat charge per extra occupant for the stay.
 };
 
 /**
@@ -177,6 +215,53 @@ export const computeServiceCost = (serviceRate, ctx = {}) => {
     case "Percentage": return roundCurrency(((ctx.runningSubtotal || 0) * amount) / 100);
     default: return 0;
   }
+};
+
+/**
+ * PRD §46 "Room Allocation" — given a total passenger count and the
+ * occupancy of every room type available for a segment/package, suggests
+ * reasonable room-count combinations that sleep everyone: one homogeneous
+ * combination per room type, plus exact-fit 2-room-type mixes. Deliberately
+ * bounded, not an exhaustive subset-sum search — an agent picks one option,
+ * they don't need every mathematically possible mix.
+ */
+export const suggestRoomCombinations = (totalPax, availableRoomTypes) => {
+  const pax = Number(totalPax) || 0;
+  const types = (availableRoomTypes || []).filter((rt) => rt.defaultOccupancy > 0);
+  if (pax <= 0 || types.length === 0) return [];
+
+  const results = [];
+  const pushResult = (combination) => {
+    const key = combination.map((c) => `${c.roomTypeId}:${c.count}`).sort().join("|");
+    if (results.some((r) => r.key === key)) return;
+    const totalCapacity = combination.reduce((sum, c) => sum + c.count * c.occupancy, 0);
+    results.push({ key, combination: combination.map((c) => ({ roomTypeId: c.roomTypeId, count: c.count })), totalCapacity });
+  };
+
+  for (const rt of types) {
+    pushResult([{ roomTypeId: rt.roomTypeId, occupancy: rt.defaultOccupancy, count: Math.ceil(pax / rt.defaultOccupancy) }]);
+  }
+
+  for (let i = 0; i < types.length; i += 1) {
+    for (let j = 0; j < types.length; j += 1) {
+      if (i === j) continue;
+      const a = types[i];
+      const b = types[j];
+      for (let countA = 1; countA * a.defaultOccupancy < pax; countA += 1) {
+        const remaining = pax - countA * a.defaultOccupancy;
+        if (remaining <= 0 || remaining % b.defaultOccupancy !== 0) continue;
+        pushResult([
+          { roomTypeId: a.roomTypeId, occupancy: a.defaultOccupancy, count: countA },
+          { roomTypeId: b.roomTypeId, occupancy: b.defaultOccupancy, count: remaining / b.defaultOccupancy }
+        ]);
+      }
+    }
+  }
+
+  return results
+    .map(({ key, ...rest }) => rest)
+    .sort((x, y) => x.combination.reduce((s, c) => s + c.count, 0) - y.combination.reduce((s, c) => s + c.count, 0))
+    .slice(0, 8);
 };
 
 export const computeMarkupAmount = (baseAmount, type, value) => {
@@ -650,6 +735,103 @@ class PackagePricingService {
     return rule.toJSON();
   }
 
+  // ---- Bulk rate management (PRD §112 / PRD v2 §14) ----
+
+  static _rateModelFor(rateType) {
+    const map = { "hotel-rates": HotelRateModel, "transport-rates": TransportRateModel, "flight-rates": FlightRateModel, "visa-rates": VisaRateModel, "service-rates": ServiceRateModel };
+    const model = map[rateType];
+    if (!model) throw new Error(`Unknown rate type "${rateType}".`);
+    return model;
+  }
+
+  static _createMethodFor(rateType) {
+    const map = { "hotel-rates": "createHotelRate", "transport-rates": "createTransportRate", "flight-rates": "createFlightRate", "visa-rates": "createVisaRate", "service-rates": "createServiceRate" };
+    const methodName = map[rateType];
+    if (!methodName) throw new Error(`Unknown rate type "${rateType}".`);
+    return methodName;
+  }
+
+  /**
+   * POST /{rate-type}/bulk — all-or-nothing per tenant. Uses a real Mongo
+   * transaction when the deployment supports one (replica set/Atlas);
+   * standalone MongoDB has no transaction support, so this falls back to
+   * best-effort sequential inserts (same graceful-degrade discipline this
+   * codebase already applies to optional infra elsewhere, e.g.
+   * services/packageRateExpiryScheduler.js's node-cron fallback) rather
+   * than hard-failing the whole bulk-import feature on dev/standalone setups.
+   */
+  static async bulkCreateRates(rateType, items, tenantId, userId) {
+    if (!Array.isArray(items) || items.length === 0) throw new Error("items must be a non-empty array.");
+    const methodName = PackagePricingService._createMethodFor(rateType);
+
+    let session = null;
+    try {
+      session = await mongoose.startSession();
+      session.startTransaction();
+    } catch {
+      session = null;
+    }
+
+    const created = [];
+    try {
+      for (const item of items) {
+        const record = await PackagePricingService[methodName](item, tenantId, userId);
+        created.push(record);
+      }
+      if (session) await session.commitTransaction();
+    } catch (error) {
+      if (session) await session.abortTransaction();
+      throw new Error(`Bulk create failed at item ${created.length + 1} of ${items.length}: ${error.message}`);
+    } finally {
+      if (session) session.endSession();
+    }
+
+    await AuditLogModel.create({ action: "package.pricing.bulk_create_rates", module: "PackagePricing", resource: rateType, resourceId: null, userId: userId || null, tenantId, details: { count: created.length } });
+    return created;
+  }
+
+  /** PATCH /{rate-type}/bulk-status — one audit entry for the whole batch, never one per row. */
+  static async bulkUpdateRateStatus(rateType, ids, status, tenantId, userId, reason = null) {
+    const config = getPackagePricingConfig();
+    const model = PackagePricingService._rateModelFor(rateType);
+    if (!status || !config.rateStatuses.includes(status)) throw new Error(`Invalid status "${status}".`);
+    if (!Array.isArray(ids) || ids.length === 0) throw new Error("ids must be a non-empty array.");
+
+    const result = await model.updateMany({ _id: { $in: ids }, tenantId }, { $set: { status, updatedBy: userId || null } });
+    await AuditLogModel.create({ action: "package.pricing.bulk_update_rate_status", module: "PackagePricing", resource: rateType, resourceId: null, userId: userId || null, tenantId, details: { ids: ids.map(String), status, reason, matchedCount: result.matchedCount, modifiedCount: result.modifiedCount } });
+    return { matchedCount: result.matchedCount, modifiedCount: result.modifiedCount };
+  }
+
+  /** POST /{rate-type}/:id/clone — duplicates one rate row with overridden fields (new dates/validity typically), mirroring ExchangeRateModel's own "new row, never edit history" precedent. */
+  static async cloneRate(rateType, rateId, overrides, tenantId, userId) {
+    const model = PackagePricingService._rateModelFor(rateType);
+    const source = await model.findOne({ _id: rateId, tenantId }).lean();
+    if (!source) throw new Error("Rate not found.");
+
+    const { _id, createdAt, updatedAt, __v, ...rest } = source;
+    const clone = await model.create({ ...rest, ...(overrides || {}), tenantId, createdBy: userId || null, updatedBy: userId || null });
+    await AuditLogModel.create({ action: "package.pricing.clone_rate", module: "PackagePricing", resource: rateType, resourceId: clone._id.toString(), userId: userId || null, tenantId, details: { clonedFrom: rateId } });
+    return clone.toJSON();
+  }
+
+  /** GET /{rate-type}/export?format=csv — a plain data dump, no OCR/review workflow (that's Import, explicitly Phase 2). */
+  static async exportRatesToCsv(rateType, query, tenantId) {
+    const model = PackagePricingService._rateModelFor(rateType);
+    const filter = { tenantId };
+    if (query.status) filter.status = query.status;
+    const rows = await model.find(filter).lean();
+
+    const headers = [...new Set(rows.flatMap((r) => Object.keys(r)))].filter((h) => h !== "__v");
+    const toCsvValue = (value) => {
+      if (value === null || value === undefined) return "";
+      if (value instanceof Date) return value.toISOString();
+      const str = typeof value === "object" ? JSON.stringify(value) : String(value);
+      return /[",\n]/.test(str) ? `"${str.replace(/"/g, '""')}"` : str;
+    };
+    const lines = [headers.join(","), ...rows.map((row) => headers.map((h) => toCsvValue(row[h])).join(","))];
+    return { content: lines.join("\n"), filename: `${rateType}-${tenantId}-${Date.now()}.csv` };
+  }
+
   // ---- Packages ----
 
   /** Fields createPackage/updatePackage both validate and accept — shared so the two never drift apart. */
@@ -854,15 +1036,22 @@ class PackagePricingService {
 
   /** Clones every editable field of a locked package into a fresh Draft, links the two, then calculates the clone. See calculatePackage's own lock-branch above. */
   static async _calculateNewVersion(previousPkg, tenantId, userId) {
+    // .toObject() first — passing a hydrated document's own subdocument
+    // getters (e.g. `previousPkg.discount`) straight into a second
+    // `Model.create()` call throws a spurious CastError on a null single-
+    // nested path ("Cast to Object failed for value null") that a plain
+    // object with the same null value does not; a real regression test
+    // (tests/packagePricingController.test.js's versioning case) caught this.
+    const source = previousPkg.toObject();
     const clone = await PackageModel.create({
-      tenantId, name: previousPkg.name, customerId: previousPkg.customerId, agentUserId: previousPkg.agentUserId,
-      travelStartDate: previousPkg.travelStartDate, travelEndDate: previousPkg.travelEndDate, travelers: previousPkg.travelers,
-      segments: previousPkg.segments, transportLegs: previousPkg.transportLegs, flightSelections: previousPkg.flightSelections,
-      visaSelections: previousPkg.visaSelections, serviceSelections: previousPkg.serviceSelections,
-      vehicleSelectionRule: previousPkg.vehicleSelectionRule, priceListType: previousPkg.priceListType, sellingCurrency: previousPkg.sellingCurrency,
-      markupRuleIds: previousPkg.markupRuleIds, commissionRuleIds: previousPkg.commissionRuleIds, discount: previousPkg.discount,
-      roundingRule: previousPkg.roundingRule, status: "Draft", version: (previousPkg.version || 1) + 1,
-      rootPackageId: previousPkg.rootPackageId || previousPkg._id, previousVersionId: previousPkg._id,
+      tenantId, name: source.name, customerId: source.customerId, agentUserId: source.agentUserId,
+      travelStartDate: source.travelStartDate, travelEndDate: source.travelEndDate, travelers: source.travelers,
+      segments: source.segments, transportLegs: source.transportLegs, flightSelections: source.flightSelections,
+      visaSelections: source.visaSelections, serviceSelections: source.serviceSelections,
+      vehicleSelectionRule: source.vehicleSelectionRule, priceListType: source.priceListType, sellingCurrency: source.sellingCurrency,
+      markupRuleIds: source.markupRuleIds, commissionRuleIds: source.commissionRuleIds, discount: source.discount,
+      roundingRule: source.roundingRule, status: "Draft", version: (source.version || 1) + 1,
+      rootPackageId: source.rootPackageId || previousPkg._id, previousVersionId: previousPkg._id,
       createdBy: userId || null, updatedBy: userId || null
     });
 
@@ -934,7 +1123,17 @@ class PackagePricingService {
       const overlaps = detectOverlappingHotelRates(hotelRates);
       if (overlaps.length > 0) issues.push({ code: "OVERLAPPING_HOTEL_RATES", message: `Segment in "${segment.city}": ${overlaps.length} overlapping rate window(s) detected for its hotel — resolve before finalizing.` });
 
-      const availableRoomTypeIds = roomTypes.filter((rt) => resolveHotelRate(hotelRates, { roomTypeId: rt._id, date: segment.checkIn }, config)).map((rt) => rt._id.toString());
+      const availableRoomTypeIds = [];
+      for (const rt of roomTypes) {
+        const anyStatusMatch = resolveHotelRateAnyStatus(hotelRates, { roomTypeId: rt._id, date: segment.checkIn }, config);
+        const availability = classifyRateAvailability(anyStatusMatch, config);
+        if (availability === "usable") { availableRoomTypeIds.push(rt._id.toString()); continue; }
+        if (availability !== "missing") {
+          // A real, currently-relevant rate exists but isn't auto-confirmable
+          // — surfaced as its own issue, never silently priced or silently dropped.
+          issues.push({ code: RATE_AVAILABILITY_ISSUE_CODES[availability], message: `${rt.name} at the hotel for "${segment.city}" is ${availability} for these dates — confirm availability before quoting.` });
+        }
+      }
       if (availableRoomTypeIds.length === 0) issues.push({ code: "NO_HOTEL_RATE", message: `Segment in "${segment.city}": no active hotel rate found for the selected dates.` });
 
       segmentResolutions.push({ segment, nights, hotelRates, availableRoomTypeIds });
@@ -954,10 +1153,16 @@ class PackagePricingService {
       const vehicles = await TransportVehicleModel.find({ tenantId, active: true }).lean();
       let legTotal = 0;
       for (const leg of pkg.transportLegs) {
-        const candidateRates = (await TransportRateModel.find({ tenantId, origin: leg.origin, destination: leg.destination }).lean())
-          .filter((r) => isRateUsable(r, config) && isWithinWindow(pkg.travelStartDate, r.validFrom, r.validTo));
+        const routeRates = (await TransportRateModel.find({ tenantId, origin: leg.origin, destination: leg.destination }).lean())
+          .filter((r) => isWithinWindow(pkg.travelStartDate, r.validFrom, r.validTo));
+        const candidateRates = routeRates.filter((r) => isRateUsable(r, config));
         if (candidateRates.length === 0) {
-          issues.push({ code: "NO_TRANSPORT_RATE", message: `No active transport rate found for "${leg.origin}" -> "${leg.destination}".` });
+          const onRequestLike = routeRates.find((r) => config.onRequestLikeStatuses.includes(r.status));
+          if (onRequestLike) {
+            issues.push({ code: RATE_AVAILABILITY_ISSUE_CODES[onRequestLike.status], message: `Transport "${leg.origin}" -> "${leg.destination}" is ${onRequestLike.status} for these dates — confirm availability before quoting.` });
+          } else {
+            issues.push({ code: "NO_TRANSPORT_RATE", message: `No active transport rate found for "${leg.origin}" -> "${leg.destination}".` });
+          }
           continue;
         }
 
@@ -992,8 +1197,13 @@ class PackagePricingService {
     const usedFlightRates = [];
     for (const selection of pkg.flightSelections) {
       const rate = await FlightRateModel.findOne({ _id: selection.flightRateId, tenantId }).lean();
-      if (!rate || !isRateUsable(rate, config) || !isWithinWindow(pkg.travelStartDate, rate.validFrom, rate.validTo)) {
-        issues.push({ code: "INVALID_FLIGHT_RATE", message: "A selected flight rate is missing, inactive, or expired." });
+      const flightWithinWindow = rate && isWithinWindow(pkg.travelStartDate, rate.validFrom, rate.validTo);
+      if (!rate || !flightWithinWindow || !isRateUsable(rate, config)) {
+        if (rate && flightWithinWindow && config.onRequestLikeStatuses.includes(rate.status)) {
+          issues.push({ code: RATE_AVAILABILITY_ISSUE_CODES[rate.status], message: `Flight rate "${rate.route}" is ${rate.status} — confirm availability before quoting.` });
+        } else {
+          issues.push({ code: "INVALID_FLIGHT_RATE", message: "A selected flight rate is missing, inactive, or expired." });
+        }
         continue;
       }
       const fx = await resolveFx(rate.currency);
@@ -1007,8 +1217,13 @@ class PackagePricingService {
     const usedVisaRates = [];
     for (const selection of pkg.visaSelections) {
       const rate = await VisaRateModel.findOne({ _id: selection.visaRateId, tenantId }).lean();
-      if (!rate || !isRateUsable(rate, config) || !isWithinWindow(pkg.travelStartDate, rate.validFrom, rate.validTo)) {
-        issues.push({ code: "INVALID_VISA_RATE", message: "A selected visa rate is missing, inactive, or expired." });
+      const visaWithinWindow = rate && isWithinWindow(pkg.travelStartDate, rate.validFrom, rate.validTo);
+      if (!rate || !visaWithinWindow || !isRateUsable(rate, config)) {
+        if (rate && visaWithinWindow && config.onRequestLikeStatuses.includes(rate.status)) {
+          issues.push({ code: RATE_AVAILABILITY_ISSUE_CODES[rate.status], message: `Visa rate for "${rate.country}" (${rate.visaType}) is ${rate.status} — confirm availability before quoting.` });
+        } else {
+          issues.push({ code: "INVALID_VISA_RATE", message: "A selected visa rate is missing, inactive, or expired." });
+        }
         continue;
       }
       const fx = await resolveFx(rate.currency);
@@ -1022,8 +1237,13 @@ class PackagePricingService {
     const convertedServiceRates = [];
     for (const selection of pkg.serviceSelections) {
       const rate = await ServiceRateModel.findOne({ _id: selection.serviceRateId, tenantId }).lean();
-      if (!rate || !isRateUsable(rate, config) || !isWithinWindow(pkg.travelStartDate, rate.validFrom, rate.validTo)) {
-        issues.push({ code: "INVALID_SERVICE_RATE", message: "A selected service rate is missing, inactive, or expired." });
+      const serviceWithinWindow = rate && isWithinWindow(pkg.travelStartDate, rate.validFrom, rate.validTo);
+      if (!rate || !serviceWithinWindow || !isRateUsable(rate, config)) {
+        if (rate && serviceWithinWindow && config.onRequestLikeStatuses.includes(rate.status)) {
+          issues.push({ code: RATE_AVAILABILITY_ISSUE_CODES[rate.status], message: `Service rate "${rate.name}" is ${rate.status} — confirm availability before quoting.` });
+        } else {
+          issues.push({ code: "INVALID_SERVICE_RATE", message: "A selected service rate is missing, inactive, or expired." });
+        }
         continue;
       }
       const fx = rate.chargeBasis === "Percentage" ? 1 : await resolveFx(rate.currency);
@@ -1054,6 +1274,7 @@ class PackagePricingService {
 
     // ---- Room-wise matrix ----
     const matrix = [];
+    const reportedExtraBedIssues = new Set();
     for (const roomTypeId of commonRoomTypeIds) {
       const roomType = roomTypeById.get(roomTypeId);
       let hotelCostPerPerson = 0;
@@ -1063,7 +1284,32 @@ class PackagePricingService {
         usedHotelRateIds.add(rate._id.toString());
         const fx = await resolveFx(rate.currency);
         if (fx === null) continue;
-        hotelCostPerPerson += computeHotelCostPerPerson(rate.pricePerNight * fx, res.nights, res.segment.rooms || 1, rate.occupancy || roomType.defaultOccupancy);
+
+        const extraBeds = res.segment.extraBeds || 0;
+        const rooms = res.segment.rooms || 1;
+        const occupancy = rate.occupancy || roomType.defaultOccupancy;
+        if (extraBeds > 0 && rate.extraBedRate) {
+          if (rate.maxExtraBeds && extraBeds > rate.maxExtraBeds) {
+            const issueKey = `EXTRA_BEDS_EXCEED_MAX:${res.segment.city}:${rate._id}`;
+            if (!reportedExtraBedIssues.has(issueKey)) {
+              reportedExtraBedIssues.add(issueKey);
+              issues.push({ code: "EXTRA_BEDS_EXCEED_MAX", message: `Segment in "${res.segment.city}": requested ${extraBeds} extra bed(s) exceeds this rate's max of ${rate.maxExtraBeds}.` });
+            }
+            hotelCostPerPerson += computeHotelCostPerPerson(rate.pricePerNight * fx, res.nights, rooms, occupancy);
+          } else {
+            const roomTotal = rate.pricePerNight * fx * res.nights * rooms + computeExtraBedCost(extraBeds, rate.extraBedRate * fx, rate.extraBedBasis, res.nights);
+            hotelCostPerPerson += roundCurrency(roomTotal / (occupancy + extraBeds));
+          }
+        } else if (extraBeds > 0) {
+          const issueKey = `EXTRA_BEDS_NOT_AVAILABLE:${res.segment.city}:${rate._id}`;
+          if (!reportedExtraBedIssues.has(issueKey)) {
+            reportedExtraBedIssues.add(issueKey);
+            issues.push({ code: "EXTRA_BEDS_NOT_AVAILABLE", message: `Segment in "${res.segment.city}": ${extraBeds} extra bed(s) requested, but this rate has no extra bed option.` });
+          }
+          hotelCostPerPerson += computeHotelCostPerPerson(rate.pricePerNight * fx, res.nights, rooms, occupancy);
+        } else {
+          hotelCostPerPerson += computeHotelCostPerPerson(rate.pricePerNight * fx, res.nights, rooms, occupancy);
+        }
       }
       hotelCostPerPerson = roundCurrency(hotelCostPerPerson);
 
@@ -1107,7 +1353,34 @@ class PackagePricingService {
       });
     }
 
-    const ready = issues.length === 0 && matrix.length > 0;
+    const usedHotelRates = usedHotelRateIds.size > 0 ? await HotelRateModel.find({ _id: { $in: [...usedHotelRateIds] } }).lean() : [];
+
+    // PRD §52 "Rate Change Alert" — if this package was already calculated
+    // before, compare every rate this run actually used against the value
+    // recorded in the LAST snapshot. A silent recalculation must never hide
+    // that a supplier rate moved underneath an already-shared quotation.
+    const previousSnapshot = await RateSnapshotModel.findOne({ tenantId, packageId: pkg._id, snapshotType: "Calculate" }).sort({ createdAt: -1 }).lean();
+    if (previousSnapshot) {
+      const flagChange = (label, prevValue, currentValue) => {
+        if (prevValue !== undefined && prevValue !== null && currentValue !== undefined && currentValue !== null && prevValue !== currentValue) {
+          issues.push({ code: "RATE_CHANGED_SINCE_LAST_CALCULATION", message: `${label} changed from ${prevValue} to ${currentValue} since this package was last calculated.` });
+        }
+      };
+      const prevHotelById = new Map((previousSnapshot.hotelRates || []).map((r) => [r.rateId?.toString(), r]));
+      for (const r of usedHotelRates) flagChange(`Hotel rate ${r._id}`, prevHotelById.get(r._id.toString())?.pricePerNight, r.pricePerNight);
+      const prevTransportById = new Map((previousSnapshot.transportRates || []).map((r) => [r.rateId?.toString(), r]));
+      for (const r of usedTransportRates) flagChange(`Transport rate ${r.origin} -> ${r.destination}`, prevTransportById.get(r.rateId?.toString())?.rate, r.rate);
+      const prevFlightById = new Map((previousSnapshot.flightRates || []).map((r) => [r.rateId?.toString(), r]));
+      for (const r of usedFlightRates) flagChange(`Flight rate ${r.route}`, prevFlightById.get(r.rateId?.toString())?.costPerPerson, r.costPerPerson);
+      const prevVisaById = new Map((previousSnapshot.visaRates || []).map((r) => [r.rateId?.toString(), r]));
+      for (const r of usedVisaRates) flagChange(`Visa rate ${r.country}/${r.visaType}`, prevVisaById.get(r.rateId?.toString())?.adultCost, r.adultCost);
+    }
+
+    // RATE_CHANGED_SINCE_LAST_CALCULATION is informational (PRD §52 — "user
+    // can choose Update or Keep Old Rate") — it's surfaced in
+    // validationIssues so the UI can show it, but never blocks `ready` or
+    // finalize the way a genuinely missing/invalid rate does.
+    const ready = issues.filter((i) => i.code !== "RATE_CHANGED_SINCE_LAST_CALCULATION").length === 0 && matrix.length > 0;
     pkg.validationIssues = issues;
     pkg.roomWisePriceMatrix = matrix;
     pkg.status = ready ? "Calculated" : pkg.status === "Draft" ? "Draft" : pkg.status;
@@ -1118,7 +1391,6 @@ class PackagePricingService {
     pkg.updatedBy = userId || null;
     await pkg.save();
 
-    const usedHotelRates = usedHotelRateIds.size > 0 ? await HotelRateModel.find({ _id: { $in: [...usedHotelRateIds] } }).lean() : [];
     await RateSnapshotModel.create({
       tenantId, packageId: pkg._id, snapshotType: "Calculate",
       hotelRates: usedHotelRates.map((r) => ({ rateId: r._id, hotelCatalogId: r.hotelCatalogId, roomTypeId: r.roomTypeId, pricePerNight: r.pricePerNight, currency: r.currency, rateBasis: r.rateBasis })),
@@ -1142,7 +1414,8 @@ class PackagePricingService {
     const pkg = await PackageModel.findOne({ _id: packageId, tenantId });
     if (!pkg) throw new Error("Package not found.");
     if (pkg.status !== "Calculated") throw new Error(`Package cannot be finalized from status "${pkg.status}" — calculate it first.`);
-    if (pkg.validationIssues && pkg.validationIssues.length > 0) throw new Error("Package has unresolved validation issues and cannot be finalized.");
+    const blockingIssues = (pkg.validationIssues || []).filter((i) => i.code !== "RATE_CHANGED_SINCE_LAST_CALCULATION");
+    if (blockingIssues.length > 0) throw new Error("Package has unresolved validation issues and cannot be finalized.");
     if (!pkg.roomWisePriceMatrix || pkg.roomWisePriceMatrix.length === 0) throw new Error("Package has no calculated price matrix to finalize.");
 
     const lastSnapshot = await RateSnapshotModel.findOne({ tenantId, packageId: pkg._id, snapshotType: "Calculate" }).sort({ createdAt: -1 }).lean();
@@ -1162,6 +1435,96 @@ class PackagePricingService {
     publishEvent("PackageFinalized", { tenantId, packageId: pkg._id.toString(), performedBy: userId || null });
 
     return pkg.toJSON();
+  }
+
+  /** GET /packages/:id/room-combinations — PRD §46, read-only. */
+  static async getRoomCombinations(packageId, tenantId) {
+    const pkg = await PackageModel.findOne({ _id: packageId, tenantId }).lean();
+    if (!pkg) throw new Error("Package not found.");
+    if (!pkg.roomWisePriceMatrix || pkg.roomWisePriceMatrix.length === 0) throw new Error("Package has no calculated price matrix — calculate the package first.");
+
+    const totalPax = pkg.travelers.adults + (pkg.travelers.children || 0) + (pkg.travelers.infants || 0);
+    const availableRoomTypes = pkg.roomWisePriceMatrix.map((r) => ({ roomTypeId: r.roomTypeId.toString(), defaultOccupancy: r.occupancy }));
+    return suggestRoomCombinations(totalPax, availableRoomTypes);
+  }
+
+  /**
+   * POST /packages/compare — PRD §83. Not a new "tier" concept — comparison
+   * is just N already-calculated Package documents (e.g. a 3-star-hotel
+   * package and a 5-star-hotel package) viewed side by side. Never
+   * recalculates either package.
+   */
+  static async comparePackages(packageIds, tenantId) {
+    if (!Array.isArray(packageIds) || packageIds.length < 2) throw new Error("At least two packageIds are required to compare.");
+    const packages = await PackageModel.find({ _id: { $in: packageIds }, tenantId }).lean();
+    if (packages.length !== packageIds.length) throw new Error("One or more packages were not found.");
+
+    const byId = new Map(packages.map((pkg) => [pkg._id.toString(), pkg]));
+    return packageIds.map((id) => {
+      const pkg = byId.get(id.toString());
+      return {
+        packageId: pkg._id.toString(), name: pkg.name, status: pkg.status, sellingCurrency: pkg.sellingCurrency,
+        travelStartDate: pkg.travelStartDate, travelEndDate: pkg.travelEndDate, roomWisePriceMatrix: pkg.roomWisePriceMatrix
+      };
+    });
+  }
+
+  // ---- Package Templates (PRD §82) ----
+
+  static async saveAsTemplate(packageId, name, tenantId, userId) {
+    if (!name) throw new Error("name is required.");
+    const pkg = await PackageModel.findOne({ _id: packageId, tenantId }).lean();
+    if (!pkg) throw new Error("Package not found.");
+    if (!pkg.segments || pkg.segments.length === 0) throw new Error("Package has no segments to save as a template.");
+
+    const startTime = new Date(pkg.travelStartDate).getTime();
+    const segments = pkg.segments.map((s) => ({
+      city: s.city, country: s.country || null, hotelCatalogId: s.hotelCatalogId, mealPlan: s.mealPlan,
+      rooms: s.rooms || 1, extraBeds: s.extraBeds || 0,
+      offsetDays: Math.max(0, Math.round((new Date(s.checkIn).getTime() - startTime) / 86400000)),
+      nights: Math.max(1, computeNights(s.checkIn, s.checkOut)), sortOrder: s.sortOrder || 0
+    }));
+
+    const template = await PackageTemplateModel.create({
+      tenantId, name, segments, transportLegs: pkg.transportLegs, flightSelections: pkg.flightSelections,
+      visaSelections: pkg.visaSelections, serviceSelections: pkg.serviceSelections, vehicleSelectionRule: pkg.vehicleSelectionRule,
+      priceListType: pkg.priceListType, sellingCurrency: pkg.sellingCurrency, markupRuleIds: pkg.markupRuleIds,
+      commissionRuleIds: pkg.commissionRuleIds, roundingRule: pkg.roundingRule, discount: pkg.discount,
+      sourcePackageId: pkg._id, createdBy: userId || null, updatedBy: userId || null
+    });
+
+    await AuditLogModel.create({ action: "package.pricing.save_as_template", module: "PackagePricing", resource: "PackageTemplate", resourceId: template._id.toString(), userId: userId || null, tenantId, details: { packageId: pkg._id.toString(), name } });
+    return template.toJSON();
+  }
+
+  static async listPackageTemplates(query, tenantId) {
+    const filter = { tenantId };
+    if (query.active !== undefined) filter.active = query.active === "true" || query.active === true;
+    return PackageTemplateModel.find(filter).sort({ createdAt: -1 }).lean();
+  }
+
+  /** Clones a template into a new Draft Package, recomputing real segment dates from `travelStartDate` — never mutates the template itself. */
+  static async cloneFromTemplate(templateId, data, tenantId, userId) {
+    const { travelStartDate, customerId = null, agentUserId = null, travelers = { adults: 1 }, name = null } = data;
+    if (!travelStartDate) throw new Error("travelStartDate is required.");
+    const template = await PackageTemplateModel.findOne({ _id: templateId, tenantId }).lean();
+    if (!template) throw new Error("Package template not found.");
+
+    const start = new Date(travelStartDate);
+    const segments = template.segments.map((s) => {
+      const checkIn = new Date(start.getTime() + s.offsetDays * 86400000);
+      const checkOut = new Date(checkIn.getTime() + s.nights * 86400000);
+      return { city: s.city, country: s.country, hotelCatalogId: s.hotelCatalogId, checkIn, checkOut, mealPlan: s.mealPlan, rooms: s.rooms, extraBeds: s.extraBeds, sortOrder: s.sortOrder };
+    });
+    const travelEndDate = segments.reduce((max, s) => (s.checkOut > max ? s.checkOut : max), start);
+
+    return PackagePricingService.createPackage({
+      name: name || `${template.name} (cloned)`, customerId, agentUserId, travelStartDate: start, travelEndDate, travelers,
+      segments, transportLegs: template.transportLegs, flightSelections: template.flightSelections, visaSelections: template.visaSelections,
+      serviceSelections: template.serviceSelections, vehicleSelectionRule: template.vehicleSelectionRule, priceListType: template.priceListType,
+      sellingCurrency: template.sellingCurrency, markupRuleIds: template.markupRuleIds, commissionRuleIds: template.commissionRuleIds,
+      roundingRule: template.roundingRule, discount: template.discount
+    }, tenantId, userId);
   }
 
   // ---- Quotations ----

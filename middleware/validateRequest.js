@@ -3780,6 +3780,9 @@ const buildPackagePricingSchemas = () => {
       daysOfWeek: Joi.array().items(Joi.number().integer().min(0).max(6)).optional(),
       season: Joi.string().trim().max(100).optional().allow(null, ""),
       supplier: Joi.string().trim().max(200).optional().allow(null, ""),
+      extraBedRate: Joi.number().min(0).optional().allow(null),
+      extraBedBasis: Joi.string().trim().valid(...config.extraBedBasisTypes).optional().allow(null, ""),
+      maxExtraBeds: Joi.number().integer().min(0).optional(),
       status: rateStatus,
       source: rateSource
     }),
@@ -3884,6 +3887,38 @@ const buildPackagePricingSchemas = () => {
       bookingId: objectIdRef.required()
     }),
 
+    bulkCreateRates: Joi.object({
+      items: Joi.array().items(Joi.object().unknown(true)).min(1).required()
+    }),
+
+    bulkUpdateRateStatus: Joi.object({
+      ids: Joi.array().items(objectIdRef).min(1).required(),
+      status: Joi.string().trim().valid(...config.rateStatuses).required(),
+      reason: Joi.string().trim().max(500).optional().allow(null, "")
+    }),
+
+    cloneRate: Joi.object().unknown(true),
+
+    saveAsTemplate: Joi.object({
+      name: Joi.string().trim().min(1).max(200).required()
+    }),
+
+    cloneFromTemplate: Joi.object({
+      travelStartDate: Joi.date().required(),
+      name: Joi.string().trim().max(200).optional().allow(null, ""),
+      customerId: objectIdRef.optional().allow(null, ""),
+      agentUserId: Joi.string().trim().optional().allow(null, ""),
+      travelers: Joi.object({
+        adults: Joi.number().integer().min(1).optional(),
+        children: Joi.number().integer().min(0).optional(),
+        infants: Joi.number().integer().min(0).optional()
+      }).optional()
+    }),
+
+    comparePackages: Joi.object({
+      packageIds: Joi.array().items(objectIdRef).min(2).required()
+    }),
+
     convertToBooking: Joi.object({
       roomTypeId: objectIdRef.required(),
       rooms: Joi.number().integer().min(1).optional(),
@@ -3895,7 +3930,9 @@ const buildPackagePricingSchemas = () => {
       template: Joi.string().trim().valid(...config.flyerTemplates).optional(),
       format: Joi.string().trim().valid(...config.flyerFormats).optional(),
       dimensionPreset: Joi.string().trim().valid(...Object.keys(config.flyerDimensionPresets)).optional(),
-      roomTypeIds: Joi.array().items(objectIdRef).optional()
+      roomTypeIds: Joi.array().items(objectIdRef).optional(),
+      language: Joi.string().trim().lowercase().optional(),
+      displayCurrency: Joi.string().trim().length(3).uppercase().optional().allow(null, "")
     }),
 
     sendWhatsAppMessage: Joi.object({
@@ -3922,6 +3959,7 @@ const buildPackagePricingSchemas = () => {
         checkOut: Joi.date().required(),
         mealPlan: Joi.string().trim().max(100).optional().allow(null, ""),
         rooms: Joi.number().integer().min(1).optional(),
+        extraBeds: Joi.number().integer().min(0).optional(),
         sortOrder: Joi.number().integer().optional()
       })).optional(),
       transportLegs: Joi.array().items(Joi.object({
@@ -3971,6 +4009,7 @@ const buildPackagePricingSchemas = () => {
         checkOut: Joi.date().required(),
         mealPlan: Joi.string().trim().max(100).optional().allow(null, ""),
         rooms: Joi.number().integer().min(1).optional(),
+        extraBeds: Joi.number().integer().min(0).optional(),
         sortOrder: Joi.number().integer().optional()
       })).optional(),
       transportLegs: Joi.array().items(Joi.object({
@@ -4009,7 +4048,8 @@ const buildPackagePricingSchemas = () => {
 const PACKAGE_PRICING_SCHEMA_KEYS = new Set([
   "createRoomType", "createTransportVehicle", "createHotelRate", "createTransportRate", "createFlightRate", "createVisaRate",
   "createServiceRate", "createMarkupRule", "createSupplier", "createCommissionRule", "updateRecord", "createPackage",
-  "updatePackage", "linkBooking", "convertToBooking", "createQuotation", "generateFlyer", "sendWhatsAppMessage", "calculatePackage"
+  "updatePackage", "linkBooking", "convertToBooking", "createQuotation", "generateFlyer", "sendWhatsAppMessage", "calculatePackage", "comparePackages",
+  "saveAsTemplate", "cloneFromTemplate", "bulkCreateRates", "bulkUpdateRateStatus", "cloneRate"
 ]);
 
 export const packagePricingSchemas = new Proxy({}, {

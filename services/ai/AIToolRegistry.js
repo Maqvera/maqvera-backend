@@ -1,4 +1,5 @@
 import GdsIntegrationService from "../GdsIntegrationService.js";
+import CurrencyService from "../CurrencyService.js";
 import AmadeusFlightScheduleService from "../AmadeusFlightScheduleService.js";
 import ReferenceDataService from "../ReferenceDataService.js";
 import AmadeusFlightInspirationService from "../AmadeusFlightInspirationService.js";
@@ -543,7 +544,10 @@ const TOOLS = [
     requiresApproval: false,
     version: "1.0.0",
     ownerModule: "GDSIntegration",
-    handler: async (args) => GdsIntegrationService.getFareRules({ offerId: args.offerId, provider: args.provider || "Amadeus" })
+    // Golden Rule 2 (never hardcode a currency) — resolves to the calling
+    // tenant's own base currency rather than letting SabreAdapter's mock
+    // fall back to a silent "PKR" when provider === "Sabre".
+    handler: async (args, context) => GdsIntegrationService.getFareRules({ offerId: args.offerId, provider: args.provider || "Amadeus", currency: args.currency || await CurrencyService.getBaseCurrency(context.tenantId) })
   },
   {
     name: "get_visa_requirements",

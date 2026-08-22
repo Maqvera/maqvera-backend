@@ -22,7 +22,12 @@ export const SearchHotels = async (req, res) => {
     if (!permissions.includes("hotel.search") && !permissions.includes("admin")) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
-    const { city, checkIn, checkOut, rooms = 1, adults = 2, children = 0, nationality = "PK", currency = "PKR", provider = "Amadeus" } = req.body;
+    const { city, checkIn, checkOut, rooms = 1, adults = 2, children = 0, nationality = "PK", provider = "Amadeus" } = req.body;
+    // Golden Rule 2 (never hardcode a currency) — resolves to the tenant's
+    // own configured base currency (utils/financeConfig.js's defaultCurrency
+    // fallback) instead of a literal "PKR", the same resolution
+    // CurrencyService.getRate already uses for conversion elsewhere.
+    const currency = (req.body.currency || await CurrencyService.getBaseCurrency(tenantId)).toUpperCase();
 
     if (!city || !checkIn || !checkOut) {
       return sendError(res, 400, "city, checkIn, and checkOut dates are required.", requestId);

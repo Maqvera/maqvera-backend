@@ -32,6 +32,13 @@ const HotelRateSchema = new mongoose.Schema({
   pricePerNight: { type: Number, required: true, min: 0 },
   // Number of guests pricePerNight covers — the divisor for per-person cost.
   occupancy: { type: Number, required: true, min: 1 },
+  // PRD §23 "Extra Bed" — an additional guest beyond `occupancy` sharing
+  // the same room. `extraBedRate` left null means this rate has no extra
+  // bed option at all (a segment requesting one gets a validation issue,
+  // never a silently-ignored extra guest).
+  extraBedRate: { type: Number, default: null, min: 0 },
+  extraBedBasis: { type: String, default: null },
+  maxExtraBeds: { type: Number, default: 0, min: 0 },
   rateBasis: { type: String, required: true, index: true },
   // Used when rateBasis === "ExactDate".
   date: { type: Date, default: null },

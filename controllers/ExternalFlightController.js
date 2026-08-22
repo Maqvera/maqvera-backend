@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import AmadeusFlightSearchService from "../services/AmadeusFlightSearchService.js";
+import CurrencyService from "../services/CurrencyService.js";
 import AuditLogModel from "../models/AuditLogmodel.js";
 import { sendError, sendSuccess } from "../utils/apiResponse.js";
 import { createRequestId } from "../utils/authTokens.js";
@@ -37,8 +38,11 @@ export const SearchAmadeusFlights = async (req, res) => {
     const {
       origin, destination, departureDate, returnDate,
       adults = "1", children = "0", infants = "0",
-      travelClass = "ECONOMY", nonStop, currency = "PKR", maxResults
+      travelClass = "ECONOMY", nonStop, maxResults
     } = req.query;
+    // Golden Rule 2 (never hardcode a currency) — resolves to the tenant's
+    // own configured base currency instead of a literal "PKR".
+    const currency = (req.query.currency || await CurrencyService.getBaseCurrency(tenantId)).toUpperCase();
 
     // Validation Rules §8: Origin required, Destination required, Departure
     // date required, Origin ≠ Destination, Departure cannot be in past,

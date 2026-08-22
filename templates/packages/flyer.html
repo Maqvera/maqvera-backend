@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html>
+<html dir="{{dir}}">
 <head>
 <meta charset="utf-8">
 <style>
@@ -30,9 +30,9 @@ body { font-family: Arial, Helvetica, sans-serif; }
     </div>
   </div>
 
-  <div class="section-title">Itinerary</div>
+  <div class="section-title">{{strings.itinerary}}</div>
   <table class="doc-table">
-    <thead><tr><th>#</th><th>City</th><th>Hotel</th><th>Nights</th></tr></thead>
+    <thead><tr><th>#</th><th>City</th><th>Hotel</th><th>{{strings.nights}}</th></tr></thead>
     <tbody>
       {{#each package.segments}}
       <tr>
@@ -45,23 +45,24 @@ body { font-family: Arial, Helvetica, sans-serif; }
     </tbody>
   </table>
 
-  <div class="section-title">Package Price</div>
+  <div class="section-title">{{strings.packagePrice}}</div>
   <div class="flyer-price-grid">
     {{#each rooms}}
     <div class="flyer-price-card">
       <div class="room-name">{{this.roomTypeName}}</div>
       <div>{{this.occupancy}} Person(s)</div>
       <div class="room-price">{{formatNumber this.finalPricePerPerson}} {{../package.sellingCurrency}}</div>
-      <div>per person</div>
+      <div>{{../strings.perPerson}}</div>
     </div>
     {{/each}}
   </div>
 
+  <div class="section-title">{{strings.includes}}</div>
   <ul class="flyer-includes">
     {{#each includedComponents}}<li>{{this}}</li>{{/each}}
   </ul>
 
-  <div class="flyer-cta">Book Now</div>
+  <div class="flyer-cta">{{strings.bookNow}}</div>
   <div class="flyer-contact">
     {{#if company.phone}}Call/WhatsApp: {{company.phone}}{{/if}}
     {{#if company.email}} &nbsp;|&nbsp; {{company.email}}{{/if}}

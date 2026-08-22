@@ -25,6 +25,9 @@ const PackageSegmentSchema = new mongoose.Schema({
   checkOut: { type: Date, required: true },
   mealPlan: { type: String, default: null },
   rooms: { type: Number, default: 1, min: 1 },
+  // PRD §23 "Extra Bed" — extra guests sharing this segment's room(s)
+  // beyond the resolved hotel rate's own `occupancy`.
+  extraBeds: { type: Number, default: 0, min: 0 },
   sortOrder: { type: Number, default: 0 }
 }, { _id: true });
 

@@ -35,9 +35,21 @@ export const getPackagePricingConfig = () => ({
   // Shared rate-record lifecycle — hotel/transport/flight/visa/service rates
   // all use this same status set (PRD §5, §11): a missing rate must never be
   // treated as zero, and an expired/StopSale rate must never be silently used.
-  rateStatuses: parseStringList(process.env.PACKAGE_RATE_STATUSES_JSON, ["Draft", "Verified", "Active", "OnRequest", "StopSale", "Expired", "Archived"]),
+  rateStatuses: parseStringList(process.env.PACKAGE_RATE_STATUSES_JSON, ["Draft", "Verified", "Active", "OnRequest", "StopSale", "SoldOut", "Expired", "Archived"]),
   defaultRateStatus: process.env.DEFAULT_PACKAGE_RATE_STATUS || "Draft",
   usableRateStatuses: parseStringList(process.env.USABLE_PACKAGE_RATE_STATUSES_JSON, ["Active"]),
+  // PRD §54/§78-79 — a rate in one of these statuses is real and resolvable
+  // (a genuine, currently-relevant rate the agent should be told about) but
+  // must never be silently priced as if it were Active; Draft/Expired/
+  // Archived stay fully non-resolvable, same as a rate that doesn't exist.
+  onRequestLikeStatuses: parseStringList(process.env.PACKAGE_ON_REQUEST_LIKE_STATUSES_JSON, ["OnRequest", "StopSale", "SoldOut"]),
+  // PRD §23 "Extra Bed" — per night / per stay / per person.
+  extraBedBasisTypes: parseStringList(process.env.PACKAGE_EXTRA_BED_BASIS_TYPES_JSON, ["PerNight", "PerStay", "PerPerson"]),
+  defaultExtraBedBasis: process.env.DEFAULT_PACKAGE_EXTRA_BED_BASIS || "PerStay",
+
+  // PRD §26/§110-111 — rate expiry alerts.
+  rateExpiryWarningDays: Number(process.env.PACKAGE_RATE_EXPIRY_WARNING_DAYS) || 7,
+  rateExpiryCron: process.env.PACKAGE_RATE_EXPIRY_CRON_SCHEDULE || "0 3 * * *",
   rateSourceTypes: parseStringList(process.env.PACKAGE_RATE_SOURCE_TYPES_JSON, ["Manual", "Import"]),
   defaultRateSource: process.env.DEFAULT_PACKAGE_RATE_SOURCE || "Manual",
 

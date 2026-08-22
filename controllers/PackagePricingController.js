@@ -1,6 +1,7 @@
 import PackagePricingService from "../services/PackagePricingService.js";
 import PackageFlyerService from "../services/PackageFlyerService.js";
 import PackageWhatsAppMessageService from "../services/PackageWhatsAppMessageService.js";
+import PackageAnalyticsService from "../services/PackageAnalyticsService.js";
 import { sendSuccess, sendError } from "../utils/apiResponse.js";
 import { createRequestId } from "../utils/authTokens.js";
 import { getAccessScope } from "../utils/accessScope.js";
@@ -405,6 +406,98 @@ export const linkPackageToBooking = async (req, res) => {
   }
 };
 
+export const saveAsTemplate = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "package.pricing.manage")) return sendError(res, 403, "Permission denied.", requestId);
+
+    const template = await PackagePricingService.saveAsTemplate(req.params.packageId, req.body?.name, scope.tenantId, userIdFrom(req));
+    return sendSuccess(res, 201, "Package template saved successfully.", template, requestId);
+  } catch (error) {
+    console.error("saveAsTemplate error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to save package template.", requestId);
+  }
+};
+
+export const listPackageTemplates = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "package.pricing.read", "package.pricing.manage")) return sendError(res, 403, "Permission denied.", requestId);
+
+    const items = await PackagePricingService.listPackageTemplates(req.query, scope.tenantId);
+    return sendSuccess(res, 200, "Package templates retrieved successfully.", { items }, requestId);
+  } catch (error) {
+    console.error("listPackageTemplates error:", error);
+    return sendError(res, 500, error.message || "Failed to retrieve package templates.", requestId);
+  }
+};
+
+export const cloneFromTemplate = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "package.pricing.manage")) return sendError(res, 403, "Permission denied.", requestId);
+
+    const pkg = await PackagePricingService.cloneFromTemplate(req.params.templateId, req.body, scope.tenantId, userIdFrom(req));
+    return sendSuccess(res, 201, "Package created from template successfully.", pkg, requestId);
+  } catch (error) {
+    console.error("cloneFromTemplate error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to create package from template.", requestId);
+  }
+};
+
+export const getAnalyticsSummary = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    // Profit/margin data — same visibility gate as roomWisePriceMatrix's own cost fields.
+    if (!hasPermission(req, "package.pricing.cost.read")) return sendError(res, 403, "Permission denied.", requestId);
+
+    const summary = await PackageAnalyticsService.getSummary(scope.tenantId);
+    return sendSuccess(res, 200, "Package analytics retrieved successfully.", summary, requestId);
+  } catch (error) {
+    console.error("getAnalyticsSummary error:", error);
+    return sendError(res, 500, error.message || "Failed to retrieve package analytics.", requestId);
+  }
+};
+
+export const getRoomCombinations = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "package.pricing.read", "package.pricing.manage")) return sendError(res, 403, "Permission denied.", requestId);
+
+    const combinations = await PackagePricingService.getRoomCombinations(req.params.packageId, scope.tenantId);
+    return sendSuccess(res, 200, "Room combinations retrieved successfully.", { items: combinations }, requestId);
+  } catch (error) {
+    console.error("getRoomCombinations error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to retrieve room combinations.", requestId);
+  }
+};
+
+export const comparePackages = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "package.pricing.read", "package.pricing.manage")) return sendError(res, 403, "Permission denied.", requestId);
+
+    const canSeeCost = hasPermission(req, "package.pricing.cost.read");
+    const items = (await PackagePricingService.comparePackages(req.body?.packageIds, scope.tenantId)).map((pkg) => redactPackageCost(pkg, canSeeCost));
+    return sendSuccess(res, 200, "Packages compared successfully.", { items }, requestId);
+  } catch (error) {
+    console.error("comparePackages error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to compare packages.", requestId);
+  }
+};
+
 export const convertPackageToBooking = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
@@ -493,6 +586,95 @@ export const updateVisaRate = makeUpdateHandler("updateVisaRate", "Visa rate");
 export const updateServiceRate = makeUpdateHandler("updateServiceRate", "Service rate");
 export const updateMarkupRule = makeUpdateHandler("updateMarkupRule", "Markup rule");
 export const updateSupplier = makeUpdateHandler("updateSupplier", "Supplier");
+
+// ---- Bulk rate management (PRD §112 / PRD v2 §14) ----
+
+const makeBulkCreateHandler = (rateType) => async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "package.pricing.manage")) return sendError(res, 403, "Permission denied.", requestId);
+
+    const items = await PackagePricingService.bulkCreateRates(rateType, req.body?.items, scope.tenantId, userIdFrom(req));
+    return sendSuccess(res, 201, `${items.length} rate(s) created successfully.`, { items }, requestId);
+  } catch (error) {
+    console.error(`bulkCreate ${rateType} error:`, error);
+    return sendError(res, statusFromError(error), error.message || "Failed to bulk-create rates.", requestId);
+  }
+};
+
+const makeBulkStatusHandler = (rateType) => async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "package.pricing.manage")) return sendError(res, 403, "Permission denied.", requestId);
+
+    const result = await PackagePricingService.bulkUpdateRateStatus(rateType, req.body?.ids, req.body?.status, scope.tenantId, userIdFrom(req), req.body?.reason);
+    return sendSuccess(res, 200, "Rate status updated successfully.", result, requestId);
+  } catch (error) {
+    console.error(`bulkStatus ${rateType} error:`, error);
+    return sendError(res, statusFromError(error), error.message || "Failed to bulk-update rate status.", requestId);
+  }
+};
+
+const makeCloneHandler = (rateType) => async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "package.pricing.manage")) return sendError(res, 403, "Permission denied.", requestId);
+
+    const idParam = Object.keys(req.params)[0];
+    const clone = await PackagePricingService.cloneRate(rateType, req.params[idParam], req.body, scope.tenantId, userIdFrom(req));
+    return sendSuccess(res, 201, "Rate cloned successfully.", clone, requestId);
+  } catch (error) {
+    console.error(`clone ${rateType} error:`, error);
+    return sendError(res, statusFromError(error), error.message || "Failed to clone rate.", requestId);
+  }
+};
+
+const makeExportHandler = (rateType) => async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "package.pricing.read", "package.pricing.manage")) return sendError(res, 403, "Permission denied.", requestId);
+
+    const { content, filename } = await PackagePricingService.exportRatesToCsv(rateType, req.query, scope.tenantId);
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    return res.status(200).send(content);
+  } catch (error) {
+    console.error(`export ${rateType} error:`, error);
+    return sendError(res, 500, error.message || "Failed to export rates.", requestId);
+  }
+};
+
+export const bulkCreateHotelRates = makeBulkCreateHandler("hotel-rates");
+export const bulkCreateTransportRates = makeBulkCreateHandler("transport-rates");
+export const bulkCreateFlightRates = makeBulkCreateHandler("flight-rates");
+export const bulkCreateVisaRates = makeBulkCreateHandler("visa-rates");
+export const bulkCreateServiceRates = makeBulkCreateHandler("service-rates");
+
+export const bulkStatusHotelRates = makeBulkStatusHandler("hotel-rates");
+export const bulkStatusTransportRates = makeBulkStatusHandler("transport-rates");
+export const bulkStatusFlightRates = makeBulkStatusHandler("flight-rates");
+export const bulkStatusVisaRates = makeBulkStatusHandler("visa-rates");
+export const bulkStatusServiceRates = makeBulkStatusHandler("service-rates");
+
+export const cloneHotelRate = makeCloneHandler("hotel-rates");
+export const cloneTransportRate = makeCloneHandler("transport-rates");
+export const cloneFlightRate = makeCloneHandler("flight-rates");
+export const cloneVisaRate = makeCloneHandler("visa-rates");
+export const cloneServiceRate = makeCloneHandler("service-rates");
+
+export const exportHotelRates = makeExportHandler("hotel-rates");
+export const exportTransportRates = makeExportHandler("transport-rates");
+export const exportFlightRates = makeExportHandler("flight-rates");
+export const exportVisaRates = makeExportHandler("visa-rates");
+export const exportServiceRates = makeExportHandler("service-rates");
 
 // ---- Suppliers ----
 

@@ -58,6 +58,37 @@ Each `roomWisePriceMatrix` row: `roomTypeId`, `roomTypeName`, `occupancy`, `hote
 
 - `POST /api/v1/packages/{packageId}/whatsapp-message` — `{phone?, roomTypeIds?}`. Builds a PRD §66-shaped text message (destination, dates, hotel, per-room prices, includes checklist, CTA) from the package's calculated matrix and sends it through the **existing** Enterprise Communication Platform (`services/CommunicationPlatformService.js`, channel `"WhatsApp"`) and its real Twilio-backed `services/delivery/WhatsAppDeliveryAdapter.js` — the same infra `VisaCommunicationListener.js` already uses, not a new integration. `phone` falls back to the linked customer's phone on file. Requires `TWILIO_ACCOUNT_SID`/`TWILIO_AUTH_TOKEN`/`TWILIO_WHATSAPP_FROM` to be set in `.env` for an actual send to go out (see `.env.example`).
 
+## Rate availability status (On Request / Stop Sale / Sold Out)
+
+Rate resolution (hotel/transport/flight/visa/service alike) distinguishes a **genuinely missing** rate from one that **exists but isn't auto-confirmable**: if the best-matching rate's status is `OnRequest`/`StopSale`/`SoldOut`, `calculatePackage` pushes `RATE_ON_REQUEST`/`RATE_STOP_SALE`/`RATE_SOLD_OUT` (never silently priced as Active); a genuinely absent rate still surfaces the original `NO_HOTEL_RATE`/`INVALID_*_RATE` codes. `RATE_CHANGED_SINCE_LAST_CALCULATION` is pushed when a rate this run resolved differs from the value recorded in the package's own last `RateSnapshotModel` row — informational only, never blocks `ready` or finalize.
+
+## Extra beds, room combinations, comparison
+
+- `HotelRateModel` carries `extraBedRate`/`extraBedBasis`/`maxExtraBeds`; `PackageSegment.extraBeds` requests extra occupants for that segment. `EXTRA_BEDS_EXCEED_MAX`/`EXTRA_BEDS_NOT_AVAILABLE` issues surface instead of silently dropping the guest.
+- `GET /api/v1/packages/{id}/room-combinations` — suggests room-count combinations (e.g. "4 Double, or 2 Quad, or 1 Quad + 2 Double") for the package's own traveler count against its calculated matrix's room types.
+- `POST /api/v1/packages/compare` — `{packageIds: [...]}`, returns 2+ already-calculated packages' matrices side by side (never recalculates).
+
+## Package templates
+
+- `POST /api/v1/packages/{id}/save-as-template` — `{name}`, saves the package's segments (as day-offsets from its own start, so a clone can land on new dates) plus its transport/flight/visa/service selections and pricing config.
+- `GET /api/v1/package-templates` / `POST /api/v1/package-templates/{id}/clone` — `{travelStartDate, name?, customerId?, agentUserId?, travelers?}` creates a new Draft package from the template.
+
+## Bulk rate management & export
+
+For each rate type (`hotel-rates`/`transport-rates`/`flight-rates`/`visa-rates`/`service-rates`):
+- `POST /{rate-type}/bulk` — `{items: [...]}`, all-or-nothing (a real Mongo transaction where the deployment supports one; best-effort sequential on a standalone Mongo).
+- `PATCH /{rate-type}/bulk-status` — `{ids: [...], status, reason?}`, one audit-log entry per batch.
+- `POST /{rate-type}/{id}/clone` — duplicates one rate row with any overridden fields in the body (new validity window, typically).
+- `GET /{rate-type}/export?format=csv` — plain CSV dump (XLSX intentionally not added yet — this codebase already depends on `exceljs` elsewhere, but the PRD's own guidance was to confirm the format is actually needed before building it).
+
+## Analytics
+
+`GET /api/v1/packages/analytics/summary` (requires `package.pricing.cost.read`) — packages created/sold (`status: "Booked"` = sold), average package value/profit/margin, most popular destination/hotel/room type, most profitable and lowest-margin package. Computed in application code over a tenant-scoped `.find().lean()`, not a Mongo aggregation pipeline — simpler to keep correct for a first-pass dashboard.
+
+## Rate expiry & scheduler
+
+`services/packageRateExpiryScheduler.js` (wired into `server.js` alongside the other `*ExpiryScheduler`s) runs on `PACKAGE_RATE_EXPIRY_CRON_SCHEDULE` (default daily at 03:00): flips any `Active` hotel/transport/flight/visa/service rate past its own `validTo`/`date` to `Expired` (never deleted), and publishes `PackageRateExpiringSoon` for anything Active within `PACKAGE_RATE_EXPIRY_WARNING_DAYS` (default 7) of expiring.
+
 ## Out of scope for this pass
 
 Excel/CSV/PDF/OCR import, social-platform (Instagram/Facebook/TikTok/LinkedIn/X) publishing, supplier API integrations, live FX feeds, and AI package building are Phase 2-4 per the PRD and are not implemented here — social publishing specifically needs real OAuth app credentials per platform before any code can be written (see this module's earlier scoping conversation).

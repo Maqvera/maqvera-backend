@@ -20,6 +20,8 @@ const FlyerSchema = new mongoose.Schema({
   template: { type: String, required: true },
   format: { type: String, required: true },
   dimensionPreset: { type: String, required: true },
+  language: { type: String, default: "en" },
+  displayCurrency: { type: String, default: null },
   // Which room-wise matrix rows this flyer includes — omit to include every
   // row the hotel(s) actually support (PRD §57 "only available occupancies appear").
   roomTypeIds: [{ type: mongoose.Schema.Types.ObjectId, ref: "room_type" }],

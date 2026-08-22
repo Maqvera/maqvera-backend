@@ -35,10 +35,12 @@ export const CreateFlightBooking = async (req, res) => {
       travelers = [],
       contact = {},
       totalPrice = 145000,
-      currency = "PKR",
       segments = [],
       convertedCurrency = null
     } = req.body;
+    // Golden Rule 2 (never hardcode a currency) — resolves to the tenant's
+    // own configured base currency instead of a literal "PKR".
+    const currency = (req.body.currency || await CurrencyService.getBaseCurrency(tenantId)).toUpperCase();
 
     if (!offerId) {
       return sendError(res, 400, "offerId is required.", requestId);
@@ -914,7 +916,7 @@ export const RefundTicket = async (req, res) => {
     // "Finance module owns payment refund" — this endpoint only calculates
     // eligibility and notifies Finance via the domain event; it never moves
     // money itself.
-    const fareRules = await GdsIntegrationService.getFareRules({ offerId: booking.offerId, provider: booking.provider });
+    const fareRules = await GdsIntegrationService.getFareRules({ offerId: booking.offerId, provider: booking.provider, currency: booking.currency });
     const { defaultCancellationPenaltyPct } = getTicketingPolicyConfig();
     const parsedPenalty = Number(String(fareRules.rules?.cancellationFeeBeforeDeparture || "").replace(/[^0-9.]/g, ""));
     const penaltyFee = Number.isFinite(parsedPenalty) && parsedPenalty > 0

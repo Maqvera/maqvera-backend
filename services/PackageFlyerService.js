@@ -3,6 +3,7 @@ import PackageModel from "../models/PackageModel.js";
 import FlyerModel from "../models/FlyerModel.js";
 import HotelCatalogModel from "../models/HotelCatalogModel.js";
 import AuditLogModel from "../models/AuditLogmodel.js";
+import CurrencyService from "./CurrencyService.js";
 import { renderHtmlToPdfBuffer, renderHtmlToImageBuffer, TEMPLATES_DIR } from "./HtmlPdfRenderer.js";
 import { storeDocumentPdf } from "../utils/documentPdfStorage.js";
 import { resolveTenantBranding } from "../utils/tenantBranding.js";
@@ -12,6 +13,17 @@ import { getPackagePricingConfig } from "../utils/packagePricingConfig.js";
 const TEMPLATE_PATHS = {
   Standard: path.join(TEMPLATES_DIR, "packages", "flyer.html")
 };
+
+// PRD §60 "Multi-Language Flyers" — a simple label dictionary is enough for
+// MVP (not a full i18n framework, per the PRD's own "do not over-build"
+// spirit). Numbers/prices stay locale-formatted by currency, never by
+// language — see generateFlyer's own displayCurrency handling (PRD §61).
+const FLYER_STRINGS = {
+  en: { itinerary: "Itinerary", packagePrice: "Package Price", perPerson: "per person", includes: "Includes", bookNow: "Book Now", nights: "Nights", checkIn: "Check-in", checkOut: "Check-out" },
+  ur: { itinerary: "سفری منصوبہ", packagePrice: "پیکج قیمت", perPerson: "فی شخص", includes: "شامل ہے", bookNow: "ابھی بک کریں", nights: "راتیں", checkIn: "چیک ان", checkOut: "چیک آؤٹ" },
+  ar: { itinerary: "خط سير الرحلة", packagePrice: "سعر الباقة", perPerson: "للشخص الواحد", includes: "يشمل", bookNow: "احجز الآن", nights: "ليالي", checkIn: "تسجيل الدخول", checkOut: "تسجيل الخروج" }
+};
+const RTL_LANGUAGES = new Set(["ur", "ar"]);
 
 /**
  * Package Pricing Engine — PRD §55-§62 "Package Flyer Generator". Renders
@@ -26,7 +38,8 @@ const TEMPLATE_PATHS = {
 class PackageFlyerService {
   static async generateFlyer(packageId, data, tenantId, userId) {
     const config = getPackagePricingConfig();
-    const { template = null, format = null, dimensionPreset = null, roomTypeIds = null } = data;
+    const { template = null, format = null, dimensionPreset = null, roomTypeIds = null, language = "en", displayCurrency = null } = data;
+    const resolvedLanguage = FLYER_STRINGS[language] ? language : "en";
 
     const resolvedTemplate = template || config.defaultFlyerTemplate;
     if (!config.flyerTemplates.includes(resolvedTemplate)) throw new Error(`Invalid template "${resolvedTemplate}".`);
@@ -64,16 +77,27 @@ class PackageFlyerService {
     if (has("visaCostPerPerson")) includedComponents.push("Visa");
     if (has("servicesCostPerPerson")) includedComponents.push("Services");
 
+    // PRD §61 "Multi-Currency Flyer" — render-time-only conversion; never
+    // mutates the package's own stored roomWisePriceMatrix/sellingCurrency.
+    const resolvedDisplayCurrency = displayCurrency ? displayCurrency.toUpperCase() : pkg.sellingCurrency;
+    let displayFx = 1;
+    if (resolvedDisplayCurrency !== pkg.sellingCurrency) {
+      const conversion = await CurrencyService.getRate(tenantId, pkg.sellingCurrency, resolvedDisplayCurrency);
+      displayFx = conversion.rate;
+    }
+
     const templateData = {
       company: company || {},
+      strings: FLYER_STRINGS[resolvedLanguage],
+      dir: RTL_LANGUAGES.has(resolvedLanguage) ? "rtl" : "ltr",
       package: {
-        name: pkg.name, travelStartDate: pkg.travelStartDate, travelEndDate: pkg.travelEndDate, sellingCurrency: pkg.sellingCurrency,
+        name: pkg.name, travelStartDate: pkg.travelStartDate, travelEndDate: pkg.travelEndDate, sellingCurrency: resolvedDisplayCurrency,
         segments: pkg.segments.map((s) => ({
           city: s.city, hotelName: hotelNameById.get(s.hotelCatalogId?.toString()) || null,
           checkIn: s.checkIn, checkOut: s.checkOut, nights: Math.max(0, Math.round((new Date(s.checkOut) - new Date(s.checkIn)) / 86400000))
         }))
       },
-      rooms: rooms.map((r) => ({ roomTypeName: r.roomTypeName, occupancy: r.occupancy, finalPricePerPerson: r.finalPricePerPerson })),
+      rooms: rooms.map((r) => ({ roomTypeName: r.roomTypeName, occupancy: r.occupancy, finalPricePerPerson: Math.round(r.finalPricePerPerson * displayFx * 100) / 100 })),
       includedComponents
     };
 
@@ -86,7 +110,8 @@ class PackageFlyerService {
 
     const flyer = await FlyerModel.create({
       tenantId, packageId: pkg._id, template: resolvedTemplate, format: resolvedFormat, dimensionPreset: resolvedDimensionPreset,
-      roomTypeIds: rooms.map((r) => r.roomTypeId), fileUrl: stored.url, generatedBy: userId || null
+      roomTypeIds: rooms.map((r) => r.roomTypeId), fileUrl: stored.url, language: resolvedLanguage,
+      displayCurrency: resolvedDisplayCurrency !== pkg.sellingCurrency ? resolvedDisplayCurrency : null, generatedBy: userId || null
     });
 
     await AuditLogModel.create({ action: "package.pricing.generate_flyer", module: "PackagePricing", resource: "Flyer", resourceId: flyer._id.toString(), userId: userId || null, tenantId, details: { packageId: pkg._id.toString(), template: resolvedTemplate, format: resolvedFormat } });

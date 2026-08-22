@@ -99,6 +99,7 @@ import SubscriptionRenewalEngineScheduler from "./services/subscriptionRenewalEn
 import PaymentRetryEngineScheduler from "./services/paymentRetryEngineScheduler.js";
 import TaxRuleExpiryScheduler from "./services/taxRuleExpiryScheduler.js";
 import PricingRuleExpiryScheduler from "./services/pricingRuleExpiryScheduler.js";
+import PackageRateExpiryScheduler from "./services/packageRateExpiryScheduler.js";
 import ApprovalEscalationScheduler from "./services/approvalEscalationScheduler.js";
 import FinancialReportScheduler from "./services/financialReportScheduler.js";
 import AuditRetentionScheduler from "./services/auditRetentionScheduler.js";
@@ -125,6 +126,7 @@ const bootstrapEnterpriseServices = async () => {
   await CurrencyRevaluationScheduler.init();
   await TaxRuleExpiryScheduler.init();
   await PricingRuleExpiryScheduler.init();
+  await PackageRateExpiryScheduler.init();
   await ApprovalEscalationScheduler.init();
   await FinancialReportScheduler.init();
   await AuditRetentionScheduler.init();

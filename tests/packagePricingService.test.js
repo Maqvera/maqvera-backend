@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import {
   computeNights,
   resolveHotelRate,
+  resolveHotelRateAnyStatus,
+  classifyRateAvailability,
   detectOverlappingHotelRates,
   computeHotelCostPerPerson,
   selectVehicles,
@@ -11,13 +13,17 @@ import {
   computeServiceCost,
   computeMarkupAmount,
   computeDiscountPerPerson,
+  computeExtraBedCost,
+  suggestRoomCombinations,
   applyRounding
 } from "../services/PackagePricingService.js";
 
 const config = {
   usableRateStatuses: ["Active"],
   hotelRateBasisPriority: ["ExactDate", "DateRange", "Season", "Weekend", "Weekday", "Standard"],
-  ageBands: { infantMaxAge: 1.99, childMaxAge: 11.99 }
+  ageBands: { infantMaxAge: 1.99, childMaxAge: 11.99 },
+  rateStatuses: ["Draft", "Verified", "Active", "OnRequest", "StopSale", "SoldOut", "Expired", "Archived"],
+  onRequestLikeStatuses: ["OnRequest", "StopSale", "SoldOut"]
 };
 
 test("computeNights returns the whole-day gap between checkIn and checkOut, never negative", () => {
@@ -62,6 +68,31 @@ test("resolveHotelRate matches Weekend rates by day-of-week within the validity 
   assert.equal(resolveHotelRate(rates, { roomTypeId, date: "2027-06-04" }, config).pricePerNight, 200);
   // 2027-06-07 is a Monday (day 1) -> falls back to Standard
   assert.equal(resolveHotelRate(rates, { roomTypeId, date: "2027-06-07" }, config).pricePerNight, 100);
+});
+
+test("resolveHotelRateAnyStatus matches an On Request/Stop Sale/Sold Out rate that resolveHotelRate would silently skip", () => {
+  const roomTypeId = "rt1";
+  const rates = [{ roomTypeId, status: "StopSale", rateBasis: "Standard", pricePerNight: 100 }];
+  assert.equal(resolveHotelRate(rates, { roomTypeId, date: "2027-06-15" }, config), null);
+  const anyStatus = resolveHotelRateAnyStatus(rates, { roomTypeId, date: "2027-06-15" }, config);
+  assert.equal(anyStatus.pricePerNight, 100);
+  assert.equal(classifyRateAvailability(anyStatus, config), "StopSale");
+});
+
+test("resolveHotelRateAnyStatus never matches a Draft/Expired/Archived rate — those stay genuinely missing", () => {
+  const roomTypeId = "rt1";
+  for (const status of ["Draft", "Expired", "Archived"]) {
+    const rates = [{ roomTypeId, status, rateBasis: "Standard", pricePerNight: 100 }];
+    assert.equal(resolveHotelRateAnyStatus(rates, { roomTypeId, date: "2027-06-15" }, config), null, `status ${status} must not resolve`);
+  }
+});
+
+test("classifyRateAvailability distinguishes usable/on-request-like/missing", () => {
+  assert.equal(classifyRateAvailability({ status: "Active" }, config), "usable");
+  assert.equal(classifyRateAvailability({ status: "OnRequest" }, config), "OnRequest");
+  assert.equal(classifyRateAvailability({ status: "SoldOut" }, config), "SoldOut");
+  assert.equal(classifyRateAvailability({ status: "Draft" }, config), "missing");
+  assert.equal(classifyRateAvailability(null, config), "missing");
 });
 
 test("detectOverlappingHotelRates flags overlapping DateRange/Season windows for the same hotel+roomType, never Standard/ExactDate", () => {
@@ -157,6 +188,40 @@ test("computeDiscountPerPerson: Fixed splits by scope (PerPerson flat, PerRoom b
 test("computeDiscountPerPerson returns 0 when no discount is configured", () => {
   assert.equal(computeDiscountPerPerson(null, { finalPricePerPerson: 1000 }), 0);
   assert.equal(computeDiscountPerPerson({ type: null }, { finalPricePerPerson: 1000 }), 0);
+});
+
+test("computeExtraBedCost: PerNight multiplies by nights, PerStay/PerPerson is a flat charge per extra occupant", () => {
+  assert.equal(computeExtraBedCost(1, 20, "PerNight", 5), 100);
+  assert.equal(computeExtraBedCost(2, 20, "PerNight", 5), 200);
+  assert.equal(computeExtraBedCost(1, 50, "PerStay", 5), 50);
+  assert.equal(computeExtraBedCost(2, 50, "PerPerson", 5), 100);
+});
+
+test("computeExtraBedCost returns 0 when there are no extra occupants or no rate configured", () => {
+  assert.equal(computeExtraBedCost(0, 50, "PerStay", 5), 0);
+  assert.equal(computeExtraBedCost(2, 0, "PerStay", 5), 0);
+  assert.equal(computeExtraBedCost(2, null, "PerStay", 5), 0);
+});
+
+test("suggestRoomCombinations reproduces the PRD's own 8-adult example (4 Double, 2 Quad, 1 Quad+2 Double, 2 Triple+1 Double)", () => {
+  const types = [
+    { roomTypeId: "double", defaultOccupancy: 2 },
+    { roomTypeId: "triple", defaultOccupancy: 3 },
+    { roomTypeId: "quad", defaultOccupancy: 4 }
+  ];
+  const results = suggestRoomCombinations(8, types);
+  const find = (roomTypeCounts) => results.find((r) => r.combination.length === Object.keys(roomTypeCounts).length && Object.entries(roomTypeCounts).every(([id, count]) => r.combination.some((c) => c.roomTypeId === id && c.count === count)));
+
+  assert.ok(find({ double: 4 }), "4 Double must be suggested");
+  assert.ok(find({ quad: 2 }), "2 Quad must be suggested");
+  assert.ok(find({ quad: 1, double: 2 }), "1 Quad + 2 Double must be suggested");
+  assert.ok(find({ triple: 2, double: 1 }), "2 Triple + 1 Double must be suggested");
+  assert.ok(results.every((r) => r.totalCapacity >= 8), "every suggested combination must sleep everyone");
+});
+
+test("suggestRoomCombinations returns nothing for zero passengers or no room types", () => {
+  assert.deepEqual(suggestRoomCombinations(0, [{ roomTypeId: "double", defaultOccupancy: 2 }]), []);
+  assert.deepEqual(suggestRoomCombinations(4, []), []);
 });
 
 test("applyRounding snaps to the configured step, and falls back to 2-decimal rounding for None/Custom", () => {

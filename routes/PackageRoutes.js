@@ -38,6 +38,12 @@ import {
   updatePackage,
   linkPackageToBooking,
   convertPackageToBooking,
+  saveAsTemplate,
+  listPackageTemplates,
+  cloneFromTemplate,
+  getRoomCombinations,
+  comparePackages,
+  getAnalyticsSummary,
   calculatePackage,
   finalizePackage,
   createQuotation,
@@ -46,7 +52,12 @@ import {
   generateQuotationPdf,
   generateFlyer,
   listFlyersForPackage,
-  sendWhatsAppMessage
+  sendWhatsAppMessage,
+  bulkCreateHotelRates, bulkStatusHotelRates, cloneHotelRate, exportHotelRates,
+  bulkCreateTransportRates, bulkStatusTransportRates, cloneTransportRate, exportTransportRates,
+  bulkCreateFlightRates, bulkStatusFlightRates, cloneFlightRate, exportFlightRates,
+  bulkCreateVisaRates, bulkStatusVisaRates, cloneVisaRate, exportVisaRates,
+  bulkCreateServiceRates, bulkStatusServiceRates, cloneServiceRate, exportServiceRates
 } from "../controllers/PackagePricingController.js";
 
 const router = express.Router();
@@ -77,23 +88,43 @@ router.patch("/transport-vehicles/:vehicleId", authenticateAccessToken, limiter,
 
 router.get("/hotel-rates", authenticateAccessToken, limiter, listHotelRates);
 router.post("/hotel-rates", authenticateAccessToken, limiter, validate(packagePricingSchemas.createHotelRate), createHotelRate);
+router.post("/hotel-rates/bulk", authenticateAccessToken, limiter, validate(packagePricingSchemas.bulkCreateRates), bulkCreateHotelRates);
+router.patch("/hotel-rates/bulk-status", authenticateAccessToken, limiter, validate(packagePricingSchemas.bulkUpdateRateStatus), bulkStatusHotelRates);
+router.get("/hotel-rates/export", authenticateAccessToken, limiter, exportHotelRates);
 router.patch("/hotel-rates/:rateId", authenticateAccessToken, limiter, validate(packagePricingSchemas.updateRecord), updateHotelRate);
+router.post("/hotel-rates/:rateId/clone", authenticateAccessToken, limiter, validate(packagePricingSchemas.cloneRate), cloneHotelRate);
 
 router.get("/transport-rates", authenticateAccessToken, limiter, listTransportRates);
 router.post("/transport-rates", authenticateAccessToken, limiter, validate(packagePricingSchemas.createTransportRate), createTransportRate);
+router.post("/transport-rates/bulk", authenticateAccessToken, limiter, validate(packagePricingSchemas.bulkCreateRates), bulkCreateTransportRates);
+router.patch("/transport-rates/bulk-status", authenticateAccessToken, limiter, validate(packagePricingSchemas.bulkUpdateRateStatus), bulkStatusTransportRates);
+router.get("/transport-rates/export", authenticateAccessToken, limiter, exportTransportRates);
 router.patch("/transport-rates/:rateId", authenticateAccessToken, limiter, validate(packagePricingSchemas.updateRecord), updateTransportRate);
+router.post("/transport-rates/:rateId/clone", authenticateAccessToken, limiter, validate(packagePricingSchemas.cloneRate), cloneTransportRate);
 
 router.get("/flight-rates", authenticateAccessToken, limiter, listFlightRates);
 router.post("/flight-rates", authenticateAccessToken, limiter, validate(packagePricingSchemas.createFlightRate), createFlightRate);
+router.post("/flight-rates/bulk", authenticateAccessToken, limiter, validate(packagePricingSchemas.bulkCreateRates), bulkCreateFlightRates);
+router.patch("/flight-rates/bulk-status", authenticateAccessToken, limiter, validate(packagePricingSchemas.bulkUpdateRateStatus), bulkStatusFlightRates);
+router.get("/flight-rates/export", authenticateAccessToken, limiter, exportFlightRates);
 router.patch("/flight-rates/:rateId", authenticateAccessToken, limiter, validate(packagePricingSchemas.updateRecord), updateFlightRate);
+router.post("/flight-rates/:rateId/clone", authenticateAccessToken, limiter, validate(packagePricingSchemas.cloneRate), cloneFlightRate);
 
 router.get("/visa-rates", authenticateAccessToken, limiter, listVisaRates);
 router.post("/visa-rates", authenticateAccessToken, limiter, validate(packagePricingSchemas.createVisaRate), createVisaRate);
+router.post("/visa-rates/bulk", authenticateAccessToken, limiter, validate(packagePricingSchemas.bulkCreateRates), bulkCreateVisaRates);
+router.patch("/visa-rates/bulk-status", authenticateAccessToken, limiter, validate(packagePricingSchemas.bulkUpdateRateStatus), bulkStatusVisaRates);
+router.get("/visa-rates/export", authenticateAccessToken, limiter, exportVisaRates);
 router.patch("/visa-rates/:rateId", authenticateAccessToken, limiter, validate(packagePricingSchemas.updateRecord), updateVisaRate);
+router.post("/visa-rates/:rateId/clone", authenticateAccessToken, limiter, validate(packagePricingSchemas.cloneRate), cloneVisaRate);
 
 router.get("/service-rates", authenticateAccessToken, limiter, listServiceRates);
 router.post("/service-rates", authenticateAccessToken, limiter, validate(packagePricingSchemas.createServiceRate), createServiceRate);
+router.post("/service-rates/bulk", authenticateAccessToken, limiter, validate(packagePricingSchemas.bulkCreateRates), bulkCreateServiceRates);
+router.patch("/service-rates/bulk-status", authenticateAccessToken, limiter, validate(packagePricingSchemas.bulkUpdateRateStatus), bulkStatusServiceRates);
+router.get("/service-rates/export", authenticateAccessToken, limiter, exportServiceRates);
 router.patch("/service-rates/:rateId", authenticateAccessToken, limiter, validate(packagePricingSchemas.updateRecord), updateServiceRate);
+router.post("/service-rates/:rateId/clone", authenticateAccessToken, limiter, validate(packagePricingSchemas.cloneRate), cloneServiceRate);
 
 router.get("/markup-rules", authenticateAccessToken, limiter, listMarkupRules);
 router.post("/markup-rules", authenticateAccessToken, limiter, validate(packagePricingSchemas.createMarkupRule), createMarkupRule);
@@ -105,6 +136,10 @@ router.patch("/suppliers/:supplierId", authenticateAccessToken, limiter, validat
 
 router.get("/commission-rules", authenticateAccessToken, limiter, listCommissionRules);
 router.post("/commission-rules", authenticateAccessToken, limiter, validate(packagePricingSchemas.createCommissionRule), createCommissionRule);
+
+// ---- Package Templates (PRD §82) ----
+router.get("/package-templates", authenticateAccessToken, limiter, listPackageTemplates);
+router.post("/package-templates/:templateId/clone", authenticateAccessToken, limiter, validate(packagePricingSchemas.cloneFromTemplate), cloneFromTemplate);
 
 // ---- Quotations ----
 router.get("/quotations/:quotationId", authenticateAccessToken, limiter, getQuotation);
@@ -119,10 +154,14 @@ router.post("/quotations/:quotationId/pdf", authenticateAccessToken, limiter, ge
 // throughout routes/FinanceRoutes.js.
 router.get("/", authenticateAccessToken, limiter, listPackages);
 router.post("/", authenticateAccessToken, limiter, validate(packagePricingSchemas.createPackage), createPackage);
+router.post("/compare", authenticateAccessToken, limiter, validate(packagePricingSchemas.comparePackages), comparePackages);
+router.get("/analytics/summary", authenticateAccessToken, limiter, getAnalyticsSummary);
 router.get("/:packageId", authenticateAccessToken, limiter, getPackage);
+router.get("/:packageId/room-combinations", authenticateAccessToken, limiter, getRoomCombinations);
 router.patch("/:packageId", authenticateAccessToken, limiter, validate(packagePricingSchemas.updatePackage), updatePackage);
 router.post("/:packageId/link-booking", authenticateAccessToken, limiter, validate(packagePricingSchemas.linkBooking), linkPackageToBooking);
 router.post("/:packageId/convert-to-booking", authenticateAccessToken, limiter, validate(packagePricingSchemas.convertToBooking), convertPackageToBooking);
+router.post("/:packageId/save-as-template", authenticateAccessToken, limiter, validate(packagePricingSchemas.saveAsTemplate), saveAsTemplate);
 router.post("/:packageId/calculate", authenticateAccessToken, limiter, validate(packagePricingSchemas.calculatePackage), calculatePackage);
 router.post("/:packageId/finalize", authenticateAccessToken, limiter, finalizePackage);
 router.get("/:packageId/quotations", authenticateAccessToken, limiter, listQuotationsForPackage);
