@@ -5,6 +5,7 @@ import { getPlatformConfig } from "../utils/platformConfig.js";
 import { getOrganisationConfig } from "../utils/organisationConfig.js";
 import { getNumberingConfig } from "../utils/numberingConfig.js";
 import { getPackagePricingConfig } from "../utils/packagePricingConfig.js";
+import { getHotelConfig } from "../utils/hotelConfig.js";
 import { AppError, sendStandardError, fieldDetailsFromJoiError } from "../utils/errorContract.js";
 
 const getBookingValidationValues = () => {
@@ -3748,6 +3749,7 @@ export const tenantProfileSchemas = {
 // config change, never a schema edit.
 const buildPackagePricingSchemas = () => {
   const config = getPackagePricingConfig();
+  const hotelConfig = getHotelConfig();
   const rateStatus = Joi.string().trim().valid(...config.rateStatuses).optional();
   const rateSource = Joi.string().trim().valid(...config.rateSourceTypes).optional();
 
@@ -3764,6 +3766,39 @@ const buildPackagePricingSchemas = () => {
       maxCapacity: Joi.number().integer().min(1).required(),
       luggageCapacity: Joi.number().min(0).optional().allow(null),
       category: Joi.string().trim().max(100).optional().allow(null, "")
+    }),
+
+    // PRD §8 "Hotel Database" — hotel master data, distinct from
+    // createHotelRate's hotel-x-room-type-x-date rate rows.
+    createHotelCatalog: Joi.object({
+      name: Joi.string().trim().min(1).max(200).required(),
+      city: Joi.string().trim().min(1).max(150).required(),
+      country: Joi.string().trim().max(150).optional().allow(null, ""),
+      starRating: Joi.number().integer().min(1).max(5).optional(),
+      address: Joi.string().trim().max(500).optional().allow(null, ""),
+      supplier: Joi.string().trim().max(200).optional().allow(null, ""),
+      amenities: Joi.array().items(Joi.string().trim().max(150)).optional(),
+      contacts: Joi.object({
+        phone: Joi.string().trim().max(50).optional().allow(null, ""),
+        email: Joi.string().trim().email().optional().allow(null, ""),
+        managerName: Joi.string().trim().max(150).optional().allow(null, "")
+      }).optional(),
+      latitude: Joi.number().min(-90).max(90).optional().allow(null),
+      longitude: Joi.number().min(-180).max(180).optional().allow(null),
+      distanceFromLandmark: Joi.object({
+        label: Joi.string().trim().max(150).optional().allow(null, ""),
+        km: Joi.number().min(0).optional().allow(null)
+      }).optional().allow(null),
+      distanceFromAirport: Joi.number().min(0).optional().allow(null),
+      checkInTime: Joi.string().trim().max(20).optional().allow(null, ""),
+      checkOutTime: Joi.string().trim().max(20).optional().allow(null, ""),
+      description: Joi.string().trim().max(5000).optional().allow(null, ""),
+      images: Joi.array().items(Joi.string().trim().max(2000)).optional(),
+      logoUrl: Joi.string().trim().max(2000).optional().allow(null, ""),
+      shuttleAvailable: Joi.boolean().optional(),
+      mealPlansOffered: Joi.array().items(Joi.string().trim().valid(...hotelConfig.mealPlans)).optional(),
+      cancellationPolicy: Joi.string().trim().max(2000).optional().allow(null, ""),
+      supplierHotelCode: Joi.string().trim().max(100).optional().allow(null, "")
     }),
 
     createHotelRate: Joi.object({
@@ -4046,7 +4081,7 @@ const buildPackagePricingSchemas = () => {
 };
 
 const PACKAGE_PRICING_SCHEMA_KEYS = new Set([
-  "createRoomType", "createTransportVehicle", "createHotelRate", "createTransportRate", "createFlightRate", "createVisaRate",
+  "createRoomType", "createTransportVehicle", "createHotelCatalog", "createHotelRate", "createTransportRate", "createFlightRate", "createVisaRate",
   "createServiceRate", "createMarkupRule", "createSupplier", "createCommissionRule", "updateRecord", "createPackage",
   "updatePackage", "linkBooking", "convertToBooking", "createQuotation", "generateFlyer", "sendWhatsAppMessage", "calculatePackage", "comparePackages",
   "saveAsTemplate", "cloneFromTemplate", "bulkCreateRates", "bulkUpdateRateStatus", "cloneRate"

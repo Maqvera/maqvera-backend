@@ -36,12 +36,12 @@ const parseBool = (value, fallback) => (value === undefined ? fallback : String(
  * using the SAME `openai` npm SDK already a dependency of this codebase
  * rather than hand-rolling HTTP calls.
  *
- * Google Gemini is deliberately NOT added here — it needs a genuinely
- * different, non-OpenAI-compatible SDK (`@google/generative-ai`), and
- * every earlier EXT document in this AI module has consistently deferred
- * it as "(Future)" rather than fabricate an untested integration. Adding
- * it later needs exactly one more adapter class + one more catalog entry —
- * no router/architecture change, which is the whole point of this document.
+ * Gap 1.6 (Multi-LLM Router provider coverage) — Google Gemini is now a
+ * real catalog entry, served by its own services/ai/GeminiAdapter.js (the
+ * current, unified `@google/genai` SDK — genuinely non-OpenAI-compatible,
+ * so it needed its own adapter, not OpenAICompatibleAdapter). Exactly one
+ * adapter class + one catalog entry, no router/architecture change — which
+ * was always the whole point of this document's own design.
  *
  * §13 "Tool Calling" capability is deliberately conservative for the new
  * OpenAI-compatible providers: `false` unless explicitly enabled via env
@@ -83,6 +83,20 @@ export const getAIModelConfig = () => {
       capabilities: { toolCalling: true, streaming: true, vision: false, jsonMode: true, longContext: true },
       costPerThousandTokens: { input: parseFloatSafe(process.env.AI_COST_AZURE_INPUT_PER_1K, 0.00015), output: parseFloatSafe(process.env.AI_COST_AZURE_OUTPUT_PER_1K, 0.0006) },
       priority: parseNumber(process.env.AI_MODEL_AZURE_PRIORITY, 30)
+    },
+    // Gap 1.6 — real Google Gemini support (services/ai/GeminiAdapter.js).
+    // costPerThousandTokens defaults approximate gemini-2.5-flash's public
+    // per-token pricing at the time this was added; like every other
+    // provider here, override via env (AI_COST_GEMINI_*) rather than
+    // trusting this to stay current.
+    Gemini: {
+      enabled: Boolean(process.env.GEMINI_API_KEY),
+      apiKey: process.env.GEMINI_API_KEY || null,
+      model: process.env.GEMINI_MODEL || "gemini-2.5-flash",
+      categories: parseJsonArray(process.env.AI_MODEL_GEMINI_CATEGORIES_JSON, ["general_chat", "fast", "planning", "reasoning", "code"]),
+      capabilities: { toolCalling: true, streaming: true, vision: false, jsonMode: true, longContext: true },
+      costPerThousandTokens: { input: parseFloatSafe(process.env.AI_COST_GEMINI_INPUT_PER_1K, 0.0003), output: parseFloatSafe(process.env.AI_COST_GEMINI_OUTPUT_PER_1K, 0.0025) },
+      priority: parseNumber(process.env.AI_MODEL_GEMINI_PRIORITY, 35)
     },
     DeepSeek: {
       enabled: Boolean(process.env.DEEPSEEK_API_KEY),

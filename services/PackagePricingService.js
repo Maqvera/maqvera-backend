@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import ExcelJS from "exceljs";
 import RoomTypeModel from "../models/RoomTypeModel.js";
 import HotelRateModel from "../models/HotelRateModel.js";
 import TransportVehicleModel from "../models/TransportVehicleModel.js";
@@ -25,6 +26,7 @@ import { storeDocumentPdf } from "../utils/documentPdfStorage.js";
 import { resolveTenantBranding, resolveTenantDocumentSettings } from "../utils/tenantBranding.js";
 import { recalculateBookingFinancials } from "../controllers/BookingController.js";
 import { getBookingConfig } from "../utils/bookingConfig.js";
+import { getHotelConfig } from "../utils/hotelConfig.js";
 import { publishEvent } from "../utils/eventBus.js";
 import { getPackagePricingConfig } from "../utils/packagePricingConfig.js";
 
@@ -443,6 +445,61 @@ class PackagePricingService {
     return CommissionRuleModel.find(filter).sort({ createdAt: -1 }).lean();
   }
 
+  // ---- Hotel Catalog (PRD §8 "Hotel Database") ----
+
+  static async createHotelCatalog(data, tenantId, userId) {
+    const hotelConfig = getHotelConfig();
+    const {
+      name, city, country = "Saudi Arabia", starRating = 5, address = null, supplier = "Direct Hotel Contract",
+      amenities = [], contacts = {}, latitude = null, longitude = null, distanceFromLandmark = null, distanceFromAirport = null,
+      checkInTime = null, checkOutTime = null, description = null, images = [], logoUrl = null, shuttleAvailable = false,
+      mealPlansOffered = [], cancellationPolicy = null, supplierHotelCode = null
+    } = data;
+    if (!name || !city) throw new Error("name and city are required.");
+    if (Array.isArray(mealPlansOffered)) {
+      for (const plan of mealPlansOffered) {
+        if (!hotelConfig.mealPlans.includes(plan)) throw new Error(`Invalid mealPlansOffered value "${plan}".`);
+      }
+    }
+
+    const hotel = await HotelCatalogModel.create({
+      tenantId, name, city, country, starRating, address, supplier, amenities, contacts, latitude, longitude,
+      distanceFromLandmark, distanceFromAirport, checkInTime, checkOutTime, description, images, logoUrl, shuttleAvailable,
+      mealPlansOffered, cancellationPolicy, supplierHotelCode
+    });
+    await AuditLogModel.create({ action: "package.pricing.create_hotel_catalog", module: "PackagePricing", resource: "HotelCatalog", resourceId: hotel._id.toString(), userId: userId || null, tenantId, details: { name, city } });
+    return hotel.toJSON();
+  }
+
+  static async listHotelCatalog(query, tenantId) {
+    const filter = { tenantId };
+    if (query.city) filter.city = query.city;
+    if (query.isActive !== undefined) filter.isActive = query.isActive === "true" || query.isActive === true;
+    return HotelCatalogModel.find(filter).sort({ name: 1 }).lean();
+  }
+
+  static async updateHotelCatalog(hotelCatalogId, data, tenantId, userId, reason = null) {
+    const hotelConfig = getHotelConfig();
+    if (data.mealPlansOffered !== undefined) {
+      for (const plan of data.mealPlansOffered || []) {
+        if (!hotelConfig.mealPlans.includes(plan)) throw new Error(`Invalid mealPlansOffered value "${plan}".`);
+      }
+    }
+    const hotel = await HotelCatalogModel.findOne({ _id: hotelCatalogId, tenantId });
+    if (!hotel) throw new Error("Hotel not found.");
+
+    const before = hotel.toObject();
+    const fields = [
+      "name", "city", "country", "starRating", "address", "supplier", "amenities", "contacts", "latitude", "longitude",
+      "distanceFromLandmark", "distanceFromAirport", "checkInTime", "checkOutTime", "description", "images", "logoUrl",
+      "shuttleAvailable", "mealPlansOffered", "cancellationPolicy", "supplierHotelCode", "isActive"
+    ];
+    for (const field of fields) if (data[field] !== undefined) hotel[field] = data[field];
+    await hotel.save();
+    await auditFieldChanges({ tenantId, userId, resource: "HotelCatalog", resourceId: hotel._id.toString(), before, after: hotel.toObject(), fields, reason });
+    return hotel.toJSON();
+  }
+
   // ---- Hotel Rates ----
 
   static async createHotelRate(data, tenantId, userId) {
@@ -814,14 +871,20 @@ class PackagePricingService {
     return clone.toJSON();
   }
 
-  /** GET /{rate-type}/export?format=csv — a plain data dump, no OCR/review workflow (that's Import, explicitly Phase 2). */
-  static async exportRatesToCsv(rateType, query, tenantId) {
+  /** Shared by exportRatesToCsv/exportRatesToXlsx so their column list/row set can never drift apart — one query, one header derivation. */
+  static async _fetchExportRows(rateType, query, tenantId) {
     const model = PackagePricingService._rateModelFor(rateType);
     const filter = { tenantId };
     if (query.status) filter.status = query.status;
     const rows = await model.find(filter).lean();
-
     const headers = [...new Set(rows.flatMap((r) => Object.keys(r)))].filter((h) => h !== "__v");
+    return { rows, headers };
+  }
+
+  /** GET /{rate-type}/export?format=csv — a plain data dump, no OCR/review workflow (that's Import, explicitly Phase 2). */
+  static async exportRatesToCsv(rateType, query, tenantId) {
+    const { rows, headers } = await PackagePricingService._fetchExportRows(rateType, query, tenantId);
+
     const toCsvValue = (value) => {
       if (value === null || value === undefined) return "";
       if (value instanceof Date) return value.toISOString();
@@ -830,6 +893,26 @@ class PackagePricingService {
     };
     const lines = [headers.join(","), ...rows.map((row) => headers.map((h) => toCsvValue(row[h])).join(","))];
     return { content: lines.join("\n"), filename: `${rateType}-${tenantId}-${Date.now()}.csv` };
+  }
+
+  /** GET /{rate-type}/export?format=xlsx — PRD §113. Same headers/rows as exportRatesToCsv (via _fetchExportRows), real cell values via exceljs, mirroring FinancialReportExportService.generateExcel's own pattern. */
+  static async exportRatesToXlsx(rateType, query, tenantId) {
+    const { rows, headers } = await PackagePricingService._fetchExportRows(rateType, query, tenantId);
+
+    const workbook = new ExcelJS.Workbook();
+    const worksheet = workbook.addWorksheet(rateType.slice(0, 31));
+    worksheet.addRow(headers);
+    worksheet.getRow(1).font = { bold: true };
+    for (const row of rows) {
+      worksheet.addRow(headers.map((h) => {
+        const value = row[h];
+        return value instanceof Date || (typeof value !== "object" && value !== undefined) ? value ?? "" : JSON.stringify(value);
+      }));
+    }
+    worksheet.columns.forEach((column) => { column.width = 18; });
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    return { buffer: Buffer.from(buffer), filename: `${rateType}-${tenantId}-${Date.now()}.xlsx` };
   }
 
   // ---- Packages ----

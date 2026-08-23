@@ -103,6 +103,38 @@ export const listTransportVehicles = async (req, res) => {
   }
 };
 
+// ---- Hotel Catalog ----
+
+export const createHotelCatalog = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "package.pricing.manage")) return sendError(res, 403, "Permission denied.", requestId);
+
+    const hotel = await PackagePricingService.createHotelCatalog(req.body, scope.tenantId, userIdFrom(req));
+    return sendSuccess(res, 201, "Hotel created successfully.", hotel, requestId);
+  } catch (error) {
+    console.error("createHotelCatalog error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to create hotel.", requestId);
+  }
+};
+
+export const listHotelCatalog = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "package.pricing.read", "package.pricing.manage")) return sendError(res, 403, "Permission denied.", requestId);
+
+    const items = await PackagePricingService.listHotelCatalog(req.query, scope.tenantId);
+    return sendSuccess(res, 200, "Hotels retrieved successfully.", { items }, requestId);
+  } catch (error) {
+    console.error("listHotelCatalog error:", error);
+    return sendError(res, 500, error.message || "Failed to retrieve hotels.", requestId);
+  }
+};
+
 // ---- Hotel Rates ----
 
 export const createHotelRate = async (req, res) => {
@@ -579,6 +611,7 @@ const makeUpdateHandler = (serviceMethodName, label) => async (req, res) => {
 
 export const updateRoomType = makeUpdateHandler("updateRoomType", "Room type");
 export const updateTransportVehicle = makeUpdateHandler("updateTransportVehicle", "Transport vehicle");
+export const updateHotelCatalog = makeUpdateHandler("updateHotelCatalog", "Hotel");
 export const updateHotelRate = makeUpdateHandler("updateHotelRate", "Hotel rate");
 export const updateTransportRate = makeUpdateHandler("updateTransportRate", "Transport rate");
 export const updateFlightRate = makeUpdateHandler("updateFlightRate", "Flight rate");
@@ -641,6 +674,14 @@ const makeExportHandler = (rateType) => async (req, res) => {
     const scope = getAccessScope(req);
     if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
     if (!hasPermission(req, "package.pricing.read", "package.pricing.manage")) return sendError(res, 403, "Permission denied.", requestId);
+
+    const format = (req.query.format || "csv").toLowerCase();
+    if (format === "xlsx") {
+      const { buffer, filename } = await PackagePricingService.exportRatesToXlsx(rateType, req.query, scope.tenantId);
+      res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      return res.status(200).send(buffer);
+    }
 
     const { content, filename } = await PackagePricingService.exportRatesToCsv(rateType, req.query, scope.tenantId);
     res.setHeader("Content-Type", "text/csv");

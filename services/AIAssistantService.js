@@ -149,6 +149,7 @@ class AIAssistantService {
     let ragHit = null;
     let ragChunkCount = 0;
     let ragCitationCount = 0;
+    let ragChunksScanned = 0;
     let finalAnswer = null;
     let usedProvider = null;
     // EXT-034 "AI Model Management & Multi-LLM Routing" — real router
@@ -226,6 +227,7 @@ class AIAssistantService {
           ragHit = citationCount > 0;
           ragChunkCount = citationCount;
           ragCitationCount = citationCount;
+          ragChunksScanned = outcome.result?.chunksScanned || 0;
         }
 
         // EXT-027 §12 "Context Updates ... Only affected context is
@@ -349,7 +351,7 @@ class AIAssistantService {
       toolCallCount: toolCallsForMetric.length, toolFailureCount: toolCallsForMetric.filter((t) => !t.succeeded).length, toolCalls: toolCallsForMetric,
       flaggedPromptInjection: flaggedInjection, guardrailBlockedCount,
       confidenceScore, possiblyUngroundedCount: responseValidation.ungroundedClaims.length,
-      ragUsed, ragHit, ragChunkCount, ragCitationCount,
+      ragUsed, ragHit, ragChunkCount, ragCitationCount, ragChunksScanned,
       promptFallbackUsed: promptVersionRefs.length === 0,
       // EXT-035 §20 "Agent Usage" — real, even for the single-agent path:
       // when the caller scoped this turn to one specific agent, tag it so

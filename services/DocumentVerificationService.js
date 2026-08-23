@@ -1,9 +1,16 @@
+import mongoose from "mongoose";
 import EnterpriseVerificationModel from "../models/EnterpriseVerificationModel.js";
 import EnterpriseDocumentModel from "../models/EnterpriseDocumentModel.js";
 import VisaCaseModel from "../models/VisaCaseModel.js";
 import CustomerModel from "../models/CustomerModel.js";
 import AuditLogModel from "../models/AuditLogmodel.js";
-import { publishEvent } from "../utils/eventBus.js";
+import AIDocumentOcrService from "./ai/AIDocumentOcrService.js";
+import AIDocumentClassificationService from "./ai/AIDocumentClassificationService.js";
+import AIDocumentExtractionService from "./ai/AIDocumentExtractionService.js";
+import AIDocumentValidationService from "./ai/AIDocumentValidationService.js";
+import { getAIDocumentIntelligenceConfig } from "../utils/aiDocumentIntelligenceConfig.js";
+import { publishEvent, subscribeEvent } from "../utils/eventBus.js";
+import logger from "../utils/logger.js";
 
 class DocumentVerificationService {
   /**
@@ -498,6 +505,168 @@ class DocumentVerificationService {
 
     // Re-run pipeline
     return await this.startVerification(documentId, tenantId, userId);
+  }
+
+  /**
+   * Document Intelligence Platform Phase 1/2 — the real consumer this
+   * codebase's own OCRQueued/AIValidationQueued events never had. Per this
+   * service's own honest pre-existing comment on startVerification: "no
+   * real OCR/AI provider is configured anywhere in this codebase...
+   * nothing ever calls back to complete those stages" — a real (non-
+   * simulation-mode) verification stayed in `processing` forever. This
+   * closes that gap: real OCR (AIDocumentOcrService) -> real classification
+   * (AIDocumentClassificationService) -> real template-driven extraction
+   * (AIDocumentExtractionService) -> real business-rule validation against
+   * ERP master data (AIDocumentValidationService), all written into this
+   * exact same EnterpriseVerificationModel row.
+   *
+   * Deliberately handles BOTH the OCR and AI-validation stages in this one
+   * handler (subscribed to OCRQueued only, not a second listener on
+   * AIValidationQueued) — startVerification fires both events for the same
+   * verification row at the same moment, and two independent listeners
+   * both loading-then-saving the same Mongoose document would race. One
+   * handler, one save, no lost update.
+   *
+   * Idempotent: only acts while ocrResult.status is still "pending" — a
+   * re-delivered event, or a row a human/simulation already advanced, is a
+   * safe no-op.
+   */
+  static async processQueuedDocumentIntelligence({ verificationId, documentId, tenantId }) {
+    if (mongoose.connection?.readyState !== 1) return;
+    const config = getAIDocumentIntelligenceConfig();
+
+    const verification = await EnterpriseVerificationModel.findOne({ _id: verificationId, tenantId, isSoftDeleted: { $ne: true } });
+    if (!verification || verification.ocrResult.status !== "pending") return;
+
+    const doc = await EnterpriseDocumentModel.findOne({ _id: documentId, tenantId, isSoftDeleted: { $ne: true } });
+    if (!doc) return;
+    const latestVersion = doc.versions.find((v) => v.versionNumber === doc.currentVersion);
+    if (!latestVersion) return;
+
+    verification.ocrResult.status = "processing";
+    await verification.save();
+
+    try {
+      const response = await fetch(latestVersion.fileUrl);
+      if (!response.ok) throw new Error(`Failed to download document file (HTTP ${response.status}).`);
+      const buffer = Buffer.from(await response.arrayBuffer());
+
+      const extraction = await AIDocumentOcrService.extractRawText(buffer, latestVersion.mimeType);
+      const rawText = extraction?.text || "";
+      const classification = await AIDocumentClassificationService.classifyDocumentText(rawText, { tenantId });
+      const extractedFields = AIDocumentExtractionService.extractFields(classification.documentType, rawText);
+      const validationRules = await AIDocumentValidationService.validateExtraction({
+        tenantId, documentType: classification.documentType, fields: extractedFields, rawText, documentId: doc._id.toString()
+      });
+
+      const isPassport = classification.documentType === "passport";
+      verification.ocrResult.status = extraction ? "completed" : "failed";
+      verification.ocrResult.rawText = rawText.slice(0, 5000) || null;
+      verification.ocrResult.classifiedType = classification.documentType;
+      verification.ocrResult.classificationConfidence = classification.confidence;
+      verification.ocrResult.completedAt = new Date();
+      if (isPassport) {
+        // Real, matches the model's own passport-shaped extractedFields exactly (AIDocumentExtractionService.extractPassportFields' output IS that shape).
+        Object.assign(verification.ocrResult.extractedFields, extractedFields);
+      } else if (Object.keys(extractedFields).length > 0) {
+        verification.ocrResult.genericExtractedFields = extractedFields;
+      }
+
+      doc.ocrData = { status: verification.ocrResult.status, extractedText: verification.ocrResult.rawText, parsedFields: extractedFields, processedAt: new Date() };
+
+      // Real, computed confidence — OCR recognition confidence (images
+      // only; pdf-parse extracts real text, not recognized text, so it has
+      // no confidence concept) averaged with classification confidence
+      // when both exist, otherwise whichever one is real. Never fabricated.
+      const ocrConfidencePct = extraction?.confidence ?? null;
+      const classificationPct = classification.confidence * 100;
+      const overallConfidence = Math.round(ocrConfidencePct != null ? (ocrConfidencePct + classificationPct) / 2 : classificationPct);
+
+      verification.aiValidationResult.status = "completed";
+      verification.aiValidationResult.confidenceScore = overallConfidence;
+      verification.aiValidationResult.visionChecksPerformed = false;
+      verification.aiValidationResult.notes = `Automated checks: OCR text extraction + document-type classification (${classification.method}, classified as "${classification.documentType}" at ${Math.round(classificationPct)}% confidence). Visual quality checks (blur/crop/tampering/face/signature) require a vision-capable provider — not configured in this deployment; those flags remain unverified defaults, not real findings.`;
+      verification.aiValidationResult.evaluatedAt = new Date();
+
+      doc.aiValidation = {
+        status: overallConfidence >= config.reviewConfidenceThreshold * 100 ? "passed" : "pending",
+        confidenceScore: overallConfidence, notes: verification.aiValidationResult.notes, evaluatedAt: new Date()
+      };
+
+      verification.businessRuleResult = {
+        status: validationRules.some((r) => r.status === "failed") ? "failed" : validationRules.some((r) => r.status === "pending") ? "pending" : (validationRules.length > 0 ? "passed" : "pending"),
+        rulesEvaluated: validationRules,
+        minimumValidityPassed: !validationRules.some((r) => r.ruleCode === "DOCUMENT_EXPIRY_CHECK" && r.status === "failed"),
+        travelerMatchPassed: true,
+        evaluatedAt: new Date()
+      };
+
+      // Phase 3 "Confidence-Based Human Review" — a low-confidence result
+      // is flagged (elevated risk score) for PRIORITY manual review, never
+      // auto-approved: every document in this pipeline still requires a
+      // real human decision via submitManualReview, the same as the
+      // simulation-mode path already required. Auto-approving a legal
+      // travel/identity document without a human is a compliance risk this
+      // build does not take on.
+      verification.verificationStatus = "manual_review";
+      if (overallConfidence < config.reviewConfidenceThreshold * 100 || validationRules.some((r) => r.status === "failed")) {
+        verification.riskScore = Math.max(verification.riskScore, 40);
+        verification.riskLevel = verification.riskScore >= 75 ? "Critical" : verification.riskScore >= 50 ? "High" : "Medium";
+      }
+
+      await verification.save();
+      await doc.save();
+
+      // Atomic $push, not fetch-mutate-save — this handler runs
+      // asynchronously off the event bus, so the visaCase's in-memory
+      // version at fetch time is never guaranteed still current by the
+      // time a save would happen (a real officer could be editing the
+      // same case concurrently); an atomic update can't lose that race.
+      await VisaCaseModel.updateOne({ _id: doc.referenceId, tenantId }, {
+        $push: {
+          timeline: {
+            event: "VerificationStarted",
+            description: `Document Intelligence pipeline completed for ${doc.documentType} — classified "${classification.documentType}" (${Math.round(classificationPct)}% confidence), overall confidence ${overallConfidence}%. Queued for manual officer review.`,
+            performedBy: "system", timestamp: new Date()
+          }
+        }
+      });
+
+      await AuditLogModel.create({
+        tenantId, userId: "system", action: "DOCUMENT_INTELLIGENCE_COMPLETED", resource: "EnterpriseVerification", resourceId: verification._id.toString(),
+        details: { documentId: doc._id, classifiedType: classification.documentType, classificationConfidence: classification.confidence, overallConfidence, ruleCount: validationRules.length }
+      }).catch((err) => logger.error("Document intelligence audit log error.", { error: err.message }));
+
+      publishEvent("OCRCompleted", { verificationId: verification._id, documentId: doc._id, tenantId });
+      publishEvent("AIValidationCompleted", { verificationId: verification._id, documentId: doc._id, tenantId });
+      publishEvent("BusinessValidationCompleted", { verificationId: verification._id, documentId: doc._id, tenantId });
+    } catch (error) {
+      logger.error("Document intelligence processing failed.", { verificationId, documentId, tenantId, error: error.message });
+      verification.ocrResult.status = "failed";
+      // Still reachable by a human even when automated processing itself
+      // fails — the one path an officer can always fall back to, same
+      // "processing must never be a dead end" fix startVerification's own
+      // comment already applies to the "manual_review"/"processing" gate
+      // in submitManualReview.
+      verification.verificationStatus = "manual_review";
+      await verification.save().catch(() => null);
+    }
+  }
+
+  static _eventListenersInitialized = false;
+
+  /** Called once from server.js alongside every other Part's own initEventListeners(). */
+  static initEventListeners() {
+    if (DocumentVerificationService._eventListenersInitialized) return;
+    DocumentVerificationService._eventListenersInitialized = true;
+
+    subscribeEvent("OCRQueued", async (payload) => {
+      try {
+        await DocumentVerificationService.processQueuedDocumentIntelligence(payload);
+      } catch (error) {
+        logger.error("OCRQueued handling failed.", { error: error.message });
+      }
+    });
   }
 }
 

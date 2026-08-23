@@ -9,6 +9,9 @@ import {
   createTransportVehicle,
   listTransportVehicles,
   updateTransportVehicle,
+  createHotelCatalog,
+  listHotelCatalog,
+  updateHotelCatalog,
   createHotelRate,
   listHotelRates,
   updateHotelRate,
@@ -85,6 +88,10 @@ router.patch("/room-types/:roomTypeId", authenticateAccessToken, limiter, valida
 router.get("/transport-vehicles", authenticateAccessToken, limiter, listTransportVehicles);
 router.post("/transport-vehicles", authenticateAccessToken, limiter, validate(packagePricingSchemas.createTransportVehicle), createTransportVehicle);
 router.patch("/transport-vehicles/:vehicleId", authenticateAccessToken, limiter, validate(packagePricingSchemas.updateRecord), updateTransportVehicle);
+
+router.get("/hotel-catalog", authenticateAccessToken, limiter, listHotelCatalog);
+router.post("/hotel-catalog", authenticateAccessToken, limiter, validate(packagePricingSchemas.createHotelCatalog), createHotelCatalog);
+router.patch("/hotel-catalog/:hotelCatalogId", authenticateAccessToken, limiter, validate(packagePricingSchemas.updateRecord), updateHotelCatalog);
 
 router.get("/hotel-rates", authenticateAccessToken, limiter, listHotelRates);
 router.post("/hotel-rates", authenticateAccessToken, limiter, validate(packagePricingSchemas.createHotelRate), createHotelRate);

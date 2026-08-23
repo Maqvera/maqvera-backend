@@ -25,6 +25,23 @@ const FLYER_STRINGS = {
 };
 const RTL_LANGUAGES = new Set(["ur", "ar"]);
 
+// PRD §56 — flyer shows hotel images/description/amenities alongside the
+// itinerary. A hotel record created before these fields existed simply has
+// none of them set, so every value here is guarded with `|| null`/`|| []`
+// rather than leaking `undefined` into the template. Exported as a pure
+// function (no DB/Chromium) so tests/packageHotelCatalog.test.js can cover
+// the "hotel has none of the new fields" case directly.
+export const buildFlyerSegmentData = (segment, hotel) => ({
+  city: segment.city, hotelName: hotel?.name || null,
+  hotelImage: (hotel?.images && hotel.images[0]) || null,
+  hotelDescription: hotel?.description || null,
+  hotelAmenities: hotel?.amenities || [],
+  hotelCheckInTime: hotel?.checkInTime || null,
+  hotelCheckOutTime: hotel?.checkOutTime || null,
+  checkIn: segment.checkIn, checkOut: segment.checkOut,
+  nights: Math.max(0, Math.round((new Date(segment.checkOut) - new Date(segment.checkIn)) / 86400000))
+});
+
 /**
  * Package Pricing Engine — PRD §55-§62 "Package Flyer Generator". Renders
  * the package's own last-calculated `roomWisePriceMatrix` (never a second
@@ -65,7 +82,7 @@ class PackageFlyerService {
       resolveTenantBranding(tenantId),
       HotelCatalogModel.find({ _id: { $in: [...new Set(pkg.segments.map((s) => s.hotelCatalogId?.toString()).filter(Boolean))] } }).lean()
     ]);
-    const hotelNameById = new Map(hotels.map((h) => [h._id.toString(), h.name]));
+    const hotelById = new Map(hotels.map((h) => [h._id.toString(), h]));
 
     // Union of included components across every rendered room row — a
     // flyer describes the package, not one specific occupancy's own mix.
@@ -92,10 +109,7 @@ class PackageFlyerService {
       dir: RTL_LANGUAGES.has(resolvedLanguage) ? "rtl" : "ltr",
       package: {
         name: pkg.name, travelStartDate: pkg.travelStartDate, travelEndDate: pkg.travelEndDate, sellingCurrency: resolvedDisplayCurrency,
-        segments: pkg.segments.map((s) => ({
-          city: s.city, hotelName: hotelNameById.get(s.hotelCatalogId?.toString()) || null,
-          checkIn: s.checkIn, checkOut: s.checkOut, nights: Math.max(0, Math.round((new Date(s.checkOut) - new Date(s.checkIn)) / 86400000))
-        }))
+        segments: pkg.segments.map((s) => buildFlyerSegmentData(s, hotelById.get(s.hotelCatalogId?.toString()) || null))
       },
       rooms: rooms.map((r) => ({ roomTypeName: r.roomTypeName, occupancy: r.occupancy, finalPricePerPerson: Math.round(r.finalPricePerPerson * displayFx * 100) / 100 })),
       includedComponents

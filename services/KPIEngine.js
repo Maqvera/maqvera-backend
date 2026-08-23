@@ -81,7 +81,11 @@ class KPIEngine {
           $group: {
             _id: null,
             total: { $sum: 1 },
-            active: { $sum: { $cond: [{ $nin: ["$status", ["completed", "cancelled", "archived"]] }, 1, 0] } },
+            // `$nin` is a query operator (valid in $match), not an aggregation
+            // expression operator — using it here throws "Unrecognized
+            // expression '$nin'" against a real MongoDB engine. `$not`+`$in`
+            // is the actual aggregation-expression equivalent.
+            active: { $sum: { $cond: [{ $not: [{ $in: ["$status", ["completed", "cancelled", "archived"]] }] }, 1, 0] } },
             inTransit: { $sum: { $cond: [{ $in: ["$status", ["in_transit", "departure_scheduled", "checked_in"]] }, 1, 0] } },
             totalTravelers: { $sum: { $size: { $ifNull: ["$travelerSnapshots", []] } } },
             inTransitTravelers: {
@@ -257,11 +261,11 @@ class KPIEngine {
           $group: {
             _id: null,
             total: { $sum: 1 },
-            open: { $sum: { $cond: [{ $nin: ["$status", ["resolved", "verified", "closed", "rejected", "duplicate"]] }, 1, 0] } },
+            open: { $sum: { $cond: [{ $not: [{ $in: ["$status", ["resolved", "verified", "closed", "rejected", "duplicate"]] }] }, 1, 0] } },
             critical: {
               $sum: {
                 $cond: [
-                  { $and: [{ $in: ["$severity", ["Critical", "Emergency"]] }, { $nin: ["$status", ["resolved", "verified", "closed"]] }] },
+                  { $and: [{ $in: ["$severity", ["Critical", "Emergency"]] }, { $not: [{ $in: ["$status", ["resolved", "verified", "closed"]] }] }] },
                   1,
                   0,
                 ],
@@ -270,7 +274,7 @@ class KPIEngine {
             emergency: {
               $sum: {
                 $cond: [
-                  { $and: [{ $eq: ["$severity", "Emergency"] }, { $nin: ["$status", ["resolved", "verified", "closed"]] }] },
+                  { $and: [{ $eq: ["$severity", "Emergency"] }, { $not: [{ $in: ["$status", ["resolved", "verified", "closed"]] }] }] },
                   1,
                   0,
                 ],
@@ -744,14 +748,14 @@ class KPIEngine {
         {
           $group: {
             _id: null,
-            open: { $sum: { $cond: [{ $nin: ["$status", ["resolved", "verified", "closed", "rejected", "duplicate"]] }, 1, 0] } },
+            open: { $sum: { $cond: [{ $not: [{ $in: ["$status", ["resolved", "verified", "closed", "rejected", "duplicate"]] }] }, 1, 0] } },
             critical: {
               $sum: {
                 $cond: [
                   {
                     $and: [
                       { $in: ["$severity", ["Critical", "Emergency", "critical"]] },
-                      { $nin: ["$status", ["resolved", "verified", "closed"]] },
+                      { $not: [{ $in: ["$status", ["resolved", "verified", "closed"]] }] },
                     ],
                   },
                   1,

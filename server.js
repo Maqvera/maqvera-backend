@@ -77,6 +77,7 @@ import FlightScheduleSyncScheduler from "./services/flightScheduleSyncScheduler.
 import AIWorkflowRecoveryScheduler from "./services/aiWorkflowRecoveryScheduler.js";
 import AIContextExpiryScheduler from "./services/aiContextExpiryScheduler.js";
 import AIApprovalTimeoutScheduler from "./services/aiApprovalTimeoutScheduler.js";
+import AIConversationRetentionScheduler from "./services/aiConversationRetentionScheduler.js";
 import AIObservabilityAlertScheduler from "./services/aiObservabilityAlertScheduler.js";
 import ReceivableOverdueScheduler from "./services/receivableOverdueScheduler.js";
 import AccountsReceivableService from "./services/AccountsReceivableService.js";
@@ -90,6 +91,8 @@ import RefundService from "./services/RefundService.js";
 import BankAccountService from "./services/BankAccountService.js";
 import CustomerCollectionService from "./services/CustomerCollectionService.js";
 import WebhookService from "./services/WebhookService.js";
+import NotificationDeliveryService from "./services/NotificationDeliveryService.js";
+import DocumentVerificationService from "./services/DocumentVerificationService.js";
 import CustomerCollectionScheduler from "./services/customerCollectionScheduler.js";
 import SubscriptionBillingScheduler from "./services/subscriptionBillingScheduler.js";
 import CurrencyRevaluationScheduler from "./services/currencyRevaluationScheduler.js";
@@ -135,6 +138,7 @@ const bootstrapEnterpriseServices = async () => {
   await AIWorkflowRecoveryScheduler.init();
   await AIContextExpiryScheduler.init();
   await AIApprovalTimeoutScheduler.init();
+  await AIConversationRetentionScheduler.init();
   await AIObservabilityAlertScheduler.init();
   await TenantSubscriptionScheduler.init();
   await SubscriptionSuspensionEnforcementScheduler.init();
@@ -269,6 +273,8 @@ const startServer = async () => {
     BankAccountService.initEventListeners();
     CustomerCollectionService.initEventListeners();
     WebhookService.initEventListeners();
+    NotificationDeliveryService.initEventListeners();
+    DocumentVerificationService.initEventListeners();
 
     // Voice-Based Booking Creation PRD B4.4/Step 3 — Express itself cannot
     // handle a WebSocket upgrade, so the bare `app.listen(PORT)` this

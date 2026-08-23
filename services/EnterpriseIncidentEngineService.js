@@ -94,7 +94,7 @@ class EnterpriseIncidentEngineService {
   /**
    * Helper to record Timeline & Activity Stream entries
    */
-  static async recordTimeline({ tenantId, visaCaseId, travelPlanId, eventType, title, description, performedBy = null, metadata = {} }) {
+  static async recordTimeline({ tenantId, visaCaseId, travelPlanId, incidentId, eventType, title, description, performedBy = null, metadata = {} }) {
     try {
       if (mongoose.connection && mongoose.connection.readyState === 1) {
         if (travelPlanId) {
@@ -114,7 +114,18 @@ class EnterpriseIncidentEngineService {
         await UnifiedActivityStreamModel.create({
           tenantId,
           module: "IncidentManagement",
-          referenceId: visaCaseId || travelPlanId || null,
+          // referenceId is a required ObjectId — an incident with neither a
+          // visa case nor a travel plan attached (a genuinely standalone
+          // incident, real and common — see EnterpriseIncidentEngineService's
+          // own `sourceModule: "AIGuardrail"` incidents) previously fell
+          // through to `null` here, which failed this model's own required
+          // validator on every single call and silently dropped the
+          // activity-stream row (caught by the .catch below, so incident
+          // creation itself never broke, but the audit trail genuinely did).
+          // The incident's own _id is always real and available at every
+          // call site — the correct fallback reference for "this activity
+          // stream row is about incident X" when there's no parent record.
+          referenceId: visaCaseId || travelPlanId || incidentId || null,
           eventType,
           title,
           description,
@@ -273,6 +284,7 @@ class EnterpriseIncidentEngineService {
       tenantId,
       visaCaseId: visaCase ? visaCase._id : null,
       travelPlanId: travelPlan ? travelPlan._id : null,
+      incidentId: newIncident._id,
       eventType: "IncidentReported",
       title: `Incident Reported (${incidentNumber})`,
       description: `[${severity}] ${resolvedTitle}`,
@@ -456,6 +468,7 @@ class EnterpriseIncidentEngineService {
       tenantId,
       visaCaseId: incident.visaCaseId,
       travelPlanId: incident.travelPlanId,
+      incidentId: incident._id,
       eventType: "IncidentUpdated",
       title: `Incident ${incident.incidentNumber} Updated`,
       description: `Updated fields: ${Object.keys(changes).join(", ")}`,
@@ -518,6 +531,7 @@ class EnterpriseIncidentEngineService {
       tenantId,
       visaCaseId: incident.visaCaseId,
       travelPlanId: incident.travelPlanId,
+      incidentId: incident._id,
       eventType: "IncidentAssigned",
       title: "Incident Assigned",
       description: `Incident ${incident.incidentNumber} assigned to ${incident.assignedToName} (${team})`,
@@ -582,6 +596,7 @@ class EnterpriseIncidentEngineService {
       tenantId,
       visaCaseId: incident.visaCaseId,
       travelPlanId: incident.travelPlanId,
+      incidentId: incident._id,
       eventType: "InvestigationStarted",
       title: `Evidence Attached (${incident.incidentNumber})`,
       description: item.description,
@@ -703,6 +718,7 @@ class EnterpriseIncidentEngineService {
       tenantId,
       visaCaseId: incident.visaCaseId,
       travelPlanId: incident.travelPlanId,
+      incidentId: incident._id,
       eventType: "InvestigationStarted",
       title: `Investigation Updated (${incident.incidentNumber})`,
       description: `Updated: ${changedParts.join(", ")}`,
@@ -795,6 +811,7 @@ class EnterpriseIncidentEngineService {
       tenantId,
       visaCaseId: incident.visaCaseId,
       travelPlanId: incident.travelPlanId,
+      incidentId: incident._id,
       eventType: "IncidentResolved",
       title: `Incident Resolved (${incident.incidentNumber})`,
       description: resolutionSummary,
@@ -829,6 +846,7 @@ class EnterpriseIncidentEngineService {
       tenantId,
       visaCaseId: incident.visaCaseId,
       travelPlanId: incident.travelPlanId,
+      incidentId: incident._id,
       eventType: "IncidentVerified",
       title: `Incident Verified (${incident.incidentNumber})`,
       description: `Resolution verified by ${userId}`,
@@ -871,6 +889,7 @@ class EnterpriseIncidentEngineService {
       tenantId,
       visaCaseId: incident.visaCaseId,
       travelPlanId: incident.travelPlanId,
+      incidentId: incident._id,
       eventType: "IncidentClosed",
       title: `Incident Closed (${incident.incidentNumber})`,
       description: `Incident officially closed.`,
@@ -912,6 +931,7 @@ class EnterpriseIncidentEngineService {
       tenantId,
       visaCaseId: incident.visaCaseId,
       travelPlanId: incident.travelPlanId,
+      incidentId: incident._id,
       eventType: "IncidentReopened",
       title: `Incident Reopened (${incident.incidentNumber})`,
       description: reason || "Reopened for re-investigation",

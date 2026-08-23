@@ -18,7 +18,7 @@ class AmadeusAdapter extends BaseGdsAdapter {
    * Search Live Flights via Amadeus API v2 Offer Search
    */
   async searchFlights(params) {
-    const { origin = this.config.defaultOrigin, destination = this.config.defaultDestination, departureDate = "2027-01-15", returnDate, adults = 1, cabin = "Economy", currency = this.config.defaultCurrency } = params;
+    const { origin = this.config.defaultOrigin, destination = this.config.defaultDestination, departureDate = "2027-01-15", returnDate, adults = 1, children = 0, infants = 0, cabin = "Economy", currency = this.config.defaultCurrency } = params;
 
     // 1. Try Live Amadeus REST API
     const queryParams = new URLSearchParams({
@@ -31,6 +31,12 @@ class AmadeusAdapter extends BaseGdsAdapter {
       max: "10"
     });
     if (returnDate) queryParams.append("returnDate", returnDate);
+    // Gap 1.3 — real Amadeus Flight Offers Search API v2 query parameters
+    // (distinct from getHotelOffers' own children param, which genuinely
+    // can't be forwarded without childAges — flight search has no such
+    // extra requirement).
+    if (children > 0) queryParams.append("children", children.toString());
+    if (infants > 0) queryParams.append("infants", infants.toString());
 
     const liveData = await gdsHttpClient.requestAmadeus(`/v2/shopping/flight-offers?${queryParams.toString()}`);
 

@@ -1,11 +1,4 @@
-import { createWorker } from "tesseract.js";
-// See services/ai/AIKnowledgeExtractionService.js's own doc comment for
-// why the inner lib file is imported directly rather than the package
-// root — pdf-parse's root index.js runs a debug self-test at module-load
-// time that ESM's CJS interop triggers, causing a spurious ENOENT.
-import pdfParse from "pdf-parse/lib/pdf-parse.js";
-
-const IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/bmp", "image/tiff"]);
+import AIDocumentOcrService from "./ai/AIDocumentOcrService.js";
 
 // ---------------------------------------------------------------------------
 // Pure text-parsing helpers — no OCR/DB access, unit-testable directly (see
@@ -76,23 +69,6 @@ export const extractReceiptNumberFromText = (text) => {
 // ---------------------------------------------------------------------------
 
 class ExpenseOcrService {
-  static async _extractText(buffer, mimeType) {
-    if (mimeType === "application/pdf") {
-      const result = await pdfParse(buffer);
-      return { text: result.text || "", confidence: null };
-    }
-    if (IMAGE_MIME_TYPES.has(mimeType)) {
-      const worker = await createWorker("eng");
-      try {
-        const { data } = await worker.recognize(buffer);
-        return { text: data.text || "", confidence: data.confidence ?? null };
-      } finally {
-        await worker.terminate();
-      }
-    }
-    return null;
-  }
-
   /**
    * "OCR Extraction" — real text extraction plus the pure field-parsing
    * helpers above. Never throws to the caller: a genuine OCR/parsing
@@ -102,7 +78,7 @@ class ExpenseOcrService {
    */
   static async processAttachment(buffer, mimeType) {
     try {
-      const extraction = await ExpenseOcrService._extractText(buffer, mimeType);
+      const extraction = await AIDocumentOcrService.extractRawText(buffer, mimeType);
       if (!extraction) {
         return { status: "Skipped", extractedText: null, extractedAmount: null, extractedDate: null, extractedVendor: null, extractedReceiptNumber: null, confidence: null, processedAt: new Date() };
       }

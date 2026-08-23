@@ -27,6 +27,17 @@ import { getAIConfig } from "../../utils/aiConfig.js";
 
 const hasPermission = (permissions, required) => required.some((p) => permissions.includes(p)) || permissions.includes("admin");
 
+// Gap 1.3 — get_hotel_room_offers' own real-data meal-preference filter,
+// extracted as a pure function so it's directly unit-testable without a
+// live Amadeus call. Case-insensitive substring match against each real
+// offer's own mealPlan (AmadeusAdapter.BOARD_TYPE_MAP output), never an
+// enum — see that tool's own parameter description for why.
+export const filterOffersByMealPreference = (offers, mealPreference) => {
+  if (!mealPreference) return offers;
+  const needle = String(mealPreference).toLowerCase();
+  return (offers || []).filter((o) => o.mealPlan && o.mealPlan.toLowerCase().includes(needle));
+};
+
 /**
  * EXT-032 §10 "Tool Restrictions ... Maximum Execution Time." Previously
  * only enforced by AIOrchestrationService's own outer withTimeout wrap
@@ -130,6 +141,8 @@ const TOOLS = [
         returnDate: { type: "string", description: "YYYY-MM-DD, only for round-trip" },
         tripType: { type: "string", enum: ["OneWay", "RoundTrip"] },
         adults: { type: "integer", minimum: 1 },
+        children: { type: "integer", minimum: 0, description: "Age 2-11 — Gap 1.3: forwarded to the real Amadeus Flight Offers Search API's own `children` parameter, not just counted informationally." },
+        infants: { type: "integer", minimum: 0, description: "Age under 2 — Gap 1.3: forwarded to the real Amadeus Flight Offers Search API's own `infants` parameter." },
         cabin: { type: "string", enum: ["Economy", "PremiumEconomy", "Business", "First"] }
       },
       required: ["origin", "destination", "departureDate"]
@@ -152,6 +165,8 @@ const TOOLS = [
         departureDate: args.departureDate,
         returnDate: args.returnDate,
         adults: args.adults || 1,
+        children: args.children || 0,
+        infants: args.infants || 0,
         cabin: args.cabin || "Economy",
         currency: args.currency || "PKR"
       });
@@ -385,7 +400,8 @@ const TOOLS = [
         checkOutDate: { type: "string", description: "YYYY-MM-DD" },
         adults: { type: "integer", minimum: 1 },
         rooms: { type: "integer", minimum: 1 },
-        currency: { type: "string" }
+        currency: { type: "string" },
+        mealPreference: { type: "string", description: "Gap 1.3 — optional, best-effort filter against each real returned offer's own `mealPlan` (e.g. 'breakfast', 'half board', 'all inclusive'), case-insensitive substring match. NOT an enum: Amadeus's real boardType wording varies by hotel/rate, so this filters genuine returned data rather than validating against an invented fixed list. A preference that matches nothing yields an honestly empty `offers` array, never a fabricated result." }
       },
       required: ["hotelId", "checkInDate", "checkOutDate"]
     },
@@ -403,8 +419,9 @@ const TOOLS = [
         hotelId: args.hotelId, checkInDate: args.checkInDate, checkOutDate: args.checkOutDate,
         adults: args.adults, rooms: args.rooms, currency: args.currency
       });
-      publishEvent("RoomRecommendationGenerated", { tenantId: context.tenantId, hotelId: result.hotelId, offerCount: result.offers.length });
-      return { hotelId: result.hotelId, hotel: result.hotel, offers: result.offers };
+      const offers = filterOffersByMealPreference(result.offers, args.mealPreference);
+      publishEvent("RoomRecommendationGenerated", { tenantId: context.tenantId, hotelId: result.hotelId, offerCount: offers.length });
+      return { hotelId: result.hotelId, hotel: result.hotel, offers };
     }
   },
   {
@@ -723,6 +740,53 @@ const TOOLS = [
     }
   },
   {
+    // Gap 1.7 "Reporting agent" — real, already-existing VisaAnalyticsEngine
+    // dashboards this codebase's own REST layer (controllers/VisaDashboardController.js)
+    // already gates identically (visa.read + visa.dashboard.management for
+    // "managementOnly" dashboards) — same honest-denial shape as
+    // get_revenue_dashboard above, not a hard permission-check throw.
+    name: "get_executive_dashboard",
+    description: "Get the cross-tenant executive KPI summary (critical alerts, top embassies, 7-day trend data). Only available to callers whose role grants the visa.dashboard.management permission, same as this codebase's own GET /api/v1/visa/dashboard/executive.",
+    parameters: { type: "object", properties: {} },
+    outputSchema: { type: "object", description: "Executive dashboard summary object, or { denied: true } if the caller lacks the visa.dashboard.management permission." },
+    requiredPermissions: ["visa.read"],
+    requiredRoles: [],
+    executionType: "Synchronous",
+    riskLevel: "read",
+    requiresApproval: false,
+    version: "1.0.0",
+    ownerModule: "Analytics",
+    handler: async (args, context) => {
+      const permissions = context.permissions || [];
+      if (!permissions.includes("visa.dashboard.management") && !permissions.includes("admin")) {
+        return { denied: true, message: "This user's permissions do not include visa.dashboard.management." };
+      }
+      const result = await VisaAnalyticsEngine.executiveDashboard({ tenantId: context.tenantId });
+      return result.data;
+    }
+  },
+  {
+    name: "get_compliance_dashboard",
+    description: "Get compliance status (SLA breaches and related compliance metrics). Only available to callers whose role grants the visa.dashboard.management permission, same as this codebase's own GET /api/v1/visa/dashboard/compliance.",
+    parameters: { type: "object", properties: {} },
+    outputSchema: { type: "object", description: "Compliance dashboard summary object, or { denied: true } if the caller lacks the visa.dashboard.management permission." },
+    requiredPermissions: ["visa.read"],
+    requiredRoles: [],
+    executionType: "Synchronous",
+    riskLevel: "read",
+    requiresApproval: false,
+    version: "1.0.0",
+    ownerModule: "Analytics",
+    handler: async (args, context) => {
+      const permissions = context.permissions || [];
+      if (!permissions.includes("visa.dashboard.management") && !permissions.includes("admin")) {
+        return { denied: true, message: "This user's permissions do not include visa.dashboard.management." };
+      }
+      const result = await VisaAnalyticsEngine.complianceDashboard({ tenantId: context.tenantId });
+      return result.data;
+    }
+  },
+  {
     name: "get_incidents_summary",
     description: "Get a summary of recent operational incidents, optionally filtered by severity or status.",
     parameters: {
@@ -741,6 +805,27 @@ const TOOLS = [
     version: "1.0.0",
     ownerModule: "Incidents",
     handler: async (args, context) => EnterpriseIncidentEngineService.getIncidents({ severity: args.severity, status: args.status, pageSize: 10 }, context.tenantId)
+  },
+  {
+    // Gap 1.7 "Incident Response agent" — full detail (evidence, investigation,
+    // timeline, corrective/preventive actions) for one specific incident
+    // already surfaced by get_incidents_summary, not a second summary tool.
+    name: "get_incident_details",
+    description: "Get full detail for one specific incident (evidence, investigation notes, corrective/preventive actions, assignment history, timeline) — use after get_incidents_summary has identified which incident to look into.",
+    parameters: {
+      type: "object",
+      properties: { incidentId: { type: "string" } },
+      required: ["incidentId"]
+    },
+    outputSchema: { type: "object", description: "The full incident record, or an error if not found for this tenant." },
+    requiredPermissions: ["incidents.read"],
+    requiredRoles: [],
+    executionType: "Synchronous",
+    riskLevel: "read",
+    requiresApproval: false,
+    version: "1.0.0",
+    ownerModule: "Incidents",
+    handler: async (args, context) => EnterpriseIncidentEngineService.getIncidentById(args.incidentId, context.tenantId)
   },
   {
     name: "enterprise_search",
@@ -778,7 +863,7 @@ const TOOLS = [
       },
       required: ["query"]
     },
-    outputSchema: { type: "object", description: "{ contextText, citations: [{ documentId, title, section, version, category, confidence }] }. `contextText` is null when nothing relevant/authorized was found — never fabricated." },
+    outputSchema: { type: "object", description: "{ contextText, citations: [{ documentId, title, section, version, category, confidence }], chunksScanned }. `contextText` is null when nothing relevant/authorized was found — never fabricated. `chunksScanned` (Gap 1.4) is an internal scaling metric, not something the model needs to reason about — the number of this tenant's chunks the in-app cosine-similarity ranker considered before returning citations." },
     requiredPermissions: [],
     requiredRoles: [],
     executionType: "Synchronous",
@@ -791,22 +876,35 @@ const TOOLS = [
         tenantId: context.tenantId, role: context.role, permissions: context.permissions,
         query: args.query, topK: args.topK
       });
-      return { contextText: result.contextText, citations: result.citations };
+      return { contextText: result.contextText, citations: result.citations, chunksScanned: result.scannedCount };
     }
   },
   {
     name: "propose_flight_booking",
-    description: "Propose booking a specific flight offer (obtained from a prior flight_search call) for one traveler. This NEVER creates a real reservation — it only creates a pending approval request. A human with the required role must explicitly approve it via POST /api/v1/ai/tools/approval before any booking happens.",
+    description: "Propose booking a specific flight offer (obtained from a prior flight_search call) for one or more travelers (adults/children/infants — Gap 1.3). This NEVER creates a real reservation — it only creates a pending approval request. A human with the required role must explicitly approve it via POST /api/v1/ai/tools/approval before any booking happens.",
     parameters: {
       type: "object",
       properties: {
         offerId: { type: "string" },
         provider: { type: "string" },
-        travelerFirstName: { type: "string" },
-        travelerLastName: { type: "string" },
-        passportNumber: { type: "string" }
+        travelers: {
+          type: "array",
+          minItems: 1,
+          description: "One entry per traveler on this offer — count must match the flight_search call's own adults+children+infants (POST /api/v1/flight-bookings enforces this against the original search).",
+          items: {
+            type: "object",
+            properties: {
+              firstName: { type: "string" },
+              lastName: { type: "string" },
+              passportNumber: { type: "string" },
+              passportExpiry: { type: "string", description: "YYYY-MM-DD, optional" },
+              nationality: { type: "string", description: "Optional — ISO country code, forwarded to the real Amadeus traveler document (AmadeusAdapter._toAmadeusTraveler)." }
+            },
+            required: ["firstName", "lastName", "passportNumber"]
+          }
+        }
       },
-      required: ["offerId", "travelerFirstName", "travelerLastName", "passportNumber"]
+      required: ["offerId", "travelers"]
     },
     outputSchema: { type: "object", description: "{ approvalRequestId, status: 'pending', message }" },
     requiredPermissions: ["flight.search"],
@@ -827,14 +925,23 @@ const TOOLS = [
       riskLevel: "high",
       // "Not Responsible For: Database Updates" — the proposal carries the
       // exact real endpoint call a human approver hands off to; the AI
-      // layer never invokes it itself, even after approval.
+      // layer never invokes it itself, even after approval. Gap 1.3 — the
+      // real POST /api/v1/flight-bookings endpoint (controllers/FlightBookingController.js)
+      // already accepts an arbitrary-length travelers array and already
+      // validates its length against the original search's requestedPassengers
+      // (GdsIntegrationService's own adults+children+infants count), so this
+      // only ever needed the AI tool's own input shape widened — no change
+      // to the real booking-creation path.
       proposedAction: {
         method: "POST",
         endpoint: "/api/v1/flight-bookings",
         body: {
           offerId: args.offerId,
           provider: args.provider || "Amadeus",
-          travelers: [{ firstName: args.travelerFirstName, lastName: args.travelerLastName, passportNumber: args.passportNumber }]
+          travelers: (args.travelers || []).map((t) => ({
+            firstName: t.firstName, lastName: t.lastName, passportNumber: t.passportNumber,
+            passportExpiry: t.passportExpiry || undefined, nationality: t.nationality || undefined
+          }))
         }
       },
       requiredRole: "admin"
@@ -913,6 +1020,53 @@ const TOOLS = [
         method: "POST",
         endpoint: `/api/v1/integrations/amadeus/hotels/bookings/${args.providerBookingId}/cancel`,
         body: { reason: args.reason }
+      },
+      requiredRole: "admin"
+    })
+  },
+  {
+    // Gap 1.7 "Incident Response agent" — per the PRD's own explicit
+    // instruction, anything beyond read/summary needs the same propose_*
+    // + human-approval pattern already used for bookings; this never lets
+    // an agent directly mutate an incident record. Mirrors propose_flight_booking's
+    // own "Not Responsible For: Database Updates" design exactly — the
+    // proposedAction is the real POST /api/v1/incidents/:incidentId/assign
+    // endpoint (controllers/TravelIncidentController.js's AssignIncident),
+    // which a human approver's action hands off to; the AI layer never
+    // calls EnterpriseIncidentEngineService.assignIncident itself.
+    name: "propose_incident_assignment",
+    description: "Propose assigning an open incident to a specific user/team. This NEVER assigns anything itself — it only creates a pending approval request. A human with the required role must explicitly approve it via POST /api/v1/ai/tools/approval before the incident is actually reassigned.",
+    parameters: {
+      type: "object",
+      properties: {
+        incidentId: { type: "string" },
+        userId: { type: "string", description: "The user id to assign this incident to" },
+        userName: { type: "string" },
+        team: { type: "string", description: "Defaults to 'Operations' if omitted, matching the real endpoint's own default." }
+      },
+      required: ["incidentId", "userId"]
+    },
+    outputSchema: { type: "object", description: "{ approvalRequestId, status: 'pending', message }" },
+    requiredPermissions: ["incidents.write"],
+    requiredRoles: [],
+    executionType: "Synchronous",
+    riskLevel: "high",
+    requiresApproval: true,
+    requiredApprovalRole: "admin",
+    // Not retried: this creates state (an approval request), same
+    // reasoning as propose_flight_booking above.
+    retryPolicyOverride: { retryable: false, maxRetries: 0 },
+    version: "1.0.0",
+    ownerModule: "Incidents",
+    handler: async (args, context) => createIdempotentApprovalRequest({
+      context,
+      toolName: "propose_incident_assignment",
+      arguments: args,
+      riskLevel: "high",
+      proposedAction: {
+        method: "POST",
+        endpoint: `/api/v1/incidents/${args.incidentId}/assign`,
+        body: { userId: args.userId, userName: args.userName || undefined, team: args.team || "Operations" }
       },
       requiredRole: "admin"
     })
