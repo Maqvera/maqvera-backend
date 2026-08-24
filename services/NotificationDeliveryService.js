@@ -1,7 +1,7 @@
 import mongoose from "mongoose";
 import { subscribeEvent } from "../utils/eventBus.js";
 import getDeliveryAdapter from "./delivery/index.js";
-import UserModel from "../models/UserModel.js";
+import UserModel from "../models/Usermodel.js";
 import RoleModel from "../models/Rolemodel.js";
 import NotificationLogModel from "../models/NotificationLogModel.js";
 import { getAIObservabilityConfig } from "../utils/aiObservabilityConfig.js";

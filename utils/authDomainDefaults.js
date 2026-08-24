@@ -202,6 +202,19 @@ export const DEFAULT_PERMISSIONS = [
   { key: "visa.read", description: "Read visa records" },
   { key: "visa.dashboard.management", description: "View management-only visa dashboards (executive, finance, compliance, AI insights)" },
   { key: "reporting.read", description: "Read reporting data" },
+  // Reporting Platform Part 8 fix — report template registry CRUD
+  // (ReportTemplateModel). Read is folded into the existing
+  // "reporting.read" key rather than a new one; only the write/lifecycle
+  // actions (create/edit/publish/archive a template) get their own key,
+  // matching the read-vs-manage split every other module in this catalog uses.
+  { key: "reporting.templates.manage", description: "Create, edit, publish, and archive report templates" },
+  // Reporting Platform Part 5 fix — KPI definition registry CRUD
+  // (KPIDefinitionModel). Same read-vs-manage split as
+  // reporting.templates.manage above.
+  { key: "reporting.kpis.manage", description: "Register and deprecate KPI definitions" },
+  // Reporting Platform Part 2 fix — report catalog registry CRUD
+  // (ReportCatalogModel). Same read-vs-manage split as the two entries above.
+  { key: "reporting.catalog.manage", description: "Register report catalog entries and transition their lifecycle state" },
   { key: "roles.read", description: "View the company's role catalog and permission assignments" },
   { key: "roles.manage", description: "Create, edit, and delete roles and their permission assignments" },
   { key: "admin", description: "Full administrative override across all modules" },

@@ -1110,6 +1110,19 @@ export const getFinanceConfig = () => {
     webhookRetryPollCron: process.env.WEBHOOK_RETRY_POLL_CRON_SCHEDULE || '* * * * *',
     webhookRetryPollBatchSize: parseInt(process.env.WEBHOOK_RETRY_POLL_BATCH_SIZE || '100', 10),
 
+    // Communication Platform (Part 11 fix, gap 2.6) — a 'Failed' Email/SMS/
+    // WhatsApp/Push message has already exhausted the SAME-REQUEST inline
+    // resilience-engine backoff (utils/communicationResilience.js) by the
+    // time it reaches this state; this is the SEPARATE, later sweep that
+    // gives it another full attempt once a provider outage may have
+    // cleared, mirroring WebhookRetryScheduler's own division of
+    // responsibility (thin cron wrapper -> real business logic in the
+    // service). `communicationRetryCooldownMs` prevents a message from
+    // being swept again within the same window it just failed in.
+    communicationRetryPollCron: process.env.COMMUNICATION_RETRY_POLL_CRON_SCHEDULE || '*/5 * * * *',
+    communicationRetryPollBatchSize: parseInt(process.env.COMMUNICATION_RETRY_POLL_BATCH_SIZE || '100', 10),
+    communicationRetryCooldownMs: parseInt(process.env.COMMUNICATION_RETRY_COOLDOWN_MS || String(5 * 60 * 1000), 10),
+
     // "Payment Retry Engine... Gateway Timeout Retry, Temporary Failure
     // Retry, Exponential Backoff, Retry Limits." Reuses the already-real
     // utils/retryWithBackoff.js for the actual backoff math (real network/

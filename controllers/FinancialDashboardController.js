@@ -5,6 +5,35 @@ import { sendError, sendSuccess } from "../utils/apiResponse.js";
 import { createRequestId } from "../utils/authTokens.js";
 import { getAccessScope } from "../utils/accessScope.js";
 import { publishEvent } from "../utils/eventBus.js";
+import { toWidgetArray } from "../utils/dashboardWidgetContract.js";
+import ReportAuditService from "../services/ReportAuditService.js";
+
+// Reporting Platform Part 4 fix — DashboardWidgetContract projection.
+// Only the fields actually present on a given dashboard's flat data
+// become widgets (see utils/dashboardWidgetContract.js); this single map
+// is safe to reuse across every Finance dashboardType since it only
+// covers well-known metric/KPI keys shared across several of them.
+const FINANCE_WIDGET_MAP = {
+  cashToday: { title: "Cash Today", type: "metric" },
+  bankBalance: { title: "Bank Balance", type: "metric" },
+  outstandingAR: { title: "Outstanding Receivables", type: "metric" },
+  outstandingAP: { title: "Outstanding Payables", type: "metric" },
+  overdueReceivables: { title: "Overdue Receivables", type: "metric" },
+  overduePayables: { title: "Overdue Payables", type: "metric" },
+  todaysRevenue: { title: "Today's Revenue", type: "metric" },
+  todaysExpenses: { title: "Today's Expenses", type: "metric" },
+  netCashFlowToday: { title: "Net Cash Flow (Today)", type: "metric" },
+  ebitda: { title: "EBITDA", type: "metric" },
+  ebitdaMargin: { title: "EBITDA Margin", type: "metric" },
+  expenseRatio: { title: "Expense Ratio", type: "metric" },
+  operatingMargin: { title: "Operating Margin", type: "metric" },
+  operatingRatio: { title: "Operating Ratio", type: "metric" },
+  workingCapital: { title: "Working Capital", type: "metric" },
+  currentRatio: { title: "Current Ratio", type: "metric" },
+  quickRatio: { title: "Quick Ratio", type: "metric" },
+  alertCount: { title: "Active Alerts", type: "metric" },
+  fxExposureTotal: { title: "FX Exposure", type: "metric" },
+};
 
 // Dashboard access is governed entirely by RBAC permissions (admin-configurable
 // via /api/v1/roles), never by hardcoded role names — mirrors
@@ -62,7 +91,13 @@ const handle = (method, message, { managementOnly = false, dashboardType = "unkn
       res,
       200,
       message,
-      { ...result.data, meta: { fromCache: result.fromCache, generatedAt: result.data?.generatedAt || null } },
+      {
+        ...result.data,
+        // Reporting Platform Part 4 fix — additive DashboardWidgetContract
+        // projection; every existing field above is unchanged.
+        widgets: toWidgetArray(result.data, FINANCE_WIDGET_MAP),
+        meta: { fromCache: result.fromCache, generatedAt: result.data?.generatedAt || null },
+      },
       requestId
     );
   } catch (error) {
@@ -70,8 +105,24 @@ const handle = (method, message, { managementOnly = false, dashboardType = "unkn
   }
 };
 
+// Reporting Platform Part 13 fix — the 5 endpoints below bypass the
+// handle() factory above (they aren't per-dashboardType reads), so they
+// never got its free audit-log call. Same fire-and-forget, readyState-guarded
+// discipline as handle() itself; ReportAuditService is the additional
+// tamper-evident layer alongside AuditLogModel.
+const auditFinanceDashboardAction = (tenantId, userId, action, resourceKey, details = {}) => {
+  if (mongoose.connection?.readyState === 1) {
+    AuditLogModel.create({ tenantId, userId: userId || "system", action, module: "FinanceAnalytics", details })
+      .catch((err) => console.error("Finance dashboard audit log error:", err));
+  }
+  ReportAuditService.recordEvent({
+    tenantId, module: "Finance", resourceType: "Dashboard", resourceKey: resourceKey || "unknown",
+    action: "VIEW", userId
+  }).catch((err) => console.error("Finance dashboard report-audit error:", err));
+};
+
 // DashboardViewed is informational only.
-const publishDashboardViewed = (tenantId, dashboardType, userId) => publishEvent("DashboardViewed", { tenantId, dashboardType, performedBy: userId || null });
+const publishDashboardViewed = (tenantId, dashboardType, userId) => publishEvent("DashboardViewed", { tenantId, dashboardType, performedBy: userId || null, module: "Finance" });
 
 export const getFinancialExecutiveDashboard = handle(
   FinanceAnalyticsEngine.executiveDashboard,
@@ -186,6 +237,7 @@ export const listDashboardAlerts = async (req, res) => {
       return sendError(res, 403, "finance.dashboard.read permission required.", requestId);
     }
     const alerts = await FinanceAnalyticsEngine.listAlerts({ tenantId: accessScope.tenantId, status: req.query.status || null });
+    auditFinanceDashboardAction(accessScope.tenantId, req.auth?.userId || req.auth?.id || null, "LIST_DASHBOARD_ALERTS", "alerts", { status: req.query.status || null });
     return sendSuccess(res, 200, "Dashboard alerts retrieved successfully.", { alerts }, requestId);
   } catch (error) {
     return sendError(res, statusFromError(error.message), error.message, requestId);
@@ -203,6 +255,7 @@ export const acknowledgeDashboardAlert = async (req, res) => {
     }
     const userId = req.auth?.userId || req.auth?.id || null;
     const alert = await FinanceAnalyticsEngine.acknowledgeAlert({ tenantId: accessScope.tenantId, alertId: req.params.id, userId });
+    auditFinanceDashboardAction(accessScope.tenantId, userId, "ACKNOWLEDGE_DASHBOARD_ALERT", req.params.id);
     return sendSuccess(res, 200, "Alert acknowledged successfully.", { alert }, requestId);
   } catch (error) {
     return sendError(res, statusFromError(error.message), error.message, requestId);
@@ -222,6 +275,7 @@ export const drillThroughDashboard = async (req, res) => {
     }
     if (!req.query.reportId || !req.query.accountId) throw new Error("reportId and accountId are required for drill-through.");
     const drillDown = await FinanceAnalyticsEngine.drillThrough({ tenantId: accessScope.tenantId, reportId: req.query.reportId, accountId: req.query.accountId });
+    auditFinanceDashboardAction(accessScope.tenantId, req.auth?.userId || req.auth?.id || null, "DRILL_THROUGH_DASHBOARD", req.query.reportId, { accountId: req.query.accountId });
     return sendSuccess(res, 200, "Drill-through data retrieved successfully.", drillDown, requestId);
   } catch (error) {
     return sendError(res, statusFromError(error.message), error.message, requestId);
@@ -238,6 +292,7 @@ export const getDashboardPreferences = async (req, res) => {
     const userId = req.auth?.userId || req.auth?.id || null;
     if (!req.params.dashboardType) throw new Error("dashboardType is required.");
     const preferences = await FinanceAnalyticsEngine.getPreferences({ tenantId: accessScope.tenantId, userId, dashboardType: req.params.dashboardType });
+    auditFinanceDashboardAction(accessScope.tenantId, userId, "GET_DASHBOARD_PREFERENCES", req.params.dashboardType);
     return sendSuccess(res, 200, "Dashboard preferences retrieved successfully.", { preferences }, requestId);
   } catch (error) {
     return sendError(res, statusFromError(error.message), error.message, requestId);
@@ -251,6 +306,7 @@ export const saveDashboardPreferences = async (req, res) => {
     if (!accessScope) return sendError(res, 403, "Tenant context is required.", requestId);
     const userId = req.auth?.userId || req.auth?.id || null;
     const preferences = await FinanceAnalyticsEngine.savePreferences({ tenantId: accessScope.tenantId, userId, dashboardType: req.params.dashboardType, ...req.body });
+    auditFinanceDashboardAction(accessScope.tenantId, userId, "SAVE_DASHBOARD_PREFERENCES", req.params.dashboardType);
     return sendSuccess(res, 200, "Dashboard preferences saved successfully.", { preferences }, requestId);
   } catch (error) {
     return sendError(res, statusFromError(error.message), error.message, requestId);

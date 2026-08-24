@@ -2,7 +2,7 @@ import PackageModel from "../models/PackageModel.js";
 import CustomerModel from "../models/CustomerModel.js";
 import HotelCatalogModel from "../models/HotelCatalogModel.js";
 import AuditLogModel from "../models/AuditLogmodel.js";
-import CommunicationPlatformService from "./CommunicationPlatformService.js";
+import WhatsAppPlatformService from "./WhatsAppPlatformService.js";
 import { resolveTenantBranding } from "../utils/tenantBranding.js";
 
 const formatDateShort = (date) => new Date(date).toISOString().slice(0, 10);
@@ -33,15 +33,26 @@ export const buildWhatsAppMessage = ({ packageName, destination, dateRange, hote
 };
 
 /**
- * Package Pricing Engine — PRD §66/§100. Sends via the existing Enterprise
- * Communication Platform (CommunicationPlatformService.requestCommunication,
- * channel "WhatsApp") and its real Twilio-backed WhatsAppDeliveryAdapter —
- * same real infra services/VisaCommunicationListener.js already uses for
- * the Visa domain, reused here rather than a second WhatsApp integration.
- * No template registration required: `content` is passed as raw text
- * (requestCommunication only resolves a template when `templateId` is
- * given), since a package price message is generated fresh from the
- * package's own current calculated matrix every time, not a fixed shape.
+ * Package Pricing Engine — PRD §66/§100. Sends via the dedicated Enterprise
+ * WhatsApp Platform (WhatsAppPlatformService.sendWhatsApp) rather than
+ * owning its own WhatsApp dispatch logic — Package is a CONSUMER of the
+ * platform, matching every other module's relationship to the Communication
+ * Platform (Part 1 principle).
+ *
+ * IMPORTANT: the message is generated fresh from the package's own current
+ * calculated price matrix every time (not a fixed template shape), so it is
+ * sent as free-form content — which means WhatsAppPlatformService will
+ * refuse it (a real, enforced error, not a soft warning) unless the
+ * recipient has an OPEN 24-hour WhatsApp conversation window (i.e. they
+ * messaged the business within the last 24h). This is the correct behavior
+ * per Meta's WhatsApp Business policy: a business-initiated free-form
+ * message outside that window is a policy violation that risks account
+ * suspension. There is no inbound-WhatsApp-webhook receiver in this
+ * codebase yet to ever open a window, so today this will fail for most
+ * recipients — closing that gap needs either (a) a real inbound webhook, or
+ * (b) converting this message to a Meta-approved template. Both are
+ * deliberately out of scope here; this call site is honestly left failing
+ * rather than silently bypassing the policy check.
  */
 class PackageWhatsAppMessageService {
   static async sendPackageMessage(packageId, data, tenantId, userId) {
@@ -84,12 +95,12 @@ class PackageWhatsAppMessageService {
       rooms, sellingCurrency: pkg.sellingCurrency, includedComponents, contactPhone: company?.phone || null
     });
 
-    const result = await CommunicationPlatformService.requestCommunication({
-      tenantId, sourceModule: "PackagePricing", channel: "WhatsApp", recipient: { phone: resolvedPhone }, content: message, priority: "Normal", userId: userId || null
+    const result = await WhatsAppPlatformService.sendWhatsApp({
+      tenantId, sourceModule: "PackagePricing", phone: resolvedPhone, content: message, priority: "Normal", userId: userId || null
     });
 
     await AuditLogModel.create({ action: "package.pricing.send_whatsapp_message", module: "PackagePricing", resource: "Package", resourceId: pkg._id.toString(), userId: userId || null, tenantId, details: { phone: resolvedPhone } });
-    return result.toJSON ? result.toJSON() : result;
+    return result;
   }
 }
 

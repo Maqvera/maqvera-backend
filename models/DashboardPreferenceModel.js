@@ -10,6 +10,13 @@ import mongoose from "mongoose";
 const DashboardPreferenceSchema = new mongoose.Schema({
   tenantId: { type: String, required: true, index: true },
   userId: { type: String, required: true, index: true },
+  // Reporting Platform Part 4 fix — first-class module discriminator
+  // (config-driven, dashboardModules) so a Travel "Executive" preference
+  // and a Finance "Executive" preference never collide. Only Finance has
+  // ever written this collection so far (FinanceAnalyticsEngine); other
+  // modules can start writing rows here with their own `module` value
+  // with no further schema change.
+  module: { type: String, required: true, index: true },
   // Config-driven (financeDashboardTypes).
   dashboardType: { type: String, required: true },
   layout: { type: mongoose.Schema.Types.Mixed, default: null },
@@ -20,7 +27,7 @@ const DashboardPreferenceSchema = new mongoose.Schema({
   refreshInterval: { type: String, default: null }
 }, { timestamps: true });
 
-DashboardPreferenceSchema.index({ tenantId: 1, userId: 1, dashboardType: 1 }, { unique: true });
+DashboardPreferenceSchema.index({ tenantId: 1, userId: 1, module: 1, dashboardType: 1 }, { unique: true });
 
 DashboardPreferenceSchema.set("toJSON", {
   transform: (_, ret) => {

@@ -29,7 +29,12 @@ const DEFAULT_RETENTION_YEARS_BY_RESOURCE_TYPE = {
   Journal: 10, Invoice: 10, Payment: 10, Receipt: 10, TaxRecord: 10,
   AuditRecord: 10, CreditNote: 10, DebitNote: 10, LedgerEntry: 10,
   Forecast: 5, AnalyticsSnapshot: 5,
-  IntegrationLog: 2, Notification: 1
+  IntegrationLog: 2, Notification: 1,
+  // Part 15 fix — Communication Platform records. CommunicationAudit
+  // mirrors AuditRecord's own 10-year compliance window; CommunicationMessage
+  // is the transactional record itself (an Email/SMS/WhatsApp/Push send),
+  // shorter-lived like IntegrationLog/Notification.
+  CommunicationMessage: 2, CommunicationAudit: 10
 };
 
 export const getRetentionConfig = () => {

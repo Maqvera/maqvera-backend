@@ -129,7 +129,7 @@ export const computeBackoffDelayMs = (attempt, config = getResilienceConfig()) =
   return Math.round(half + Math.random() * half);
 };
 
-const moveToDeadLetterQueue = async ({ integration, module, operationLabel, tenantId, correlationId, idempotencyKey, payload, attemptsMade, reason, userId }) => {
+export const moveToDeadLetterQueue = async ({ integration, module, operationLabel, tenantId, correlationId, idempotencyKey, payload, attemptsMade, reason, userId }) => {
   const dlq = await DeadLetterQueueModel.create({
     tenantId: tenantId || null, module, operation: operationLabel, integration, reason,
     retryAttempts: attemptsMade, correlationId, idempotencyKey: idempotencyKey || null, payload: payload || null,

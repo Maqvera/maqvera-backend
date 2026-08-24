@@ -2981,14 +2981,22 @@ const buildCommunicationSchemas = () => ({
     }).required(),
     templateId: Joi.string().trim().optional().allow(null, ""),
     templateData: Joi.object().optional(),
+    locale: Joi.string().trim().min(2).max(10).optional(),
     subject: Joi.string().trim().max(500).optional().allow(null, ""),
     content: Joi.string().trim().max(10000).optional().allow(null, ""),
     priority: Joi.string().trim().valid("Low", "Normal", "High", "Critical").optional(),
     scheduledAt: Joi.date().optional(),
-    idempotencyKey: Joi.string().trim().max(100).optional().allow(null, "")
+    idempotencyKey: Joi.string().trim().max(100).optional().allow(null, ""),
+    topic: Joi.string().trim().max(100).optional().allow(null, ""),
+    deepLink: Joi.object({
+      screen: Joi.string().trim().max(200).optional().allow(null, ""),
+      params: Joi.object().optional()
+    }).optional()
   }),
 
   createTemplate: Joi.object({
+    templateId: Joi.string().trim().optional().allow(null, ""),
+    locale: Joi.string().trim().min(2).max(10).optional(),
     name: Joi.string().trim().min(1).max(200).required(),
     channel: Joi.string().trim().valid("Email", "SMS", "WhatsApp", "Push", "InApp", "Webhook").required(),
     subjectTemplate: Joi.string().trim().max(500).optional().allow(""),
@@ -2997,11 +3005,29 @@ const buildCommunicationSchemas = () => ({
   }),
 
   updateTemplate: Joi.object({
+    locale: Joi.string().trim().min(2).max(10).optional(),
     name: Joi.string().trim().min(1).max(200).optional(),
     subjectTemplate: Joi.string().trim().max(500).optional().allow(""),
     bodyTemplate: Joi.string().trim().min(1).optional(),
     variables: Joi.array().items(Joi.string().trim()).optional(),
-    status: Joi.string().trim().valid("Draft", "Active", "Archived").optional()
+    // "Active" is deliberately excluded here — a template can only reach
+    // Active via approveTemplate() (see CommunicationTemplateService's own
+    // doc comment on why a direct status update can't set it).
+    status: Joi.string().trim().valid("Draft", "Archived").optional()
+  }),
+
+  templateLocaleAction: Joi.object({
+    locale: Joi.string().trim().min(2).max(10).optional()
+  }),
+
+  rejectTemplate: Joi.object({
+    locale: Joi.string().trim().min(2).max(10).optional(),
+    reason: Joi.string().trim().min(1).max(1000).required()
+  }),
+
+  rollbackTemplate: Joi.object({
+    locale: Joi.string().trim().min(2).max(10).optional(),
+    toVersion: Joi.number().integer().min(1).required()
   }),
 
   updateUserPreferences: Joi.object({
@@ -3011,7 +3037,14 @@ const buildCommunicationSchemas = () => ({
     pushOptIn: Joi.boolean().optional(),
     inAppOptIn: Joi.boolean().optional(),
     preferredChannel: Joi.string().trim().valid("Email", "SMS", "WhatsApp", "Push", "InApp").optional(),
-    doNotDisturb: Joi.boolean().optional()
+    doNotDisturb: Joi.boolean().optional(),
+    quietHours: Joi.object({
+      start: Joi.string().trim().pattern(/^([01]\d|2[0-3]):[0-5]\d$/).allow(null).optional(),
+      end: Joi.string().trim().pattern(/^([01]\d|2[0-3]):[0-5]\d$/).allow(null).optional(),
+      timezone: Joi.string().trim().max(64).optional()
+    }).optional(),
+    subscribedTopics: Joi.array().items(Joi.string().trim().max(100)).optional(),
+    unsubscribedTopics: Joi.array().items(Joi.string().trim().max(100)).optional()
   }),
 
   sendEmail: Joi.object({
@@ -3023,6 +3056,7 @@ const buildCommunicationSchemas = () => ({
     ).required(),
     variables: Joi.object().optional(),
     templateData: Joi.object().optional(),
+    locale: Joi.string().trim().min(2).max(10).optional(),
     subject: Joi.string().trim().max(500).optional().allow(null, ""),
     content: Joi.string().trim().max(50000).optional().allow(null, ""),
     body: Joi.string().trim().max(50000).optional().allow(null, ""),
@@ -3054,6 +3088,7 @@ const buildCommunicationSchemas = () => ({
     templateId: Joi.string().trim().optional().allow(null, ""),
     variables: Joi.object().optional(),
     templateData: Joi.object().optional(),
+    locale: Joi.string().trim().min(2).max(10).optional(),
     message: Joi.string().trim().max(2000).optional().allow(null, ""),
     content: Joi.string().trim().max(2000).optional().allow(null, ""),
     priority: Joi.string().trim().valid("Low", "Normal", "High", "Critical").optional(),
@@ -3095,12 +3130,60 @@ const buildCommunicationSchemas = () => ({
 
   updateCampaignStatus: Joi.object({
     action: Joi.string().trim().valid("pause", "resume", "cancel").required()
+  }),
+
+  sendWhatsApp: Joi.object({
+    phone: Joi.string().trim().required(),
+    templateId: Joi.string().trim().optional().allow(null, ""),
+    templateData: Joi.object().optional(),
+    locale: Joi.string().trim().min(2).max(10).optional(),
+    content: Joi.string().trim().max(4096).optional().allow(null, ""),
+    priority: Joi.string().trim().valid("Low", "Normal", "High", "Critical").optional(),
+    scheduledAt: Joi.date().optional(),
+    sourceModule: Joi.string().trim().valid("CRM", "Booking", "Travel", "Visa", "Finance", "HR", "Inventory", "Sales", "Procurement", "AI", "System", "PackagePricing").optional(),
+    idempotencyKey: Joi.string().trim().max(100).optional().allow(null, "")
+  }),
+
+  registerDevice: Joi.object({
+    platform: Joi.string().trim().valid("ios", "android", "web").required(),
+    token: Joi.string().trim().min(1).required(),
+    topics: Joi.array().items(Joi.string().trim().max(100)).optional()
+  }),
+
+  archiveMessage: Joi.object({
+    reason: Joi.string().trim().min(1).max(500).required()
+  }),
+
+  purgeMessage: Joi.object({
+    approvedBy: Joi.string().trim().min(1).required(),
+    reason: Joi.string().trim().max(500).optional().allow(null, "")
+  }),
+
+  applyLegalHold: Joi.object({
+    reason: Joi.string().trim().min(1).max(500).required()
+  }),
+
+  removeLegalHold: Joi.object({
+    holdId: Joi.string().trim().required(),
+    removalReason: Joi.string().trim().max(500).optional().allow(null, "")
+  }),
+
+  sendPush: Joi.object({
+    userId: Joi.string().trim().required(),
+    subject: Joi.string().trim().max(200).optional().allow(null, ""),
+    content: Joi.string().trim().max(1000).optional().allow(null, ""),
+    screen: Joi.string().trim().max(200).optional().allow(null, ""),
+    params: Joi.object().optional(),
+    priority: Joi.string().trim().valid("Low", "Normal", "High", "Critical").optional(),
+    sourceModule: Joi.string().trim().valid("CRM", "Booking", "Travel", "Visa", "Finance", "HR", "Inventory", "Sales", "Procurement", "AI", "System").optional(),
+    idempotencyKey: Joi.string().trim().max(100).optional().allow(null, "")
   })
 });
 
 const COMMUNICATION_SCHEMA_KEYS = new Set([
-  "requestCommunication", "createTemplate", "updateTemplate", "updateUserPreferences", "sendEmail",
-  "sendSms", "generateOtp", "verifyOtp", "createBulkCampaign", "updateCampaignStatus"
+  "requestCommunication", "createTemplate", "updateTemplate", "templateLocaleAction", "rejectTemplate", "rollbackTemplate", "updateUserPreferences", "sendEmail",
+  "sendSms", "generateOtp", "verifyOtp", "createBulkCampaign", "updateCampaignStatus", "sendWhatsApp",
+  "registerDevice", "sendPush", "archiveMessage", "purgeMessage", "applyLegalHold", "removeLegalHold"
 ]);
 
 export const communicationSchemas = new Proxy({}, {
@@ -3111,6 +3194,77 @@ export const communicationSchemas = new Proxy({}, {
     return undefined;
   }
 });
+
+// Reporting Platform Part 8 fix — report template registry (ReportTemplateModel).
+export const reportTemplateSchemas = {
+  createReportTemplate: Joi.object({
+    templateKey: Joi.string().trim().min(1).max(200).required(),
+    reportType: Joi.string().trim().min(1).max(200).required(),
+    locale: Joi.string().trim().min(2).max(10).optional(),
+    htmlBody: Joi.string().trim().min(1).required(),
+    brandingConfig: Joi.object({
+      logo: Joi.string().trim().max(2000).optional().allow(null, ""),
+      colors: Joi.object().optional().allow(null),
+      fonts: Joi.object().optional().allow(null)
+    }).optional()
+  }),
+
+  updateReportTemplate: Joi.object({
+    locale: Joi.string().trim().min(2).max(10).optional(),
+    htmlBody: Joi.string().trim().min(1).optional(),
+    brandingConfig: Joi.object({
+      logo: Joi.string().trim().max(2000).optional().allow(null, ""),
+      colors: Joi.object().optional().allow(null),
+      fonts: Joi.object().optional().allow(null)
+    }).optional()
+  }),
+
+  templateLocaleAction: Joi.object({
+    locale: Joi.string().trim().min(2).max(10).optional()
+  })
+};
+
+// Reporting Platform Part 5 fix — KPI definition registry (KPIDefinitionModel).
+export const kpiDefinitionSchemas = {
+  registerKPIDefinition: Joi.object({
+    kpiKey: Joi.string().trim().min(1).max(200).required(),
+    name: Joi.string().trim().min(1).max(200).required(),
+    ownerModule: Joi.string().trim().min(1).max(100).required(),
+    category: Joi.string().trim().max(100).optional().allow(null, ""),
+    codeRef: Joi.string().trim().min(1).max(300).required(),
+    description: Joi.string().trim().max(1000).optional().allow(null, ""),
+    unit: Joi.string().trim().max(50).optional().allow(null, ""),
+    target: Joi.number().optional().allow(null),
+    thresholds: Joi.object({
+      warning: Joi.number().optional().allow(null),
+      critical: Joi.number().optional().allow(null)
+    }).optional()
+  }),
+
+  deprecateKPIDefinition: Joi.object({
+    ownerModule: Joi.string().trim().min(1).max(100).required()
+  })
+};
+
+// Reporting Platform Part 2 fix — report catalog registry (ReportCatalogModel).
+export const reportCatalogSchemas = {
+  registerReportCatalogEntry: Joi.object({
+    reportKey: Joi.string().trim().min(1).max(200).required(),
+    name: Joi.string().trim().min(1).max(200).required(),
+    module: Joi.string().trim().min(1).max(100).required(),
+    category: Joi.string().trim().max(100).optional().allow(null, ""),
+    tags: Joi.array().items(Joi.string().trim().max(50)).optional(),
+    owner: Joi.string().trim().max(200).optional().allow(null, ""),
+    description: Joi.string().trim().max(1000).optional().allow(null, ""),
+    lifecycleState: Joi.string().trim().max(50).optional(),
+    relatedKpiKeys: Joi.array().items(Joi.string().trim().max(200)).optional()
+  }),
+
+  transitionReportCatalogLifecycle: Joi.object({
+    lifecycleState: Joi.string().trim().min(1).max(50).required(),
+    adminOverride: Joi.boolean().optional()
+  })
+};
 
 
 

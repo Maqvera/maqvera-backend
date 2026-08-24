@@ -60,6 +60,23 @@ const getCompiledTemplate = async (templatePath) => {
   return compiledTemplateCache.get(templatePath);
 };
 
+// Reporting Platform Part 8 fix — a DB-stored template (ReportTemplateModel)
+// has no filesystem path to cache by, so it's keyed by caller-supplied
+// `cacheKey` instead (ReportExportService uses
+// `${tenantId}:${templateKey}:${locale}:${version}` — the version bump on
+// every edit naturally invalidates the old compiled entry, no explicit
+// cache-clear needed). A separate map from the file-path cache above: a
+// `cacheKey` string could otherwise collide with a real file path.
+const compiledStringTemplateCache = new Map();
+
+const getCompiledStringTemplate = (source, cacheKey) => {
+  if (!cacheKey) return handlebars.compile(source);
+  if (!compiledStringTemplateCache.has(cacheKey)) {
+    compiledStringTemplateCache.set(cacheKey, handlebars.compile(source));
+  }
+  return compiledStringTemplateCache.get(cacheKey);
+};
+
 // Shared CSS (templates/shared/_document_base.css), auto-injected into
 // every render's data as `sharedCss` so individual templates just do
 // `<style>{{{sharedCss}}}</style>` without each service needing to load it.
@@ -171,6 +188,34 @@ export const renderHtmlToPdfBuffer = async (templatePath, data, pdfOptions = {})
 };
 
 /**
+ * Reporting Platform Part 8 fix — same render/print chokepoint as
+ * renderHtmlToPdfBuffer (shared partials/helpers/sharedCss/browser
+ * singleton), for a template whose source is a DB-stored Handlebars string
+ * (ReportTemplateModel.htmlBody) rather than a file on disk.
+ */
+export const renderHtmlStringToPdfBuffer = async (htmlSource, data, pdfOptions = {}, cacheKey = null) => {
+  await registerPartials();
+  const template = getCompiledStringTemplate(htmlSource, cacheKey);
+  const sharedCss = await getSharedCss();
+  const html = template({ ...data, sharedCss });
+
+  const browser = await getBrowser();
+  const page = await browser.newPage();
+  try {
+    await page.setContent(html, { waitUntil: "load" });
+    const pdfBytes = await page.pdf({
+      format: "A4",
+      printBackground: true,
+      margin: { top: "20mm", bottom: "20mm", left: "15mm", right: "15mm" },
+      ...pdfOptions
+    });
+    return Buffer.from(pdfBytes);
+  } finally {
+    await page.close();
+  }
+};
+
+/**
  * Package Pricing Engine — Flyer Generator (PRD §55-§62). Same chokepoint
  * as renderHtmlToPdfBuffer, sharing its compiled-template cache and
  * getSharedCss()/registerPartials() — a screenshot instead of a print, for
@@ -196,4 +241,4 @@ export const renderHtmlToImageBuffer = async (templatePath, data, { viewport = {
   }
 };
 
-export default { renderHtmlToPdfBuffer, renderHtmlToImageBuffer, getBrowser, closeBrowser, TEMPLATES_DIR };
+export default { renderHtmlToPdfBuffer, renderHtmlStringToPdfBuffer, renderHtmlToImageBuffer, getBrowser, closeBrowser, TEMPLATES_DIR };

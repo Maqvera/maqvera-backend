@@ -31,6 +31,7 @@ import { getFinanceConfig } from "../utils/financeConfig.js";
 import CacheManager from "../utils/cacheManager.js";
 import { publishEvent } from "../utils/eventBus.js";
 import logger from "../utils/logger.js";
+import KPIDefinitionService from "./KPIDefinitionService.js";
 
 // ─────────────────────────────────────────────────────────────
 // Helpers — date boundaries
@@ -41,6 +42,92 @@ const endOfDay = (d = new Date()) => new Date(d.getFullYear(), d.getMonth(), d.g
 const safeDiv = (numerator, denominator, decimals = 2) =>
   denominator > 0 ? Number(((numerator / denominator) * 100).toFixed(decimals)) : 0;
 const roundCurrency = (value) => Math.round((Number(value) || 0) * 100) / 100;
+
+/**
+ * Reporting Platform Part 5 correctness check (gap 3.3): pure, no-DB
+ * helper — mirrors FinancialAnalyticsService.js's own "Pure helpers — no
+ * DB access, unit-testable directly" convention (see its
+ * computeFinancialRatios), extracted here so this exact formula is
+ * directly testable without a live Mongo connection (see
+ * tests/kpiDefinitionService.test.js's regression test).
+ *
+ * The original gap analysis flagged ebitdaMargin/operatingMargin/
+ * operatingRatio here as diverging from
+ * FinancialAnalyticsService.computeFinancialRatios by UNIT (fraction vs
+ * percentage). On re-verification that premise does not hold — safeDiv()
+ * already multiplies by 100, so both sides already return percentages.
+ * The one real divergence found: on a zero-revenue day, safeDiv returns 0
+ * (implying an actual 0% margin) where
+ * FinancialAnalyticsService.computeFinancialRatios correctly returns null
+ * (no data to divide by) — fixed here to null, matching that convention.
+ * The two remain intentionally different in REPORTING WINDOW — this is
+ * today's cash-movement snapshot for a live dashboard;
+ * FinancialAnalyticsService.computeFinancialRatios is a full period's
+ * ledger-derived P&L ratio for a report — do not "fix" that scope
+ * difference away. Both code paths are registered under the same kpiKey
+ * in KPI_REGISTRY below with a description explaining the window
+ * difference, so this is now documented rather than silently ambiguous.
+ */
+export const computeFinanceRatioFields = ({ ebitda, todaysRevenue, todaysExpenses, netCashFlowToday }) => ({
+  ebitdaMargin: todaysRevenue > 0 ? safeDiv(ebitda, todaysRevenue) : null,
+  expenseRatio: safeDiv(todaysExpenses, todaysRevenue),
+  operatingMargin: todaysRevenue > 0 ? safeDiv(netCashFlowToday, todaysRevenue) : null,
+  operatingRatio: todaysRevenue > 0 ? safeDiv(todaysExpenses, todaysRevenue) : null,
+});
+
+// ─────────────────────────────────────────────────────────────
+// Reporting Platform Part 5 fix — KPI definition registry seed.
+// Documents, for each KPI a compute*Metrics function below actually
+// returns, which module owns it and which exact code path computes it
+// (`codeRef`) — this is a registry OVER the existing compute functions,
+// not a second implementation of them. `ensureDefinitionsSeeded` upserts
+// these idempotently so re-running it never duplicates or clobbers a
+// tenant's own target/thresholds edits (KPIDefinitionService.
+// registerDefinition preserves those on repeat calls).
+//
+// ebitdaMargin/operatingMargin/operatingRatio are deliberately registered
+// with a description flagging their relationship to
+// FinancialAnalyticsService.computeFinancialRatios — see the correctness
+// note at this file's own computeFinanceMetrics, right above where those
+// three fields are computed.
+// ─────────────────────────────────────────────────────────────
+export const KPI_REGISTRY = [
+  // Travel (computeTravelMetrics)
+  { kpiKey: "onTimeDeparturePct", name: "On-Time Departure %", ownerModule: "Travel", category: "Operations", codeRef: "KPIEngine.computeTravelMetrics.kpis.onTimeDeparturePct", unit: "%" },
+  { kpiKey: "onTimeArrivalPct", name: "On-Time Arrival %", ownerModule: "Travel", category: "Operations", codeRef: "KPIEngine.computeTravelMetrics.kpis.onTimeArrivalPct", unit: "%" },
+  { kpiKey: "hotelCheckInSuccessPct", name: "Hotel Check-In Success %", ownerModule: "Travel", category: "Operations", codeRef: "KPIEngine.computeTravelMetrics.kpis.hotelCheckInSuccessPct", unit: "%" },
+  { kpiKey: "attendancePct", name: "Attendance %", ownerModule: "Travel", category: "Operations", codeRef: "KPIEngine.computeTravelMetrics.kpis.attendancePct", unit: "%" },
+  { kpiKey: "tripCompletionPct", name: "Trip Completion %", ownerModule: "Travel", category: "Operations", codeRef: "KPIEngine.computeTravelMetrics.kpis.tripCompletionPct", unit: "%" },
+  { kpiKey: "vehicleUtilizationPct", name: "Vehicle Utilization %", ownerModule: "Travel", category: "Operations", codeRef: "KPIEngine.computeTravelMetrics.kpis.vehicleUtilizationPct", unit: "%" },
+  { kpiKey: "avgDelayMinutes", name: "Average Delay (Minutes)", ownerModule: "Travel", category: "Operations", codeRef: "KPIEngine.computeTravelMetrics.kpis.avgDelayMinutes", unit: "minutes" },
+
+  // Visa (computeVisaMetrics)
+  { kpiKey: "approvalRate", name: "Approval Rate", ownerModule: "Visa", category: "Processing", codeRef: "KPIEngine.computeVisaMetrics.kpis.approvalRate", unit: "%" },
+  { kpiKey: "rejectionRate", name: "Rejection Rate", ownerModule: "Visa", category: "Processing", codeRef: "KPIEngine.computeVisaMetrics.kpis.rejectionRate", unit: "%" },
+  { kpiKey: "averageProcessingTimeDays", name: "Average Processing Time (Days)", ownerModule: "Visa", category: "Processing", codeRef: "KPIEngine.computeVisaMetrics.kpis.averageProcessingTimeDays", unit: "days" },
+  { kpiKey: "slaCompliancePct", name: "SLA Compliance %", ownerModule: "Visa", category: "Compliance", codeRef: "KPIEngine.computeVisaMetrics.kpis.slaCompliancePct", unit: "%" },
+  { kpiKey: "officerProductivityPct", name: "Officer Productivity %", ownerModule: "Visa", category: "Processing", codeRef: "KPIEngine.computeVisaMetrics.kpis.officerProductivityPct", unit: "%" },
+
+  // Finance (computeFinanceMetrics)
+  { kpiKey: "ebitda", name: "EBITDA", ownerModule: "Finance", category: "Profitability", codeRef: "KPIEngine.computeFinanceMetrics.kpis.ebitda", unit: "currency" },
+  {
+    kpiKey: "ebitdaMargin", name: "EBITDA Margin", ownerModule: "Finance", category: "Profitability",
+    codeRef: "KPIEngine.computeFinanceMetrics.kpis.ebitdaMargin", unit: "%",
+    description: "Day-scoped (today's cash-movement snapshot), distinct in window from FinancialAnalyticsService.computeFinancialRatios' period-scoped ebitdaMargin — both are percentages (see this file's computeFinanceMetrics comment); intentionally different reporting windows, not a duplicate bug."
+  },
+  {
+    kpiKey: "operatingMargin", name: "Operating Margin", ownerModule: "Finance", category: "Profitability",
+    codeRef: "KPIEngine.computeFinanceMetrics.kpis.operatingMargin", unit: "%",
+    description: "Day-scoped cash-based margin; see FinancialAnalyticsService.computeFinancialRatios for the period-scoped ledger-based version of the same name — both collapse to a net-margin-equivalent figure by design (no Operating vs Non-Operating account split exists), and both are percentages."
+  },
+  {
+    kpiKey: "operatingRatio", name: "Operating Ratio", ownerModule: "Finance", category: "Profitability",
+    codeRef: "KPIEngine.computeFinanceMetrics.kpis.operatingRatio", unit: "%",
+    description: "Day-scoped expense-ratio-equivalent; see FinancialAnalyticsService.computeFinancialRatios for the period-scoped version (100 - netMargin). Both are percentages and mathematically equivalent when netIncome equals revenue-minus-expense for the same window."
+  },
+  { kpiKey: "expenseRatio", name: "Expense Ratio", ownerModule: "Finance", category: "Profitability", codeRef: "KPIEngine.computeFinanceMetrics.kpis.expenseRatio", unit: "%" },
+  { kpiKey: "currentRatio", name: "Current Ratio", ownerModule: "Finance", category: "Liquidity", codeRef: "KPIEngine.computeFinanceMetrics.kpis.currentRatio", unit: "ratio" },
+];
 
 // ─────────────────────────────────────────────────────────────
 // KPI Engine — Single source of truth for all metrics
@@ -1220,14 +1307,14 @@ class KPIEngine {
     const [interestAddBack, taxAddBack, depreciationAddBack, amortizationAddBack] = ebitdaAddBackAmounts;
     const ebitda = computeEBITDA(metrics.netCashFlowToday, { interest: interestAddBack, tax: taxAddBack, depreciation: depreciationAddBack, amortization: amortizationAddBack });
 
+    // Reporting Platform Part 5 correctness fix (gap 3.3) — see
+    // computeFinanceRatioFields' own doc comment above for the full
+    // before/after explanation.
     const kpis = {
       grossProfit: metrics.netCashFlowToday,
       netProfit: metrics.netCashFlowToday,
       ebitda,
-      ebitdaMargin: safeDiv(ebitda, todaysRevenue),
-      expenseRatio: safeDiv(todaysExpenses, todaysRevenue),
-      operatingMargin: safeDiv(metrics.netCashFlowToday, todaysRevenue),
-      operatingRatio: safeDiv(todaysExpenses, todaysRevenue),
+      ...computeFinanceRatioFields({ ebitda, todaysRevenue, todaysExpenses, netCashFlowToday: metrics.netCashFlowToday }),
       workingCapital,
       currentRatio,
       quickRatio: currentRatio,
@@ -1296,13 +1383,16 @@ class KPIEngine {
 
     const persistedAlerts = [];
     for (const descriptor of alertDescriptors) {
-      const dedupeFilter = { tenantId, alertType: descriptor.alertType, status: "Active", triggeredAt: { $gte: startOfDay(new Date()) } };
+      const dedupeFilter = { tenantId, module: "Finance", alertType: descriptor.alertType, status: "Active", triggeredAt: { $gte: startOfDay(new Date()) } };
       if (descriptor.sourceId) dedupeFilter.sourceId = descriptor.sourceId;
       else dedupeFilter.sourceId = null;
 
       let alert = await DashboardAlertModel.findOne(dedupeFilter);
       if (!alert) {
-        alert = await DashboardAlertModel.create({ tenantId, ...descriptor, status: "Active", triggeredAt: new Date() });
+        // Reporting Platform Part 4 fix — module passed explicitly (not
+        // relying on the schema default) so this write site stays
+        // self-documenting.
+        alert = await DashboardAlertModel.create({ tenantId, module: "Finance", ...descriptor, status: "Active", triggeredAt: new Date() });
         publishEvent("AlertTriggered", { tenantId, alertType: descriptor.alertType, severity: descriptor.severity, alertId: alert._id.toString() });
       }
       persistedAlerts.push(alert.toJSON ? alert.toJSON() : alert);
@@ -1334,9 +1424,30 @@ class KPIEngine {
   // ═══════════════════════════════════════════════════════════
 
   /**
+   * Reporting Platform Part 5 fix — idempotent upsert of KPI_REGISTRY into
+   * KPIDefinitionModel via KPIDefinitionService.registerDefinition (which
+   * itself no-ops without a live Mongo connection). Safe to call on every
+   * refreshAllForTenant tick: registerDefinition preserves a tenant's own
+   * target/thresholds edits and only refreshes name/codeRef/description.
+   */
+  static async ensureDefinitionsSeeded({ tenantId }) {
+    if (mongoose.connection.readyState !== 1) return { registered: 0 };
+    const results = await Promise.allSettled(
+      KPI_REGISTRY.map((entry) => KPIDefinitionService.registerDefinition({ tenantId, ...entry }))
+    );
+    const failures = results.filter((r) => r.status === "rejected");
+    if (failures.length > 0) {
+      logger.error("KPIEngine.ensureDefinitionsSeeded partial failure", { tenantId, failures: failures.map((f) => f.reason?.message) });
+    }
+    return { registered: results.length - failures.length, failed: failures.length };
+  }
+
+  /**
    * Refresh summaries for a single tenant across all modules.
    */
   static async refreshAllForTenant({ tenantId }) {
+    await this.ensureDefinitionsSeeded({ tenantId });
+
     const results = await Promise.allSettled([
       this.refreshTravelSummary({ tenantId }),
       this.refreshVisaSummary({ tenantId }),

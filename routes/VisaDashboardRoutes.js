@@ -12,6 +12,12 @@ import {
   getVisaAiInsightsDashboard,
   getVisaDashboardKPIs,
   getVisaDashboardTrends,
+  exportVisaOperationsDashboard,
+  exportVisaOfficerDashboard,
+  exportVisaEmbassyDashboard,
+  exportVisaFinanceDashboard,
+  exportVisaComplianceDashboard,
+  exportVisaExecutiveDashboard,
 } from "../controllers/VisaDashboardController.js";
 
 const router = express.Router();
@@ -34,5 +40,13 @@ router.get("/compliance", getVisaComplianceDashboard);
 router.get("/ai-insights", getVisaAiInsightsDashboard);
 router.get("/kpis", getVisaDashboardKPIs);
 router.get("/trends", getVisaDashboardTrends);
+
+// Export endpoints (Reporting Platform Part 9/7 fix)
+router.get("/operations/export", exportVisaOperationsDashboard);
+router.get("/officer/export", exportVisaOfficerDashboard);
+router.get("/embassy/export", exportVisaEmbassyDashboard);
+router.get("/finance/export", exportVisaFinanceDashboard);
+router.get("/compliance/export", exportVisaComplianceDashboard);
+router.get("/executive/export", exportVisaExecutiveDashboard);
 
 export default router;

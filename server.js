@@ -56,6 +56,12 @@ import eventRegistryRoute from "./routes/EventRegistryRoutes.js";
 import apiVersionRegistryRoute from "./routes/ApiVersionRegistryRoutes.js";
 import rateLimitRoute from "./routes/RateLimitRoutes.js";
 import communicationRoute from "./routes/CommunicationRoutes.js";
+import inAppNotificationRoute from "./routes/InAppNotificationRoutes.js";
+import pushRoute from "./routes/PushRoutes.js";
+import reportTemplateRoute from "./routes/ReportTemplateRoutes.js";
+import kpiDefinitionRoute from "./routes/KPIDefinitionRoutes.js";
+import reportCatalogRoute from "./routes/ReportCatalogRoutes.js";
+import reportUsageRoute from "./routes/ReportUsageRoutes.js";
 import paymentGatewayRoute from "./routes/PaymentGatewayRoutes.js";
 import paymentWebhookRoute from "./routes/PaymentWebhookRoutes.js";
 import DBconfig from "./config/DbConfig.js";
@@ -67,8 +73,13 @@ import CustomerStatisticsEngine from "./services/CustomerStatisticsEngine.js";
 import VisaAnalyticsEngine from "./services/VisaAnalyticsEngine.js";
 import CacheManager from "./utils/cacheManager.js";
 import AnalyticsScheduler from "./services/analyticsScheduler.js";
+import CommunicationAnalyticsEngine from "./services/CommunicationAnalyticsEngine.js";
+import CommunicationAnalyticsScheduler from "./services/communicationAnalyticsScheduler.js";
+import SmsCampaignRecoveryScheduler from "./services/smsCampaignRecoveryScheduler.js";
+import CommunicationRetryScheduler from "./services/communicationRetryScheduler.js";
 import DocumentExpiryScheduler from "./services/documentExpiryScheduler.js";
 import SearchEngineService from "./services/SearchEngineService.js";
+import ReportUsageAnalyticsService from "./services/ReportUsageAnalyticsService.js";
 import EmbassyProcessingService from "./services/EmbassyProcessingService.js";
 import AppointmentReminderScheduler from "./services/appointmentReminderScheduler.js";
 import IncidentSlaScheduler from "./services/incidentSlaScheduler.js";
@@ -87,6 +98,8 @@ import VisaFinanceLinkService from "./services/VisaFinanceLinkService.js";
 import VisaCommunicationListener from "./services/VisaCommunicationListener.js";
 import { closeBrowser as closeHtmlPdfBrowser } from "./services/HtmlPdfRenderer.js";
 import { attachVoiceBookingWebSocketServer } from "./services/BookingVoiceSocketServer.js";
+import { attachNotificationSocketServer } from "./services/NotificationSocketServer.js";
+import ApprovalNotificationListener from "./services/ApprovalNotificationListener.js";
 import RefundService from "./services/RefundService.js";
 import BankAccountService from "./services/BankAccountService.js";
 import CustomerCollectionService from "./services/CustomerCollectionService.js";
@@ -115,9 +128,14 @@ validateEnv();
 const bootstrapEnterpriseServices = async () => {
   await CacheManager.init();
   VisaAnalyticsEngine.init();
+  CommunicationAnalyticsEngine.init();
   SearchEngineService.init();
+  ReportUsageAnalyticsService.init();
   EmbassyProcessingService.init();
   await AnalyticsScheduler.init();
+  await CommunicationAnalyticsScheduler.init();
+  await SmsCampaignRecoveryScheduler.init();
+  await CommunicationRetryScheduler.init();
   await DocumentExpiryScheduler.init();
   await AppointmentReminderScheduler.init();
   await IncidentSlaScheduler.init();
@@ -246,6 +264,12 @@ app.use("/api/v1/event-registry", eventRegistryRoute);
 app.use("/api/v1/api-version-registry", apiVersionRegistryRoute);
 app.use("/api/v1/rate-limits", rateLimitRoute);
 app.use("/api/v1/communication", communicationRoute);
+app.use("/api/v1/notifications", inAppNotificationRoute);
+app.use("/api/v1/push", pushRoute);
+app.use("/api/v1/reporting/templates", reportTemplateRoute);
+app.use("/api/v1/reporting/kpi-definitions", kpiDefinitionRoute);
+app.use("/api/v1/reporting/catalog", reportCatalogRoute);
+app.use("/api/v1/reporting/usage", reportUsageRoute);
 app.use("/api/v1/emails", communicationRoute);
 app.use("/api/v1/sms", communicationRoute);
 app.use("/api/v1/payment-gateways", paymentGatewayRoute);
@@ -275,6 +299,7 @@ const startServer = async () => {
     WebhookService.initEventListeners();
     NotificationDeliveryService.initEventListeners();
     DocumentVerificationService.initEventListeners();
+    ApprovalNotificationListener.initEventListeners();
 
     // Voice-Based Booking Creation PRD B4.4/Step 3 — Express itself cannot
     // handle a WebSocket upgrade, so the bare `app.listen(PORT)` this
@@ -282,9 +307,12 @@ const startServer = async () => {
     // wrapper before this change) becomes an explicit http.Server that
     // both Express and the Mode B voice-session WS endpoint attach to.
     // Every scheduler/event-listener .init() above still runs first,
-    // unchanged in order.
+    // unchanged in order. In-App Notification Platform (Part 6) reuses the
+    // exact same http.Server for its own WS path, rather than a second
+    // server/port.
     const httpServer = http.createServer(app);
     attachVoiceBookingWebSocketServer(httpServer);
+    attachNotificationSocketServer(httpServer);
     httpServer.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
   } catch (error) {
     console.error("Application bootstrap failed:", error.message);
