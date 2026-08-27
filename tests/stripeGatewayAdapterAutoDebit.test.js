@@ -120,5 +120,6 @@ test("TenantSubscriptionService.chargeAutoDebit honestly fails when stripeCustom
     await TenantSubscriptionModel.deleteMany({ tenantId });
     await TenantBillingAccountModel.deleteMany({ tenantId });
     await SubscriptionInvoiceModel.deleteMany({ tenantId });
+    if (mongoose.connection.readyState === 1) await mongoose.disconnect();
   }
 });

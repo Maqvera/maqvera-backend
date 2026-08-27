@@ -75,7 +75,7 @@ test("NotificationDeliveryService: direct email, tenant-admin routing, recipient
   const { default: NotificationDeliveryService } = await import("../services/NotificationDeliveryService.js");
   const NotificationLogModel = (await import("../models/NotificationLogModel.js")).default;
   const RoleModel = (await import("../models/Rolemodel.js")).default;
-  const UserModel = (await import("../models/UserModel.js")).default;
+  const UserModel = (await import("../models/Usermodel.js")).default;
 
   const suffix = Date.now();
   const tenantId = `test-notif-delivery-${suffix}`;

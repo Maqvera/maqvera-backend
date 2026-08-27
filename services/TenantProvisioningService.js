@@ -23,7 +23,17 @@ class TenantProvisioningService {
    * re-hashes, so the exact password the user chose at signup is what
    * they log in with once payment completes, days later if need be.
    */
-  static async provisionTenant({ companyName, tenantKey, username, email, passwordHash, requestId = null, ipAddress = null, deviceId = null, userAgent = null }) {
+  // `requestId` deliberately has no `= null` default: an explicit `null`
+  // passed all the way to AuditLogModel.create() suppresses that schema's
+  // own default (Mongoose only applies a schema default to an `undefined`
+  // path, never to an explicit `null`), which fails the field's
+  // `required: true` validator. Leaving it genuinely `undefined` when the
+  // caller omits it (the real case for every current caller — see
+  // PaymentWebhookController.js's checkout-completion handler) lets the
+  // schema's own real-correlation-id-or-system-fallback default apply
+  // instead of silently losing the "tenant.setup"/"email-send-verification"
+  // audit rows on every provisioning call.
+  static async provisionTenant({ companyName, tenantKey, username, email, passwordHash, requestId, ipAddress = null, deviceId = null, userAgent = null }) {
     const existingTenant = await TenantModel.findOne({ tenantKey });
     if (existingTenant) throw new Error("This company identifier is already in use.");
     const existingUser = await UserModel.findOne({ email });

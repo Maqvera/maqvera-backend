@@ -1,4 +1,4 @@
-import test from "node:test";
+import test, { after } from "node:test";
 import assert from "node:assert/strict";
 import dotenv from "dotenv";
 import mongoose from "mongoose";
@@ -125,4 +125,8 @@ test("CustomerAccountStatementService.getStatement: viewCurrency converts every 
   assert.equal(statement.rows[0].originalCurrency, "USD");
   assert.equal(statement.rows[0].debit, 500 * 278);
   assert.equal(statement.totals.totalDebit, 500 * 278);
+});
+
+after(async () => {
+  if (dbAvailable) await mongoose.disconnect();
 });
