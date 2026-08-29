@@ -4,7 +4,7 @@ import authenticateAccessToken from "../middleware/authenticateAccessToken.js";
 import authenticateAgentToken from "../middleware/authenticateAgentToken.js";
 import validate, { agentSchemas } from "../middleware/validateRequest.js";
 import {
-  createAgent, listAgents, suspendAgent,
+  createAgent, listAgents, suspendAgent, getAgentPerformanceReport,
   agentLogin,
   getMyDashboard, getMyBookings, createMyBooking, getMyWallet
 } from "../controllers/AgentPortalController.js";
@@ -38,6 +38,10 @@ router.post("/me/bookings", authenticateAgentToken, limiter, createMyBooking);
 router.get("/me/wallet", authenticateAgentToken, limiter, getMyWallet);
 
 // ---- Staff-side management (tenant staff, existing token) ----
+// Static routes registered before "/:agentId..." on purpose — same
+// static-before-dynamic ordering used elsewhere in this codebase, so
+// GET /agents/reports/performance is never accidentally shadowed.
+router.get("/reports/performance", authenticateAccessToken, limiter, getAgentPerformanceReport);
 router.get("/", authenticateAccessToken, limiter, listAgents);
 router.post("/", authenticateAccessToken, limiter, validate(agentSchemas.createAgent), createAgent);
 router.post("/:agentId/suspend", authenticateAccessToken, limiter, suspendAgent);

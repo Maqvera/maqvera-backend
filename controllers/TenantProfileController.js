@@ -96,14 +96,26 @@ export const CreateOrUpdateTenantProfile = async (req, res) => {
       }
     }
 
+    // Landing page follow-up audit, Gap 3 — customDomainStatus must never
+    // stay silently "unset" (or worse, an already-"verified" domain's
+    // status silently untouched) after a genuinely new/changed domain is
+    // submitted here. Task G (Cloudflare custom-hostname verification)
+    // doesn't exist yet, so there is no automated path to "verified" —
+    // this only ever honestly reports "pending_dns" and says so in the
+    // response, never silently accepts input that can never work.
     let normalizedCustomDomain = existing?.customDomain ?? null;
+    let customDomainStatusUpdate;
     if (customDomain !== undefined) {
       if (customDomain) {
         normalizedCustomDomain = customDomain;
         const domainTaken = await TenantProfileModel.findOne({ customDomain, tenantId: { $ne: scope.tenantId } }).lean();
         if (domainTaken) return sendError(res, 409, `customDomain "${customDomain}" is already in use by another tenant.`, requestId);
+        // A resubmission of the SAME already-verified domain must not reset
+        // its status back to pending — only a genuinely new/changed value does.
+        if (customDomain !== existing?.customDomain) customDomainStatusUpdate = "pending_dns";
       } else {
         normalizedCustomDomain = null;
+        customDomainStatusUpdate = "unset";
       }
     }
 
@@ -134,6 +146,10 @@ export const CreateOrUpdateTenantProfile = async (req, res) => {
     const unset = {};
     if (normalizedSlug) update.publicSlug = normalizedSlug; else unset.publicSlug = "";
     if (normalizedCustomDomain) update.customDomain = normalizedCustomDomain; else unset.customDomain = "";
+    if (customDomainStatusUpdate !== undefined) {
+      update.customDomainStatus = customDomainStatusUpdate;
+      update.customDomainVerificationToken = null; // no verification flow exists yet to have issued a real one
+    }
 
     const updateOps = { $set: { ...update, profileCompletedAt: new Date() }, $setOnInsert: { tenantId: scope.tenantId, createdBy: userId } };
     if (Object.keys(unset).length > 0) updateOps.$unset = unset;
@@ -144,7 +160,15 @@ export const CreateOrUpdateTenantProfile = async (req, res) => {
       { new: true, upsert: true, setDefaultsOnInsert: true }
     );
 
-    return sendSuccess(res, existing ? 200 : 201, "Tenant profile saved.", profile.toJSON(), requestId);
+    const responseData = profile.toJSON();
+    // Honest signal for a frontend: a pending custom domain is saved but
+    // will not route any traffic until domain verification (Task G) ships.
+    if (profile.customDomain && profile.customDomainStatus === "pending_dns") {
+      responseData.domainVerificationRequired = true;
+      responseData.warnings = ["Custom domain saved — DNS verification isn't available yet, this domain won't route traffic until that ships."];
+    }
+
+    return sendSuccess(res, existing ? 200 : 201, "Tenant profile saved.", responseData, requestId);
   } catch (error) {
     console.error("CreateOrUpdateTenantProfile error:", error);
     return sendError(res, 500, "Unable to save tenant profile.", requestId);

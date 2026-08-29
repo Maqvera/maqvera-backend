@@ -35,6 +35,15 @@ const starsLabel = (rating) => {
 
 const durationLabel = (nights) => (nights > 0 ? `${nights} night${nights === 1 ? "" : "s"}` : null);
 
+// Landing Page follow-up audit, Gap 1 (Section 13 — Pricing/Plans
+// Comparison). Marketing copy, not data that needs to be exact — splits
+// the same description already shown as a single line in §7's card into
+// up to 4 short bullets for the comparison table, on sentence boundaries.
+const toHighlights = (description) => {
+  if (!description) return [];
+  return description.split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean).slice(0, 4);
+};
+
 class PublicLandingPageService {
   static async getLandingPageData(tenantId, tenantSlug) {
     const profile = await TenantProfileModel.findOne({ tenantId }).lean();
@@ -77,6 +86,15 @@ class PublicLandingPageService {
         packageType: pkg.packageType,
         priceLabel: pkg.displayPriceFrom ? `From ${pkg.displayCurrency || ""} ${pkg.displayPriceFrom}`.trim() : null,
         durationLabel: durationLabel(pkg.durationNights)
+      })),
+      // Section 13 — same packagesResult.items already fetched above for §7,
+      // no second query, reshaped for a comparison-table layout.
+      pricingTiers: packagesResult.items.map((pkg) => ({
+        name: pkg.name,
+        packageType: pkg.packageType,
+        priceLabel: pkg.displayPriceFrom ? `From ${pkg.displayCurrency || ""} ${pkg.displayPriceFrom}`.trim() : null,
+        durationLabel: durationLabel(pkg.durationNights),
+        highlights: toHighlights(pkg.description)
       })),
       hotels: hotels.map((hotel) => ({
         name: hotel.name,

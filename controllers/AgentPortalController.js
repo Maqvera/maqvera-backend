@@ -1,4 +1,5 @@
 import AgentService from "../services/AgentService.js";
+import AgentAnalyticsService from "../services/AgentAnalyticsService.js";
 import { CreateBooking } from "./BookingController.js";
 import { sendSuccess, sendError } from "../utils/apiResponse.js";
 import { createRequestId } from "../utils/authTokens.js";
@@ -47,6 +48,27 @@ export const listAgents = async (req, res) => {
   } catch (error) {
     console.error("listAgents error:", error);
     return sendError(res, 500, error.message || "Failed to retrieve agents.", requestId);
+  }
+};
+
+/**
+ * GET /agents/reports/performance?from=&to=&limit= — ranking + revenue-by-
+ * agent (gap-audit "Gap E"). Read-only aggregation over already-real
+ * BookingHeaderModel.agentUserId / AgentWalletTransactionModel data — no
+ * new domain concept.
+ */
+export const getAgentPerformanceReport = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "agent.read", "agent.manage")) return sendError(res, 403, "Permission denied.", requestId);
+
+    const report = await AgentAnalyticsService.getAgentPerformanceReport(scope.tenantId, req.query);
+    return sendSuccess(res, 200, "Agent performance report retrieved successfully.", report, requestId);
+  } catch (error) {
+    console.error("getAgentPerformanceReport error:", error);
+    return sendError(res, 500, error.message || "Failed to retrieve agent performance report.", requestId);
   }
 };
 

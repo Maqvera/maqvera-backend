@@ -455,7 +455,7 @@ export const UpdateTravelPlanActivity = async (req, res) => {
     // "Assigned Guide" / "Assigned Vehicle" / "Assigned Hotel" — subsets of
     // the resources sub-document; merged rather than requiring the caller
     // to resend the entire resources object for a single-field change.
-    const resourceFields = ["guideId", "guideName", "vehicleId", "vehicleNumber", "hotelId", "hotelName"];
+    const resourceFields = ["guideId", "guideUserId", "guideName", "vehicleId", "vehicleNumber", "hotelId", "hotelName"];
     if (resourceFields.some((f) => req.body[f] !== undefined)) {
       const mergedResources = { ...(activity.resources ? activity.resources.toObject() : {}) };
       resourceFields.forEach((f) => {

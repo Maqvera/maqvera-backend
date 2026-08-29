@@ -203,6 +203,14 @@ app.use(requestLogger);
 
 // Static files for local uploads
 app.use("/uploads", express.static("uploads"));
+// Per-Tenant Domain-Masked Landing Page follow-up audit, Gap 2 — shared,
+// tenant-agnostic static media (hero/gallery/hotel-card images or video)
+// for templates/landingPage/index.html. Empty today (no real licensed
+// assets sourced yet — the template currently falls back to a
+// hand-authored inline SVG pattern instead); this mount exists so dropping
+// real files into templates/landingPage/assets/ and referencing them as
+// <img src="/landing-assets/...">  needs no further server.js change.
+app.use("/landing-assets", express.static("templates/landingPage/assets"));
 
 // Health Check — real, not a fixed 200: checks the two actual runtime
 // dependencies every request downstream relies on.
