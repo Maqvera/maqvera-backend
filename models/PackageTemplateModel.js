@@ -42,6 +42,21 @@ const PackageTemplateSchema = new mongoose.Schema({
   discount: { type: mongoose.Schema.Types.Mixed, default: null },
   sourcePackageId: { type: mongoose.Schema.Types.ObjectId, ref: "package", default: null },
   active: { type: Boolean, default: true, index: true },
+  // Public B2C Booking Site (PRD "CRM Feature Map by Phase" Phase 2 module
+  // 15). An `active` template stays internal-only (agent-facing package
+  // builder) until a staff member also opts it into `publicVisible` — the
+  // two flags are deliberately separate so turning off public listing never
+  // requires touching the template an agent is still cloning internally.
+  // `displayPriceFrom`/`displayCurrency` are an admin-set marketing price
+  // ("starting from"), never a live calculation — an anonymous visitor
+  // browsing has no travel dates yet for PackagePricingService.calculatePackage
+  // to price against; the real, live price is only computed once
+  // POST /public/bookings clones+calculates this template for real dates.
+  publicVisible: { type: Boolean, default: false, index: true },
+  packageType: { type: String, default: null, index: true },
+  images: { type: [String], default: [] },
+  displayPriceFrom: { type: Number, default: null },
+  displayCurrency: { type: String, default: null, uppercase: true },
   createdBy: { type: String, default: null },
   updatedBy: { type: String, default: null }
 }, { timestamps: true });

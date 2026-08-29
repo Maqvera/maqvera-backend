@@ -22,6 +22,8 @@ import AuditLogModel from "../models/AuditLogmodel.js";
 import CurrencyService from "./CurrencyService.js";
 import NumberGeneratorService from "./NumberGeneratorService.js";
 import QuotationPdfService from "./QuotationPdfService.js";
+import EmailPlatformService from "./EmailPlatformService.js";
+import WhatsAppPlatformService from "./WhatsAppPlatformService.js";
 import { storeDocumentPdf } from "../utils/documentPdfStorage.js";
 import { resolveTenantBranding, resolveTenantDocumentSettings } from "../utils/tenantBranding.js";
 import { recalculateBookingFinancials } from "../controllers/BookingController.js";
@@ -29,6 +31,7 @@ import { getBookingConfig } from "../utils/bookingConfig.js";
 import { getHotelConfig } from "../utils/hotelConfig.js";
 import { publishEvent } from "../utils/eventBus.js";
 import { getPackagePricingConfig } from "../utils/packagePricingConfig.js";
+import { getIslamicSeason } from "../utils/hijriCalendar.js";
 
 export const roundCurrency = (value) => Math.round((Number(value) || 0) * 100) / 100;
 
@@ -1580,6 +1583,38 @@ class PackagePricingService {
     return template.toJSON();
   }
 
+  /**
+   * PATCH /packages/package-templates/:id — the only way a template ever
+   * becomes reachable from the Public B2C Booking Site (PRD "CRM Feature
+   * Map by Phase" Phase 2 module 15): saveAsTemplate above has no
+   * marketing-facing fields of its own, so a template stays
+   * publicVisible:false (its schema default) until a staff member
+   * explicitly opts it in here.
+   */
+  static async updatePackageTemplate(templateId, data, tenantId, userId) {
+    const template = await PackageTemplateModel.findOne({ _id: templateId, tenantId });
+    if (!template) throw new Error("Package template not found.");
+
+    const { name, description, active, publicVisible, packageType, images, displayPriceFrom, displayCurrency } = data;
+    if (name !== undefined) template.name = name;
+    if (description !== undefined) template.description = description;
+    if (active !== undefined) template.active = active;
+    if (publicVisible !== undefined) template.publicVisible = publicVisible;
+    if (packageType !== undefined) template.packageType = packageType;
+    if (images !== undefined) template.images = images;
+    if (displayPriceFrom !== undefined) template.displayPriceFrom = displayPriceFrom;
+    if (displayCurrency !== undefined) template.displayCurrency = displayCurrency;
+    template.updatedBy = userId || null;
+
+    if (template.publicVisible && (!template.displayPriceFrom || !template.sellingCurrency)) {
+      throw new Error("A template cannot be made publicVisible without a displayPriceFrom and a sellingCurrency already set (sellingCurrency comes from the source package this template was saved from).");
+    }
+
+    await template.save();
+    await AuditLogModel.create({ action: "package.pricing.update_template", module: "PackagePricing", resource: "PackageTemplate", resourceId: template._id.toString(), userId: userId || null, tenantId, details: { publicVisible: template.publicVisible } });
+    return template.toJSON();
+  }
+
   static async listPackageTemplates(query, tenantId) {
     const filter = { tenantId };
     if (query.active !== undefined) filter.active = query.active === "true" || query.active === true;
@@ -1696,6 +1731,134 @@ class PackagePricingService {
 
     await AuditLogModel.create({ action: "package.pricing.generate_quotation_pdf", module: "PackagePricing", resource: "Quotation", resourceId: quotation._id.toString(), userId: userId || null, tenantId, details: {} });
     return quotation.toJSON();
+  }
+
+  /**
+   * POST /packages/quotations/:id/send — dispatches an already-generated
+   * quotation to the customer via Email and/or WhatsApp, reusing the
+   * platform's own EmailPlatformService/WhatsAppPlatformService rather than
+   * owning any send/provider logic here (same "consumer of the Communication
+   * Platform" relationship as PackageWhatsAppMessageService.sendPackageMessage
+   * above). Generates the PDF first if one hasn't been generated yet.
+   */
+  static async sendQuotation(quotationId, data, tenantId, userId) {
+    const { channel = "email", email = null, phone = null, message = null } = data;
+    let quotation = await QuotationModel.findOne({ _id: quotationId, tenantId });
+    if (!quotation) throw new Error("Quotation not found.");
+
+    if (!quotation.pdfUrl) {
+      await PackagePricingService.generateQuotationPdf(quotationId, tenantId, userId);
+      quotation = await QuotationModel.findOne({ _id: quotationId, tenantId });
+    }
+
+    const customer = quotation.customerId ? await CustomerModel.findOne({ _id: quotation.customerId, tenantId }).lean() : null;
+    const company = await resolveTenantBranding(tenantId);
+    const noteText = message || `Please find your quotation ${quotation.quotationNumber} from ${company?.name || "us"} attached.`;
+
+    const results = {};
+
+    if (channel === "email" || channel === "both") {
+      const resolvedEmail = email || customer?.email;
+      if (!resolvedEmail) throw new Error("Recipient email is required — supply one, or set a customer with an email on file on the quotation.");
+      results.email = await EmailPlatformService.sendEmail({
+        tenantId,
+        sourceModule: "PackagePricing",
+        to: resolvedEmail,
+        subject: `Quotation ${quotation.quotationNumber}`,
+        content: noteText,
+        attachments: [{ filename: `${quotation.quotationNumber}.pdf`, path: quotation.pdfUrl }],
+        emailType: "Transactional",
+        userId: userId || null
+      });
+    }
+
+    if (channel === "whatsapp" || channel === "both") {
+      const resolvedPhone = phone || customer?.phone;
+      if (!resolvedPhone) throw new Error("Recipient phone is required — supply one, or set a customer with a phone on file on the quotation.");
+      results.whatsapp = await WhatsAppPlatformService.sendWhatsApp({
+        tenantId, sourceModule: "PackagePricing", phone: resolvedPhone, content: `${noteText}\n${quotation.pdfUrl}`, priority: "Normal", userId: userId || null
+      });
+    }
+
+    quotation.status = "Sent";
+    await quotation.save();
+
+    await AuditLogModel.create({ action: "package.pricing.send_quotation", module: "PackagePricing", resource: "Quotation", resourceId: quotation._id.toString(), userId: userId || null, tenantId, details: { channel } });
+    publishEvent("QuotationSent", { tenantId, quotationId: quotation._id.toString(), performedBy: userId || null, channel });
+
+    return { quotation: quotation.toJSON(), delivery: results };
+  }
+
+  /**
+   * POST /quotations/:id/convert-to-booking — PRD "CRM Feature Map by
+   * Phase" Phase 2 module 18 (Quotation & Proposal System). Deliberately a
+   * thin wrapper around the already-existing convertPackageToBooking (the
+   * same conversion logic a direct package-to-booking flow uses) rather
+   * than a second, parallel booking-creation path — the quotation just
+   * supplies the roomTypeId it already froze at generation time, so the
+   * caller never has to re-specify which room-wise matrix row was quoted.
+   */
+  static async convertQuotationToBooking(quotationId, data, tenantId, userId) {
+    const quotation = await QuotationModel.findOne({ _id: quotationId, tenantId });
+    if (!quotation) throw new Error("Quotation not found.");
+    if (quotation.convertedBookingId) throw new Error("This quotation cannot be converted again — it was already converted to a booking.");
+
+    const { rooms = 1, bookingId = null, bookingType = null } = data;
+    const result = await PackagePricingService.convertPackageToBooking(
+      quotation.packageId.toString(),
+      { roomTypeId: quotation.roomTypeId.toString(), rooms, bookingId, bookingType },
+      tenantId, userId
+    );
+
+    quotation.status = "Accepted";
+    quotation.convertedBookingId = result.bookingId;
+    await quotation.save();
+
+    await AuditLogModel.create({ action: "package.pricing.convert_quotation_to_booking", module: "PackagePricing", resource: "Quotation", resourceId: quotation._id.toString(), userId: userId || null, tenantId, details: { bookingId: result.bookingId } });
+    publishEvent("QuotationConvertedToBooking", { tenantId, quotationId: quotation._id.toString(), bookingId: result.bookingId, performedBy: userId || null });
+
+    return { ...result, quotationId: quotation._id.toString(), quotationStatus: quotation.status };
+  }
+
+  /**
+   * GET /packages/:id/dynamic-pricing-suggestion — PRD "CRM Feature Map by
+   * Phase" Phase 4 module 27 (AI Dynamic Pricing). Deliberately ADVISORY
+   * ONLY: returns a suggested multiplier and what the package's own
+   * last-calculated room-wise price matrix would look like under it, but
+   * never writes to PackageModel or touches calculatePackage's own real
+   * pricing pipeline — a human decides whether to actually apply it (e.g.
+   * via a markup rule or a manual rate override), the same "suggestion, not
+   * an automatic price change" framing the PDF itself uses for this module.
+   */
+  static async computeDynamicMultiplier(packageId, tenantId) {
+    const config = getPackagePricingConfig();
+    const pkg = await PackageModel.findOne({ _id: packageId, tenantId }).lean();
+    if (!pkg) throw new Error("Package not found.");
+
+    const season = getIslamicSeason(pkg.travelStartDate);
+    const seasonMultiplier = season === "Ramadan" ? config.ramadanPriceMultiplier : season === "Hajj" ? config.hajjPriceMultiplier : 1;
+
+    const windowMs = config.highDemandWindowDays * 24 * 60 * 60 * 1000;
+    const nearbyBookingCount = await BookingHeaderModel.countDocuments({
+      tenantId,
+      travelDate: { $gte: new Date(pkg.travelStartDate.getTime() - windowMs), $lte: new Date(pkg.travelStartDate.getTime() + windowMs) },
+      status: { $nin: ["cancelled", "draft"] }
+    });
+    const isHighDemand = nearbyBookingCount >= config.highDemandBookingThreshold;
+    const demandMultiplier = isHighDemand ? config.highDemandPriceMultiplier : 1;
+
+    const combinedMultiplier = roundCurrency(seasonMultiplier * demandMultiplier);
+    const suggestedMatrix = (pkg.roomWisePriceMatrix || []).map((row) => ({
+      roomTypeId: row.roomTypeId, roomTypeName: row.roomTypeName,
+      currentFinalPricePerPerson: row.finalPricePerPerson,
+      suggestedFinalPricePerPerson: roundCurrency(row.finalPricePerPerson * combinedMultiplier)
+    }));
+
+    return {
+      packageId: pkg._id, travelStartDate: pkg.travelStartDate,
+      season, seasonMultiplier, nearbyBookingCount, isHighDemand, demandMultiplier, combinedMultiplier,
+      suggestedMatrix
+    };
   }
 }
 

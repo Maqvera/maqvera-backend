@@ -285,6 +285,41 @@ export const DEFAULT_PERMISSIONS = [
   // branding (Issue 13/14).
   { key: "tenantprofile.read", description: "Read the tenant's company profile (branding, VAT/registration, default bank account, document settings)" },
   { key: "tenantprofile.manage", description: "Create/update the tenant's company profile, including logo upload" },
+  // Owner Dashboard — single-screen agency-owner overview (bookings,
+  // revenue/profit, pending visas, upcoming departures), distinct from the
+  // ops-role-specific Travel/Visa/Finance dashboards above.
+  { key: "dashboard.overview.read", description: "Read the owner overview dashboard (bookings, revenue/profit, customers, pending visas, upcoming departures)" },
+  // Lead & Marketing Management (PRD "CRM Feature Map by Phase" Phase 2
+  // module 17).
+  { key: "lead.read", description: "Read lead records and the lead pipeline" },
+  { key: "lead.create", description: "Create lead records" },
+  { key: "lead.manage", description: "Update, reassign, and convert lead records (includes read/create)" },
+  // Developer Portal (PRD "CRM Feature Map by Phase" Phase 4 module 33).
+  { key: "apikey.manage", description: "Issue, list, and revoke this tenant's API keys" },
+  // B2B Agent Portal (PRD "CRM Feature Map by Phase" Phase 2 module 14).
+  { key: "agent.read", description: "Read this tenant's Agent records" },
+  { key: "agent.manage", description: "Create, suspend, and manage this tenant's Agent records (includes read)" },
+  // Embassy/consulate contact directory (PRD "CRM Feature Map by Phase"
+  // Phase 4 module 40 — Emergency Support).
+  { key: "reference.read", description: "Read this tenant's reference/master data (e.g. the embassy contact directory)" },
+  { key: "reference.manage", description: "Create and update this tenant's reference/master data (e.g. the embassy contact directory; includes read)" },
+  // Review & Rating System (PRD "CRM Feature Map by Phase" Phase 4 module 40).
+  { key: "review.read", description: "Read customer reviews, including unmoderated ones" },
+  { key: "review.manage", description: "Record and moderate customer reviews (includes read)" },
+  // Marketing Campaign System (PRD "CRM Feature Map by Phase" Phase 2 module 20).
+  { key: "campaign.read", description: "Read marketing campaigns and their analytics" },
+  { key: "campaign.create", description: "Create marketing campaigns" },
+  { key: "campaign.manage", description: "Create, send, and manage marketing campaigns (includes read/create)" },
+  // One-Click Automation Engine (PRD "CRM Feature Map by Phase" Phase 3
+  // module 22) — deliberately its own key, distinct from bookings.update:
+  // this single call can create a visa case, generate an invoice, and send
+  // a WhatsApp message, so it's gated separately from ordinary booking edits.
+  { key: "booking.automation.run", description: "Run the one-click automation engine on a booking (visa case, invoice, WhatsApp confirmation)" },
+  // Supplier Self-Service Portal (PRD "CRM Feature Map by Phase" Phase 3
+  // module 24) — issuing/revoking a supplier's own standing login
+  // credential is sensitive enough to gate separately from ordinary
+  // finance.vendor.*/finance.vendorpayment.* permissions.
+  { key: "finance.vendorportal.manage", description: "Issue and revoke a supplier's own self-service portal login token" },
 ];
 
 export const ADMINISTRATOR_ROLE_NAME = "Administrator";

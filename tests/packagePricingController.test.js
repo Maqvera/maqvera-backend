@@ -2,6 +2,7 @@ import test, { after } from "node:test";
 import assert from "node:assert/strict";
 import dotenv from "dotenv";
 import mongoose from "mongoose";
+import moment from "moment-hijri";
 
 dotenv.config();
 
@@ -233,6 +234,251 @@ test("Package Pricing Engine controller: calculate/finalize happy path, room-typ
   assert.equal(originalAfterRecalc.supersededBy.toString(), newVersionId);
   assert.equal(originalAfterRecalc.locked, true, "the original finalized package must remain untouched/still locked");
   assert.equal(originalAfterRecalc.version, 1, "the original package's own version number must never change");
+});
+
+test("Package Pricing Engine controller: quotation create -> send lifecycle, permission gating, missing-recipient validation", { skip: !dbAvailable && dbSkipReason }, async (t) => {
+  const ctrl = await import("../controllers/PackagePricingController.js");
+  const HotelCatalogModel = (await import("../models/HotelCatalogModel.js")).default;
+  const RoomTypeModel = (await import("../models/RoomTypeModel.js")).default;
+  const HotelRateModel = (await import("../models/HotelRateModel.js")).default;
+  const PackageModel = (await import("../models/PackageModel.js")).default;
+  const QuotationModel = (await import("../models/QuotationModel.js")).default;
+  const CustomerModel = (await import("../models/CustomerModel.js")).default;
+  const BookingHeaderModel = (await import("../models/BookingHeaderModel.js")).default;
+  const BookingServiceModel = (await import("../models/BookingServiceModel.js")).default;
+  const AuditLogModel = (await import("../models/AuditLogmodel.js")).default;
+  const NumberingSchemeModel = (await import("../models/NumberingSchemeModel.js")).default;
+  const NumberGeneratorService = (await import("../services/NumberGeneratorService.js")).default;
+  const EmailPlatformService = (await import("../services/EmailPlatformService.js")).default;
+
+  const suffix = Date.now();
+  const tenantId = `test-pkg-quote-${suffix}`;
+
+  const cleanupModels = [HotelCatalogModel, RoomTypeModel, HotelRateModel, PackageModel, QuotationModel, CustomerModel, BookingHeaderModel, BookingServiceModel];
+  t.after(async () => {
+    await Promise.all(cleanupModels.map((m) => m.deleteMany({ tenantId })));
+    await AuditLogModel.deleteMany({ tenantId });
+    await NumberingSchemeModel.deleteMany({ tenantId });
+  });
+
+  // Stub the outbound send — this test exercises PackagePricingService.sendQuotation's
+  // own orchestration (recipient resolution, status transition, audit log), never a
+  // real SMTP connection against the live credentials configured in .env.
+  const originalSendEmail = EmailPlatformService.sendEmail;
+  t.after(() => { EmailPlatformService.sendEmail = originalSendEmail; });
+  EmailPlatformService.sendEmail = async ({ to }) => ({ trackingId: "STUB-EML", status: "Delivered", recipients: [to] });
+
+  await NumberGeneratorService.createScheme(tenantId, { resourceType: "Quotation", prefix: "QUO", isDefault: true }, "tester");
+  await NumberGeneratorService.createScheme(tenantId, { resourceType: "Booking", prefix: "BK", isDefault: true }, "tester");
+
+  const hotel = await HotelCatalogModel.create({ tenantId, name: `Hotel-${suffix}`, city: "CityQ" });
+  const customer = await CustomerModel.create({ tenantId, customerCode: `CUST-${suffix}`, firstName: "Quo", lastName: "Tay", email: `quo.${suffix}@example.com`, phone: `+92300${suffix}`.slice(0, 15) });
+
+  const roomRes = makeRes();
+  await ctrl.createRoomType({ auth: authAdmin(tenantId), body: { name: `Room-${suffix}`, defaultOccupancy: 2 } }, roomRes);
+  const roomTypeId = roomRes.body.data._id.toString();
+
+  await ctrl.createHotelRate({ auth: authAdmin(tenantId), body: { hotelCatalogId: hotel._id.toString(), roomTypeId, currency: "USD", pricePerNight: 100, occupancy: 2, rateBasis: "Standard", status: "Active", source: "Manual" } }, makeRes());
+
+  // customerId deliberately omitted here — the "send: missing recipient"
+  // assertion below needs a quotation with no resolvable customer email.
+  // The customer is attached directly to the package later, right before
+  // the convert-to-booking assertions, so it never affects the earlier
+  // quotation snapshot/send behavior.
+  const createPkgRes = makeRes();
+  await ctrl.createPackage({
+    auth: authAdmin(tenantId),
+    body: {
+      name: `Quote Package ${suffix}`,
+      travelStartDate: "2027-09-01", travelEndDate: "2027-09-03",
+      travelers: { adults: 2 },
+      segments: [{ city: "CityQ", hotelCatalogId: hotel._id.toString(), checkIn: "2027-09-01", checkOut: "2027-09-03", rooms: 1 }],
+      sellingCurrency: "USD"
+    }
+  }, createPkgRes);
+  const packageId = createPkgRes.body.data._id.toString();
+
+  const calcRes = makeRes();
+  await ctrl.calculatePackage({ auth: authAdmin(tenantId), params: { packageId }, body: {} }, calcRes);
+  assert.equal(calcRes.body.data.ready, true, JSON.stringify(calcRes.body.data.validationIssues));
+
+  // ---- Create quotation: permission gate ----
+  const createQuoteNoPerm = makeRes();
+  await ctrl.createQuotation({ auth: { tenantId, id: "x", userId: "x", permissions: [] }, params: { packageId }, body: { roomTypeId } }, createQuoteNoPerm);
+  assert.equal(createQuoteNoPerm.statusCode, 403);
+
+  const createQuoteRes = makeRes();
+  await ctrl.createQuotation({ auth: authAdmin(tenantId), params: { packageId }, body: { roomTypeId } }, createQuoteRes);
+  assert.equal(createQuoteRes.statusCode, 201, JSON.stringify(createQuoteRes.body));
+  assert.equal(createQuoteRes.body.data.status, "Draft");
+  const quotationId = createQuoteRes.body.data._id.toString();
+
+  // ---- Send: missing recipient (no customer, no email supplied) must 400, not throw ----
+  const sendMissingRecipient = makeRes();
+  await ctrl.sendQuotation({ auth: authAdmin(tenantId), params: { quotationId }, body: { channel: "email" } }, sendMissingRecipient);
+  assert.equal(sendMissingRecipient.statusCode, 400, JSON.stringify(sendMissingRecipient.body));
+
+  // ---- Send: happy path. Set pdfUrl directly to avoid depending on headless-Chromium availability in CI — generateQuotationPdf itself is pre-existing, already-wired functionality, not under test here. ----
+  await QuotationModel.updateOne({ _id: quotationId, tenantId }, { $set: { pdfUrl: "https://example.com/quotation.pdf" } });
+
+  const sendRes = makeRes();
+  await ctrl.sendQuotation({ auth: authAdmin(tenantId), params: { quotationId }, body: { channel: "email", email: "customer@example.com" } }, sendRes);
+  assert.equal(sendRes.statusCode, 200, JSON.stringify(sendRes.body));
+  assert.equal(sendRes.body.data.quotation.status, "Sent");
+  assert.ok(sendRes.body.data.delivery.email, "an email delivery result must be returned");
+
+  const sentAudit = await AuditLogModel.findOne({ tenantId, resource: "Quotation", resourceId: quotationId, action: "package.pricing.send_quotation" }).sort({ createdAt: -1 }).lean();
+  assert.ok(sentAudit, "a send_quotation audit row must be written");
+
+  // ---- Send: permission gate ----
+  const sendNoPerm = makeRes();
+  await ctrl.sendQuotation({ auth: { tenantId, id: "x", userId: "x", permissions: [] }, params: { quotationId }, body: { channel: "email", email: "customer@example.com" } }, sendNoPerm);
+  assert.equal(sendNoPerm.statusCode, 403);
+
+  // convertPackageToBooking (which convertQuotationToBooking delegates to)
+  // requires the source package to have a customerId — attached now,
+  // deliberately after every send assertion above, so it never affects
+  // those.
+  await PackageModel.updateOne({ _id: packageId, tenantId }, { $set: { customerId: customer._id } });
+
+  // ---- Convert to booking: permission gate ----
+  const convertNoPerm = makeRes();
+  await ctrl.convertQuotationToBooking({ auth: { tenantId, id: "x", userId: "x", permissions: [] }, params: { quotationId }, body: {} }, convertNoPerm);
+  assert.equal(convertNoPerm.statusCode, 403);
+
+  // ---- Convert to booking: happy path — reuses the same roomTypeId the quotation froze, no need to pass it again ----
+  const convertRes = makeRes();
+  await ctrl.convertQuotationToBooking({ auth: authAdmin(tenantId), params: { quotationId }, body: {} }, convertRes);
+  assert.equal(convertRes.statusCode, 201, JSON.stringify(convertRes.body));
+  assert.ok(convertRes.body.data.bookingId);
+  assert.equal(convertRes.body.data.quotationStatus, "Accepted");
+
+  const convertedQuotation = await QuotationModel.findOne({ _id: quotationId, tenantId }).lean();
+  assert.equal(convertedQuotation.status, "Accepted");
+  assert.equal(convertedQuotation.convertedBookingId.toString(), convertRes.body.data.bookingId);
+
+  const booking = await BookingHeaderModel.findOne({ _id: convertRes.body.data.bookingId, tenantId }).lean();
+  assert.ok(booking, "convert-to-booking must create a real BookingHeaderModel row");
+  assert.equal(booking.customerId.toString(), customer._id.toString());
+
+  const convertAudit = await AuditLogModel.findOne({ tenantId, resource: "Quotation", resourceId: quotationId, action: "package.pricing.convert_quotation_to_booking" }).sort({ createdAt: -1 }).lean();
+  assert.ok(convertAudit, "a convert_quotation_to_booking audit row must be written");
+
+  // ---- Convert to booking: already converted must 400, not silently create a second booking ----
+  const convertAgainRes = makeRes();
+  await ctrl.convertQuotationToBooking({ auth: authAdmin(tenantId), params: { quotationId }, body: {} }, convertAgainRes);
+  assert.equal(convertAgainRes.statusCode, 400, JSON.stringify(convertAgainRes.body));
+});
+
+test("Package Pricing Engine controller: dynamic pricing suggestion — Hajj-season multiplier, high-demand multiplier, never mutates the real package", { skip: !dbAvailable && dbSkipReason }, async (t) => {
+  const ctrl = await import("../controllers/PackagePricingController.js");
+  const HotelCatalogModel = (await import("../models/HotelCatalogModel.js")).default;
+  const RoomTypeModel = (await import("../models/RoomTypeModel.js")).default;
+  const HotelRateModel = (await import("../models/HotelRateModel.js")).default;
+  const PackageModel = (await import("../models/PackageModel.js")).default;
+  const CustomerModel = (await import("../models/CustomerModel.js")).default;
+  const BookingHeaderModel = (await import("../models/BookingHeaderModel.js")).default;
+
+  const suffix = Date.now();
+  const tenantId = `test-pkg-dynprice-${suffix}`;
+
+  const cleanupModels = [HotelCatalogModel, RoomTypeModel, HotelRateModel, PackageModel, CustomerModel, BookingHeaderModel];
+  t.after(async () => { await Promise.all(cleanupModels.map((m) => m.deleteMany({ tenantId }))); });
+
+  const hotel = await HotelCatalogModel.create({ tenantId, name: `Hotel-${suffix}`, city: "Makkah" });
+  const roomRes = makeRes();
+  await ctrl.createRoomType({ auth: authAdmin(tenantId), body: { name: `Room-${suffix}`, defaultOccupancy: 2 } }, roomRes);
+  const roomTypeId = roomRes.body.data._id.toString();
+  await ctrl.createHotelRate({ auth: authAdmin(tenantId), body: { hotelCatalogId: hotel._id.toString(), roomTypeId, currency: "USD", pricePerNight: 100, occupancy: 2, rateBasis: "Standard", status: "Active", source: "Manual" } }, makeRes());
+
+  // 9 Dhul Hijjah 1446 — inside the Hajj window (1-13 Dhul Hijjah) by construction.
+  const hajjDate = moment.utc("1446/12/9", "iYYYY/iM/iD").toDate();
+  const hajjDateEnd = new Date(hajjDate.getTime() + 2 * 24 * 60 * 60 * 1000);
+
+  const createPkgRes = makeRes();
+  await ctrl.createPackage({
+    auth: authAdmin(tenantId),
+    body: {
+      name: `Hajj Package ${suffix}`,
+      travelStartDate: hajjDate.toISOString(), travelEndDate: hajjDateEnd.toISOString(),
+      travelers: { adults: 2 },
+      segments: [{ city: "Makkah", hotelCatalogId: hotel._id.toString(), checkIn: hajjDate.toISOString(), checkOut: hajjDateEnd.toISOString(), rooms: 1 }],
+      sellingCurrency: "USD"
+    }
+  }, createPkgRes);
+  const packageId = createPkgRes.body.data._id.toString();
+
+  const calcRes = makeRes();
+  await ctrl.calculatePackage({ auth: authAdmin(tenantId), params: { packageId }, body: {} }, calcRes);
+  assert.equal(calcRes.body.data.ready, true, JSON.stringify(calcRes.body.data.validationIssues));
+  const originalFinalPrice = calcRes.body.data.roomWisePriceMatrix[0].finalPricePerPerson;
+
+  // ---- Permission gate ----
+  const noPermRes = makeRes();
+  await ctrl.getDynamicPricingSuggestion({ auth: { tenantId, id: "x", userId: "x", permissions: [] }, params: { packageId } }, noPermRes);
+  assert.equal(noPermRes.statusCode, 403);
+
+  // ---- Season detected, no demand yet ----
+  const lowDemandRes = makeRes();
+  await ctrl.getDynamicPricingSuggestion({ auth: authAdmin(tenantId), params: { packageId } }, lowDemandRes);
+  assert.equal(lowDemandRes.statusCode, 200, JSON.stringify(lowDemandRes.body));
+  assert.equal(lowDemandRes.body.data.season, "Hajj");
+  assert.equal(lowDemandRes.body.data.isHighDemand, false);
+  assert.equal(lowDemandRes.body.data.combinedMultiplier, lowDemandRes.body.data.seasonMultiplier, "with no demand boost, combined == season multiplier alone");
+  const suggestedRow = lowDemandRes.body.data.suggestedMatrix[0];
+  assert.equal(suggestedRow.currentFinalPricePerPerson, originalFinalPrice);
+  assert.equal(suggestedRow.suggestedFinalPricePerPerson, Math.round(originalFinalPrice * lowDemandRes.body.data.seasonMultiplier * 100) / 100);
+
+  // ---- Push demand over the default threshold (5) with bookings whose travelDate lands near travelStartDate ----
+  const customer = await CustomerModel.create({ tenantId, customerCode: `CUST-${suffix}`, firstName: "T", lastName: "Est", email: `t.${suffix}@example.com`, phone: `+92300${suffix}`.slice(0, 15) });
+  for (let i = 0; i < 6; i++) {
+    await BookingHeaderModel.create({ tenantId, bookingReference: `BK-DEM-${suffix}-${i}`, customerId: customer._id, status: "confirmed", travelDate: hajjDate, totalAmount: 500, currency: "USD" });
+  }
+
+  const highDemandRes = makeRes();
+  await ctrl.getDynamicPricingSuggestion({ auth: authAdmin(tenantId), params: { packageId } }, highDemandRes);
+  assert.equal(highDemandRes.statusCode, 200);
+  assert.equal(highDemandRes.body.data.isHighDemand, true);
+  assert.ok(highDemandRes.body.data.nearbyBookingCount >= 6);
+  assert.equal(highDemandRes.body.data.combinedMultiplier, Math.round(highDemandRes.body.data.seasonMultiplier * highDemandRes.body.data.demandMultiplier * 100) / 100);
+
+  // ---- The suggestion must never mutate the real package ----
+  const unchangedPkg = await PackageModel.findOne({ _id: packageId, tenantId }).lean();
+  assert.equal(unchangedPkg.roomWisePriceMatrix[0].finalPricePerPerson, originalFinalPrice, "computing a suggestion must never write to the real package");
+});
+
+test("Customer AI Recommendations controller: honest aiAvailable:false when no AI provider is configured, 404 for a missing customer, permission gate", { skip: !dbAvailable && dbSkipReason }, async (t) => {
+  const custCtrl = await import("../controllers/CustomerController.js");
+  const CustomerModel = (await import("../models/CustomerModel.js")).default;
+
+  const suffix = Date.now();
+  const tenantId = `test-cust-reco-${suffix}`;
+  t.after(async () => { await CustomerModel.deleteMany({ tenantId }); });
+
+  const customer = await CustomerModel.create({ tenantId, customerCode: `CUST-R-${suffix}`, firstName: "R", lastName: "Eco", email: `r.${suffix}@example.com`, phone: `+92301${suffix}`.slice(0, 15) });
+  // GetCustomerRecommendations mirrors GetCustomer's existing convention
+  // (checked against every other read in controllers/CustomerController.js):
+  // it gates on the literal customer.read/customers.read permission key,
+  // with no "admin" string bypass — a real Administrator role holds
+  // customer.read via the seeded permission set, not a code-level shortcut.
+  const authCustomerReader = (tid) => ({ tenantId: tid, id: "tester", userId: "tester", permissions: ["customer.read"] });
+
+  const noPermRes = makeRes();
+  await custCtrl.GetCustomerRecommendations({ auth: { tenantId, id: "x", userId: "x", permissions: [] }, params: { customerId: customer._id.toString() } }, noPermRes);
+  assert.equal(noPermRes.statusCode, 403);
+
+  const notFoundRes = makeRes();
+  await custCtrl.GetCustomerRecommendations({ auth: authCustomerReader(tenantId), params: { customerId: new mongoose.Types.ObjectId().toString() } }, notFoundRes);
+  assert.equal(notFoundRes.statusCode, 404);
+
+  // This environment has no AI provider credentials configured — the same
+  // "honest failure, never fabricate" path every other AI call site in this
+  // codebase exercises when nothing is reachable.
+  const recoRes = makeRes();
+  await custCtrl.GetCustomerRecommendations({ auth: authCustomerReader(tenantId), params: { customerId: customer._id.toString() } }, recoRes);
+  assert.equal(recoRes.statusCode, 200, JSON.stringify(recoRes.body));
+  assert.equal(recoRes.body.data.aiAvailable, false);
+  assert.deepEqual(recoRes.body.data.recommendations, []);
 });
 
 after(async () => {

@@ -50,7 +50,8 @@ import {
   GetCustomerStatistics,
   GetCustomerBookings,
   GetCustomerAccountStatement,
-  GetCustomerAccountStatementPdf
+  GetCustomerAccountStatementPdf,
+  GetCustomerRecommendations
 } from "../controllers/CustomerController.js";
 
 const router = express.Router();
@@ -77,6 +78,7 @@ router.post("/merge", limiter, validate(customerSchemas.customerMerge), MergeCus
 router.get("/", limiter, ListCustomers);
 router.post("/", limiter, validate(customerSchemas.createCustomer), CreateCustomer);
 router.get("/:customerId", limiter, GetCustomer);
+router.get("/:customerId/recommendations", limiter, GetCustomerRecommendations);
 router.patch("/:customerId", limiter, validate(customerSchemas.updateCustomer), UpdateCustomer);
 router.post("/:customerId/archive", limiter, ArchiveCustomer);
 

@@ -103,6 +103,19 @@ export const getPackagePricingConfig = () => ({
   quotationStatuses: parseStringList(process.env.PACKAGE_QUOTATION_STATUSES_JSON, ["Draft", "Sent", "Accepted", "Rejected", "Expired"]),
   defaultQuotationStatus: process.env.DEFAULT_PACKAGE_QUOTATION_STATUS || "Draft",
 
+  // PRD "CRM Feature Map by Phase" Phase 4 module 27 (AI Dynamic Pricing) —
+  // an ADVISORY multiplier only (PackagePricingService.computeDynamicMultiplier).
+  // It never changes calculatePackage's own real price — a human still
+  // decides whether to apply a suggestion, the same "suggestion, not an
+  // automatic price change" framing the PDF itself uses.
+  ramadanPriceMultiplier: Number(process.env.PACKAGE_RAMADAN_PRICE_MULTIPLIER) || 1.15,
+  hajjPriceMultiplier: Number(process.env.PACKAGE_HAJJ_PRICE_MULTIPLIER) || 1.3,
+  // "Demand" = how many OTHER bookings already target a travel date within
+  // this many days of the package's own travelStartDate.
+  highDemandWindowDays: Number(process.env.PACKAGE_HIGH_DEMAND_WINDOW_DAYS) || 3,
+  highDemandBookingThreshold: Number(process.env.PACKAGE_HIGH_DEMAND_BOOKING_THRESHOLD) || 5,
+  highDemandPriceMultiplier: Number(process.env.PACKAGE_HIGH_DEMAND_PRICE_MULTIPLIER) || 1.1,
+
   // PRD §55-§62 "Package Flyer Generator". Ships with one real template
   // (`Standard`) for MVP rather than blocking on all 14 PRD §58 templates —
   // more are additive `templates/packages/flyer-<name>.html` files plus one

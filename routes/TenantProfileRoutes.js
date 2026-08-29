@@ -3,7 +3,7 @@ import multer from "multer";
 import rateLimit from "express-rate-limit";
 import authenticateAccessToken from "../middleware/authenticateAccessToken.js";
 import validate, { tenantProfileSchemas } from "../middleware/validateRequest.js";
-import { GetTenantProfile, CreateOrUpdateTenantProfile, UploadTenantProfileLogo } from "../controllers/TenantProfileController.js";
+import { GetTenantProfile, CreateOrUpdateTenantProfile, UploadTenantProfileLogo, GetTenantSettings, UpdateTenantSettings, GetTenantTheme } from "../controllers/TenantProfileController.js";
 
 const router = express.Router();
 const limiter = rateLimit({
@@ -26,5 +26,8 @@ router.use(authenticateAccessToken);
 router.get("/", limiter, GetTenantProfile);
 router.post("/", limiter, validate(tenantProfileSchemas.createOrUpdateProfile), CreateOrUpdateTenantProfile);
 router.post("/logo", limiter, uploadLogoFile, UploadTenantProfileLogo);
+router.get("/theme", limiter, GetTenantTheme);
+router.get("/settings", limiter, GetTenantSettings);
+router.put("/settings", limiter, validate(tenantProfileSchemas.updateSettings), UpdateTenantSettings);
 
 export default router;

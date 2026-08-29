@@ -77,7 +77,13 @@ test("applyOptimisticUpdate: real lost-update prevention against a live document
   const ScratchInvoiceModel = mongoose.model(`optimistic_locking_scratch_${Date.now()}`, schema);
 
   t.after(async () => {
-    await ScratchInvoiceModel.deleteMany({});
+    // Drop the actual collection, not just its documents — this schema is
+    // registered under a fresh Date.now()-suffixed name every run
+    // specifically so it never collides with a real collection, which
+    // means deleteMany alone leaves an empty, permanent collection shell
+    // behind on every single test run (confirmed: 259 leaked scratch
+    // collections had pushed the shared cluster to its 500-collection cap).
+    await ScratchInvoiceModel.collection.drop().catch(() => {});
     delete mongoose.connection.models[ScratchInvoiceModel.modelName];
   });
 

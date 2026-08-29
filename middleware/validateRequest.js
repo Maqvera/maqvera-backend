@@ -6,6 +6,7 @@ import { getOrganisationConfig } from "../utils/organisationConfig.js";
 import { getNumberingConfig } from "../utils/numberingConfig.js";
 import { getPackagePricingConfig } from "../utils/packagePricingConfig.js";
 import { getHotelConfig } from "../utils/hotelConfig.js";
+import { getLeadConfig } from "../utils/leadConfig.js";
 import { AppError, sendStandardError, fieldDetailsFromJoiError } from "../utils/errorContract.js";
 
 const getBookingValidationValues = () => {
@@ -3885,6 +3886,10 @@ export const tenantProfileSchemas = {
     phone: Joi.string().trim().max(50).optional().allow(null, ''),
     email: Joi.string().trim().email().optional().allow(null, ''),
     defaultBankAccountId: objectIdRef.optional().allow(null, ''),
+    primaryColor: Joi.string().trim().max(20).optional().allow(null, ''),
+    secondaryColor: Joi.string().trim().max(20).optional().allow(null, ''),
+    customDomain: Joi.string().trim().lowercase().max(255).optional().allow(null, ''),
+    publicSlug: Joi.string().trim().lowercase().min(1).max(63).pattern(/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/).optional().allow(null, ''),
     documentSettings: Joi.object({
       invoiceDisplayName: Joi.string().trim().max(200).optional().allow(null, ''),
       termsAndConditions: Joi.string().trim().max(5000).optional().allow(null, ''),
@@ -3893,6 +3898,48 @@ export const tenantProfileSchemas = {
       tagline: Joi.string().trim().max(200).optional().allow(null, ''),
       greetingText: Joi.string().trim().max(2000).optional().allow(null, '')
     }).optional()
+  }),
+  updateSettings: Joi.object({
+    notificationPreferences: Joi.object({
+      email: Joi.boolean().optional(),
+      sms: Joi.boolean().optional(),
+      whatsapp: Joi.boolean().optional()
+    }).optional(),
+    backupEnabled: Joi.boolean().optional(),
+    backupFrequency: Joi.string().trim().valid('Daily', 'Weekly', 'Monthly').optional()
+  })
+};
+
+// Public B2C Booking Site (PRD "CRM Feature Map by Phase" Phase 2 module
+// 15) — routes/PublicBookingRoutes.js's request bodies. Plain object, not
+// the config-driven Proxy pattern used elsewhere in this file: nothing
+// here needs an env-configurable enum, it's the same fixed shape either way.
+export const publicBookingSchemas = {
+  createBooking: Joi.object({
+    tenantSlug: Joi.string().trim().lowercase().min(1).max(63).required(),
+    packageTemplateId: objectIdRef.required(),
+    travelStartDate: Joi.date().required(),
+    travelers: Joi.object({
+      adults: Joi.number().integer().min(1).optional(),
+      children: Joi.number().integer().min(0).optional(),
+      infants: Joi.number().integer().min(0).optional()
+    }).optional(),
+    roomTypeId: objectIdRef.optional().allow(null, ""),
+    customer: Joi.object({
+      firstName: Joi.string().trim().min(1).max(100).required(),
+      lastName: Joi.string().trim().min(1).max(100).required(),
+      email: Joi.string().trim().email({ tlds: false }).required(),
+      phone: Joi.string().trim().min(5).max(30).required()
+    }).required()
+  }),
+
+  createLead: Joi.object({
+    tenantSlug: Joi.string().trim().lowercase().min(1).max(63).required(),
+    firstName: Joi.string().trim().min(1).max(100).required(),
+    lastName: Joi.string().trim().max(100).optional().allow(null, ""),
+    email: Joi.string().trim().email({ tlds: false }).optional().allow(null, ""),
+    phone: Joi.string().trim().min(5).max(30).optional().allow(null, ""),
+    notes: Joi.string().trim().max(2000).optional().allow(null, "")
   })
 };
 
@@ -4092,6 +4139,17 @@ const buildPackagePricingSchemas = () => {
       name: Joi.string().trim().min(1).max(200).required()
     }),
 
+    updatePackageTemplate: Joi.object({
+      name: Joi.string().trim().min(1).max(200).optional(),
+      description: Joi.string().trim().max(2000).optional().allow(null, ""),
+      active: Joi.boolean().optional(),
+      publicVisible: Joi.boolean().optional(),
+      packageType: Joi.string().trim().max(100).optional().allow(null, ""),
+      images: Joi.array().items(Joi.string().trim().uri()).max(20).optional(),
+      displayPriceFrom: Joi.number().min(0).optional().allow(null),
+      displayCurrency: Joi.string().trim().length(3).uppercase().optional().allow(null, "")
+    }),
+
     cloneFromTemplate: Joi.object({
       travelStartDate: Joi.date().required(),
       name: Joi.string().trim().max(200).optional().allow(null, ""),
@@ -4127,6 +4185,19 @@ const buildPackagePricingSchemas = () => {
     sendWhatsAppMessage: Joi.object({
       phone: Joi.string().trim().max(30).optional().allow(null, ""),
       roomTypeIds: Joi.array().items(objectIdRef).optional()
+    }),
+
+    sendQuotation: Joi.object({
+      channel: Joi.string().trim().valid("email", "whatsapp", "both").optional(),
+      email: Joi.string().trim().email({ tlds: false }).optional().allow(null, ""),
+      phone: Joi.string().trim().max(30).optional().allow(null, ""),
+      message: Joi.string().trim().max(2000).optional().allow(null, "")
+    }),
+
+    convertQuotationToBooking: Joi.object({
+      rooms: Joi.number().integer().min(1).optional(),
+      bookingId: objectIdRef.optional().allow(null, ""),
+      bookingType: Joi.string().trim().optional().allow(null, "")
     }),
 
     updatePackage: Joi.object({
@@ -4237,8 +4308,8 @@ const buildPackagePricingSchemas = () => {
 const PACKAGE_PRICING_SCHEMA_KEYS = new Set([
   "createRoomType", "createTransportVehicle", "createHotelCatalog", "createHotelRate", "createTransportRate", "createFlightRate", "createVisaRate",
   "createServiceRate", "createMarkupRule", "createSupplier", "createCommissionRule", "updateRecord", "createPackage",
-  "updatePackage", "linkBooking", "convertToBooking", "createQuotation", "generateFlyer", "sendWhatsAppMessage", "calculatePackage", "comparePackages",
-  "saveAsTemplate", "cloneFromTemplate", "bulkCreateRates", "bulkUpdateRateStatus", "cloneRate"
+  "updatePackage", "linkBooking", "convertToBooking", "createQuotation", "sendQuotation", "convertQuotationToBooking", "generateFlyer", "sendWhatsAppMessage", "calculatePackage", "comparePackages",
+  "saveAsTemplate", "updatePackageTemplate", "cloneFromTemplate", "bulkCreateRates", "bulkUpdateRateStatus", "cloneRate"
 ]);
 
 export const packagePricingSchemas = new Proxy({}, {
@@ -4249,5 +4320,148 @@ export const packagePricingSchemas = new Proxy({}, {
     return undefined;
   }
 });
+
+// Lead & Marketing Management — PRD "CRM Feature Map by Phase" Phase 2
+// module 17. Same env-driven-config-backed Proxy pattern as
+// packagePricingSchemas above, rebuilt from getLeadConfig() on every
+// access so a LEAD_STATUSES_JSON/LEAD_SOURCES_JSON env change takes effect
+// without a restart-sensitive schema cache.
+const buildLeadSchemas = () => {
+  const config = getLeadConfig();
+  return {
+    createLead: Joi.object({
+      firstName: Joi.string().trim().min(1).max(200).required(),
+      lastName: Joi.string().trim().max(200).optional().allow(null, ''),
+      email: Joi.string().trim().email({ tlds: false }).optional().allow(null, ''),
+      phone: Joi.string().trim().max(30).optional().allow(null, ''),
+      source: Joi.string().trim().valid(...config.leadSources).optional(),
+      status: Joi.string().trim().valid(...config.leadStatuses).optional(),
+      assignedToUserId: Joi.string().trim().optional().allow(null, ''),
+      followUpDate: Joi.date().optional().allow(null),
+      interestedInPackageId: objectIdRef.optional().allow(null, ''),
+      notes: Joi.string().trim().max(5000).optional().allow(null, ''),
+      tags: Joi.array().items(Joi.string().trim()).optional()
+    }),
+    updateLead: Joi.object({
+      firstName: Joi.string().trim().min(1).max(200).optional(),
+      lastName: Joi.string().trim().max(200).optional().allow(null, ''),
+      email: Joi.string().trim().email({ tlds: false }).optional().allow(null, ''),
+      phone: Joi.string().trim().max(30).optional().allow(null, ''),
+      source: Joi.string().trim().valid(...config.leadSources).optional(),
+      status: Joi.string().trim().valid(...config.leadStatuses).optional(),
+      assignedToUserId: Joi.string().trim().optional().allow(null, ''),
+      followUpDate: Joi.date().optional().allow(null),
+      interestedInPackageId: objectIdRef.optional().allow(null, ''),
+      notes: Joi.string().trim().max(5000).optional().allow(null, ''),
+      tags: Joi.array().items(Joi.string().trim()).optional()
+    }),
+    convertLead: Joi.object({
+      firstName: Joi.string().trim().min(1).max(200).optional(),
+      lastName: Joi.string().trim().min(1).max(200).optional(),
+      email: Joi.string().trim().email({ tlds: false }).optional(),
+      phone: Joi.string().trim().max(30).optional(),
+      customerFields: Joi.object().unknown(true).optional()
+    })
+  };
+};
+
+const LEAD_SCHEMA_KEYS = new Set(["createLead", "updateLead", "convertLead"]);
+
+// Developer Portal — PRD "CRM Feature Map by Phase" Phase 4 module 33.
+export const apiKeySchemas = {
+  createApiKey: Joi.object({
+    name: Joi.string().trim().min(1).max(200).required(),
+    permissions: Joi.array().items(Joi.string().trim()).optional(),
+    expiresAt: Joi.date().optional().allow(null)
+  })
+};
+
+// B2B Agent Portal — PRD "CRM Feature Map by Phase" Phase 2 module 14.
+export const agentSchemas = {
+  createAgent: Joi.object({
+    name: Joi.string().trim().min(1).max(200).required(),
+    email: Joi.string().trim().email({ tlds: false }).required(),
+    phone: Joi.string().trim().max(30).optional().allow(null, ''),
+    password: Joi.string().min(1).required(),
+    parentAgentId: objectIdRef.optional().allow(null, ''),
+    creditLimit: Joi.number().min(0).optional()
+  }),
+  agentLogin: Joi.object({
+    email: Joi.string().trim().email({ tlds: false }).required(),
+    password: Joi.string().min(1).required()
+  })
+};
+
+// Embassy/consulate contact directory (PRD "CRM Feature Map by Phase"
+// Phase 4 module 40 — Emergency Support).
+export const embassyDirectorySchemas = {
+  createEmbassyContact: Joi.object({
+    embassyId: Joi.string().trim().min(1).max(100).required(),
+    name: Joi.string().trim().min(1).max(200).required(),
+    processingCenterType: Joi.string().trim().valid("Embassy", "Consulate", "VAC", "Authorized_Partner", "Government_Portal").required(),
+    countryId: Joi.string().trim().min(1).max(100).required(),
+    city: Joi.string().trim().max(100).optional().allow(null, ''),
+    phone: Joi.string().trim().max(30).optional().allow(null, ''),
+    email: Joi.string().trim().email({ tlds: false }).optional().allow(null, ''),
+    address: Joi.string().trim().max(500).optional().allow(null, ''),
+    emergencyContactPhone: Joi.string().trim().max(30).optional().allow(null, '')
+  }),
+  updateEmbassyContact: Joi.object({
+    name: Joi.string().trim().min(1).max(200).optional(),
+    processingCenterType: Joi.string().trim().valid("Embassy", "Consulate", "VAC", "Authorized_Partner", "Government_Portal").optional(),
+    city: Joi.string().trim().max(100).optional().allow(null, ''),
+    phone: Joi.string().trim().max(30).optional().allow(null, ''),
+    email: Joi.string().trim().email({ tlds: false }).optional().allow(null, ''),
+    address: Joi.string().trim().max(500).optional().allow(null, ''),
+    emergencyContactPhone: Joi.string().trim().max(30).optional().allow(null, ''),
+    isActive: Joi.boolean().optional()
+  })
+};
+
+// Review & Rating System (PRD "CRM Feature Map by Phase" Phase 4 module 40).
+export const reviewSchemas = {
+  createReview: Joi.object({
+    bookingId: objectIdRef.required(),
+    packageRating: Joi.number().integer().min(1).max(5).optional().allow(null),
+    hotelRating: Joi.number().integer().min(1).max(5).optional().allow(null),
+    guideRating: Joi.number().integer().min(1).max(5).optional().allow(null),
+    driverRating: Joi.number().integer().min(1).max(5).optional().allow(null),
+    comment: Joi.string().trim().max(5000).optional().allow(null, '')
+  }),
+  moderateReview: Joi.object({
+    status: Joi.string().trim().valid("published", "hidden").required()
+  })
+};
+
+export const leadSchemas = new Proxy({}, {
+  get(_target, prop) {
+    if (LEAD_SCHEMA_KEYS.has(prop)) {
+      return buildLeadSchemas()[prop];
+    }
+    return undefined;
+  }
+});
+
+// Marketing Campaign System (PRD "CRM Feature Map by Phase" Phase 2 module
+// 20) — routes/MarketingCampaignRoutes.js. Plain object, same as
+// publicBookingSchemas above: nothing here is env-configurable.
+export const marketingCampaignSchemas = {
+  createCampaign: Joi.object({
+    name: Joi.string().trim().min(1).max(200).required(),
+    channel: Joi.string().trim().valid("Email", "SMS", "WhatsApp").required(),
+    templateId: Joi.string().trim().min(1).max(200).required(),
+    segmentFilter: Joi.object({
+      customerType: Joi.string().trim().optional().allow(null, ""),
+      category: Joi.string().trim().optional().allow(null, ""),
+      status: Joi.string().trim().optional().allow(null, ""),
+      assignedTo: Joi.string().trim().optional().allow(null, ""),
+      countryId: Joi.string().trim().optional().allow(null, ""),
+      cityId: Joi.string().trim().optional().allow(null, ""),
+      createdAfter: Joi.date().optional().allow(null, ""),
+      createdBefore: Joi.date().optional().allow(null, "")
+    }).optional(),
+    scheduledAt: Joi.date().optional().allow(null, "")
+  })
+};
 
 export default validate;

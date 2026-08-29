@@ -47,7 +47,9 @@ test("archiveRecord -> restoreRecord: real Active -> Archived -> Restored cycle 
   const ScratchInvoiceModel = mongoose.model(`archival_scratch_${Date.now()}`, schema);
 
   t.after(async () => {
-    await ScratchInvoiceModel.deleteMany({});
+    // Drop the collection itself, not just its documents — see
+    // tests/optimisticLockingStandard.test.js's own comment on this same fix.
+    await ScratchInvoiceModel.collection.drop().catch(() => {});
     delete mongoose.connection.models[ScratchInvoiceModel.modelName];
   });
 
@@ -105,7 +107,9 @@ test("archiveRecord: a closed accounting period rejects the archive attempt and 
   const ScratchModel = mongoose.model(`archival_period_scratch_${Date.now()}`, schema);
 
   t.after(async () => {
-    await ScratchModel.deleteMany({});
+    // Drop the collection itself, not just its documents — see
+    // tests/optimisticLockingStandard.test.js's own comment on this same fix.
+    await ScratchModel.collection.drop().catch(() => {});
     delete mongoose.connection.models[ScratchModel.modelName];
     await FinancialPeriodModel.deleteMany({ tenantId });
   });
@@ -146,7 +150,9 @@ test("purgeRecord: the full secure-purge gate chain — must be archived, no leg
   const ScratchModel = mongoose.model(`archival_purge_scratch_${Date.now()}`, schema);
 
   t.after(async () => {
-    await ScratchModel.deleteMany({});
+    // Drop the collection itself, not just its documents — see
+    // tests/optimisticLockingStandard.test.js's own comment on this same fix.
+    await ScratchModel.collection.drop().catch(() => {});
     delete mongoose.connection.models[ScratchModel.modelName];
   });
 

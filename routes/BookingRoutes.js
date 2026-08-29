@@ -3,6 +3,7 @@ import authenticateAccessToken from "../middleware/authenticateAccessToken.js";
 import { requireFeature, subscriptionResponseHeaders } from "../middleware/subscriptionEnforcement.js";
 import validate, { bookingSchemas } from "../middleware/validateRequest.js";
 import rateLimit from "express-rate-limit";
+import { RunOneClickAutomation, ListOneClickAutomationRuns } from "../controllers/BookingAutomationController.js";
 import {
   ListBookings,
   SearchBookings,
@@ -33,6 +34,10 @@ import {
   ListBookingTasks,
   AddBookingTask,
   UpdateBookingTask,
+  GetMyTasks,
+  GetBookingKit,
+  AddBookingKitItem,
+  UpdateBookingKitItem,
   GetBookingFinancialSummary,
   GetBookingDashboard,
   GenerateBookingVoucher,
@@ -61,6 +66,7 @@ router.use(subscriptionResponseHeaders);
 // Dashboard & Search
 router.get("/dashboard", limiter, GetBookingDashboard);
 router.get("/search", limiter, SearchBookings);
+router.get("/my-tasks", limiter, GetMyTasks);
 
 // AI supplier-document parsing (Booking-module PRD Part B item #8) —
 // registered before "/:bookingId" so this literal path isn't shadowed by
@@ -87,6 +93,8 @@ router.get("/:bookingId/vouchers", limiter, ListBookingVouchers);
 
 // Booking-driven Invoice (Booking-module PRD Part A item #4)
 router.post("/:bookingId/invoice", limiter, GenerateBookingInvoice);
+router.post("/:bookingId/one-click-complete", limiter, RunOneClickAutomation);
+router.get("/:bookingId/one-click-complete/runs", limiter, ListOneClickAutomationRuns);
 
 // Booking Travelers APIs (Part 3)
 router.get("/:bookingId/travelers", limiter, ListBookingTravelers);
@@ -116,6 +124,10 @@ router.get("/:bookingId/timeline", limiter, ListBookingTimeline);
 router.get("/:bookingId/tasks", limiter, ListBookingTasks);
 router.post("/:bookingId/tasks", limiter, validate(bookingSchemas.addBookingTask), AddBookingTask);
 router.patch("/:bookingId/tasks/:taskId", limiter, validate(bookingSchemas.updateBookingTask), UpdateBookingTask);
+
+router.get("/:bookingId/kit", limiter, GetBookingKit);
+router.post("/:bookingId/kit/items", limiter, AddBookingKitItem);
+router.patch("/:bookingId/kit/items/:itemId", limiter, UpdateBookingKitItem);
 
 // Financial Summary API (Part 7)
 router.get("/:bookingId/financial-summary", limiter, GetBookingFinancialSummary);

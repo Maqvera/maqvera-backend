@@ -77,6 +77,16 @@ const BookingHeaderSchema = new mongoose.Schema({
     type: String,
     default: null
   },
+  // B2B Agent Portal (PRD "CRM Feature Map by Phase" Phase 2 module 14) —
+  // the external selling Agent (models/AgentModel.js) who gets commission
+  // credit for this booking, deliberately distinct from assignedTo/
+  // assignedConsultant above (internal tenant staff). null for any booking
+  // not sold through an agent.
+  agentUserId: {
+    type: String,
+    default: null,
+    index: true
+  },
   travelDate: {
     type: Date,
     default: null,

@@ -48,6 +48,17 @@ export const verifyStripeConnectStateToken = (token) => {
   return payload;
 };
 
+// B2B Agent Portal (PRD "CRM Feature Map by Phase" Phase 2 module 14) — an
+// Agent is a genuinely separate external identity from a staff User, so it
+// gets its own token `type` (never "access"), same discipline as
+// createStripeConnectStateToken above. Deliberately reuses the same
+// accessTokenSecret (no new credential to provision/rotate) — the `type`
+// claim alone is what keeps a staff access token and an agent token from
+// ever being interchangeable, checked in middleware/authenticateAgentToken.js.
+export const createAgentAccessToken = (payload) => {
+  return jwt.sign({ ...payload, type: "agent_access" }, authConfig.accessTokenSecret, { expiresIn: authConfig.accessTokenExpiresIn });
+};
+
 export const getAccessTokenExpiresInSeconds = () => {
   const match = authConfig.accessTokenExpiresIn.match(/^(\d+)([smhd])$/);
   if (!match) return 900;

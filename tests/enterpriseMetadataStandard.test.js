@@ -106,7 +106,9 @@ test("optimisticConcurrency: a real save increments __v", { skip: !dbAvailable &
   applyEnterpriseMetadata(schema);
   const ScratchModel = mongoose.model(`enterprise_metadata_scratch_${Date.now()}`, schema);
   t.after(async () => {
-    await ScratchModel.deleteMany({});
+    // Drop the collection itself, not just its documents — see
+    // tests/optimisticLockingStandard.test.js's own comment on this same fix.
+    await ScratchModel.collection.drop().catch(() => {});
     delete mongoose.connection.models[ScratchModel.modelName];
   });
 

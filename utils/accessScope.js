@@ -17,3 +17,32 @@ export const getAccessScope = (req) => {
   if (!tenantId) return null;
   return { tenantId };
 };
+
+// B2B Agent Portal (PRD "CRM Feature Map by Phase" Phase 2 module 14) —
+// deliberately NOT a reuse of getAccessScope above. An Agent is a genuinely
+// separate external identity (middleware/authenticateAgentToken.js sets
+// req.agent, never req.auth) whose scope is narrower than a tenant staff
+// member's: own records only, never the whole tenant's shared business
+// data. Every agent-portal controller must spread this into its Mongo
+// filter (never a bare { tenantId } and never a bare { agentId } alone —
+// both dimensions together, same "never optional" discipline as
+// getAccessScope's own tenantId).
+export const getAgentAccessScope = (req) => {
+  const tenantId = req.agent?.tenantId;
+  const agentId = req.agent?.agentId;
+  if (!tenantId || !agentId) return null;
+  return { tenantId, agentId };
+};
+
+// Supplier Self-Service Portal (PRD "CRM Feature Map by Phase" Phase 3
+// module 24) — same "own token type, own req field, own narrower scope"
+// discipline as getAgentAccessScope above. A vendor's portal token
+// (middleware/authenticateVendorPortalToken.js) sets req.vendorAuth, never
+// req.auth, and only ever sees its own vendor's records — never the
+// tenant's shared business data.
+export const getVendorAccessScope = (req) => {
+  const tenantId = req.vendorAuth?.tenantId;
+  const vendorId = req.vendorAuth?.vendorId;
+  if (!tenantId || !vendorId) return null;
+  return { tenantId, vendorId };
+};

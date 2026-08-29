@@ -80,7 +80,9 @@ test("archiveRecord resolves a registered retention policy and stamps retentionP
   const tenantId = `test-retention-archive-${Date.now()}`;
   const resourceType = `CustomResourceType${Date.now()}`;
   t.after(async () => {
-    await ScratchModel.deleteMany({});
+    // Drop the collection itself, not just its documents — see
+    // tests/optimisticLockingStandard.test.js's own comment on this same fix.
+    await ScratchModel.collection.drop().catch(() => {});
     delete mongoose.connection.models[ScratchModel.modelName];
     await RetentionPolicyModel.deleteMany({ tenantId });
   });
@@ -112,7 +114,9 @@ test("Legal Hold: a resource can be under two independent holds at once; the fla
 
   const tenantId = `test-legalhold-${Date.now()}`;
   t.after(async () => {
-    await ScratchModel.deleteMany({});
+    // Drop the collection itself, not just its documents — see
+    // tests/optimisticLockingStandard.test.js's own comment on this same fix.
+    await ScratchModel.collection.drop().catch(() => {});
     delete mongoose.connection.models[ScratchModel.modelName];
     await LegalHoldModel.deleteMany({ tenantId });
   });
@@ -174,7 +178,9 @@ test("Purge Request workflow: legal hold blocks both requesting and approving; f
   const tenantId = `test-purgereq-${Date.now()}`;
   const resourceType = "TestRecord";
   t.after(async () => {
-    await ScratchModel.deleteMany({});
+    // Drop the collection itself, not just its documents — see
+    // tests/optimisticLockingStandard.test.js's own comment on this same fix.
+    await ScratchModel.collection.drop().catch(() => {});
     delete mongoose.connection.models[ScratchModel.modelName];
     await LegalHoldModel.deleteMany({ tenantId });
     await PurgeRequestModel.deleteMany({ tenantId });

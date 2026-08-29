@@ -468,6 +468,21 @@ export const listPackageTemplates = async (req, res) => {
   }
 };
 
+export const updatePackageTemplate = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "package.pricing.manage")) return sendError(res, 403, "Permission denied.", requestId);
+
+    const template = await PackagePricingService.updatePackageTemplate(req.params.templateId, req.body, scope.tenantId, userIdFrom(req));
+    return sendSuccess(res, 200, "Package template updated successfully.", template, requestId);
+  } catch (error) {
+    console.error("updatePackageTemplate error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to update package template.", requestId);
+  }
+};
+
 export const cloneFromTemplate = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
@@ -840,5 +855,50 @@ export const generateQuotationPdf = async (req, res) => {
   } catch (error) {
     console.error("generateQuotationPdf error:", error);
     return sendError(res, statusFromError(error), error.message || "Failed to generate quotation PDF.", requestId);
+  }
+};
+
+export const convertQuotationToBooking = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "package.pricing.quotation.manage", "package.pricing.manage")) return sendError(res, 403, "Permission denied.", requestId);
+
+    const result = await PackagePricingService.convertQuotationToBooking(req.params.quotationId, req.body, scope.tenantId, userIdFrom(req));
+    return sendSuccess(res, 201, "Quotation converted to booking successfully.", result, requestId);
+  } catch (error) {
+    console.error("convertQuotationToBooking error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to convert quotation to booking.", requestId);
+  }
+};
+
+export const getDynamicPricingSuggestion = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "package.pricing.read", "package.pricing.manage")) return sendError(res, 403, "Permission denied.", requestId);
+
+    const suggestion = await PackagePricingService.computeDynamicMultiplier(req.params.packageId, scope.tenantId);
+    return sendSuccess(res, 200, "Dynamic pricing suggestion computed.", suggestion, requestId);
+  } catch (error) {
+    console.error("getDynamicPricingSuggestion error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to compute dynamic pricing suggestion.", requestId);
+  }
+};
+
+export const sendQuotation = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "package.pricing.quotation.manage", "package.pricing.manage")) return sendError(res, 403, "Permission denied.", requestId);
+
+    const result = await PackagePricingService.sendQuotation(req.params.quotationId, req.body, scope.tenantId, userIdFrom(req));
+    return sendSuccess(res, 200, "Quotation sent successfully.", result, requestId);
+  } catch (error) {
+    console.error("sendQuotation error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to send quotation.", requestId);
   }
 };

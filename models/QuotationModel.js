@@ -30,6 +30,9 @@ const QuotationSchema = new mongoose.Schema({
   validUntil: { type: Date, default: null },
   status: { type: String, required: true, index: true },
   pdfUrl: { type: String, default: null },
+  // Set once this quotation is turned into a real booking (PackagePricingService.
+  // convertQuotationToBooking) — a quotation can only ever be converted once.
+  convertedBookingId: { type: mongoose.Schema.Types.ObjectId, ref: "booking_header", default: null },
   generatedAt: { type: Date, default: Date.now },
   generatedBy: { type: String, default: null }
 }, { timestamps: true });

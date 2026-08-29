@@ -25,6 +25,18 @@ import travelPlanRoute from "./routes/TravelPlanRoutes.js";
 import incidentRoute from "./routes/IncidentRoutes.js";
 import notesTimelineRoute from "./routes/NotesTimelineRoutes.js";
 import dashboardRoute from "./routes/TravelDashboardRoutes.js";
+import ownerDashboardRoute from "./routes/OwnerDashboardRoutes.js";
+import leadRoute from "./routes/LeadRoutes.js";
+import apiKeyRoute from "./routes/ApiKeyRoutes.js";
+import agentPortalRoute from "./routes/AgentPortalRoutes.js";
+import employeeAttendanceRoute from "./routes/EmployeeAttendanceRoutes.js";
+import embassyDirectoryRoute from "./routes/EmbassyDirectoryRoutes.js";
+import reviewRoute from "./routes/ReviewRoutes.js";
+import publicBookingRoute from "./routes/PublicBookingRoutes.js";
+import marketingCampaignRoute from "./routes/MarketingCampaignRoutes.js";
+import supplierPortalRoute from "./routes/SupplierPortalRoutes.js";
+import publicLandingPageRoute from "./routes/PublicLandingPageRoutes.js";
+import AgentCommissionService from "./services/AgentCommissionService.js";
 import enterpriseSearchRoute from "./routes/EnterpriseSearchRoutes.js";
 import flightSearchRoute from "./routes/FlightSearchRoutes.js";
 import flightBookingRoute from "./routes/FlightBookingRoutes.js";
@@ -82,6 +94,7 @@ import SearchEngineService from "./services/SearchEngineService.js";
 import ReportUsageAnalyticsService from "./services/ReportUsageAnalyticsService.js";
 import EmbassyProcessingService from "./services/EmbassyProcessingService.js";
 import AppointmentReminderScheduler from "./services/appointmentReminderScheduler.js";
+import LeadFollowUpReminderScheduler from "./services/leadFollowUpReminderScheduler.js";
 import IncidentSlaScheduler from "./services/incidentSlaScheduler.js";
 import ReferenceDataScheduler from "./services/referenceDataScheduler.js";
 import FlightScheduleSyncScheduler from "./services/flightScheduleSyncScheduler.js";
@@ -138,6 +151,7 @@ const bootstrapEnterpriseServices = async () => {
   await CommunicationRetryScheduler.init();
   await DocumentExpiryScheduler.init();
   await AppointmentReminderScheduler.init();
+  await LeadFollowUpReminderScheduler.init();
   await IncidentSlaScheduler.init();
   await ReferenceDataScheduler.init();
   await FlightScheduleSyncScheduler.init();
@@ -226,12 +240,22 @@ app.get("/openapi.yaml", (req, res) => {
 app.use("/api/v1/auth", route);
 app.use("/api/auth", route);
 app.use("/api/v1/customers", customerRoute);
+app.use("/api/v1/leads", leadRoute);
+app.use("/api/v1/api-keys", apiKeyRoute);
+app.use("/api/v1/agents", agentPortalRoute);
+app.use("/api/v1/attendance", employeeAttendanceRoute);
+app.use("/api/v1/embassy-directory", embassyDirectoryRoute);
+app.use("/api/v1/reviews", reviewRoute);
+app.use("/api/v1/public", publicBookingRoute);
+app.use("/api/v1/campaigns", marketingCampaignRoute);
+app.use("/api/v1/supplier-portal", supplierPortalRoute);
 app.use("/api/v1/users", userRoute);
 app.use("/api/v1/roles", roleRoute);
 app.use("/api/v1/bookings", bookingRoute);
 app.use("/api/v1/travel-plans", travelPlanRoute);
 app.use("/api/v1/incidents", incidentRoute);
 app.use("/api/v1/travel/dashboard", dashboardRoute);
+app.use("/api/v1/dashboard/overview", ownerDashboardRoute);
 app.use("/api/v1/dashboard", visaDashboardRoute);
 app.use("/api/v1/search", enterpriseSearchRoute);
 app.use("/api/v1/flight-search", flightSearchRoute);
@@ -273,6 +297,14 @@ app.use("/api/v1/reporting/usage", reportUsageRoute);
 app.use("/api/v1/emails", communicationRoute);
 app.use("/api/v1/sms", communicationRoute);
 app.use("/api/v1/payment-gateways", paymentGatewayRoute);
+// Per-Tenant Domain-Masked Landing Page (PRD v2 §Task D) — mounted at "/"
+// (root), not under /api/v1/*: this is the page a visitor's browser
+// actually lands on at {slug}.maqvera.com, resolved via the Host header
+// (middleware/resolveTenantByHost.js), never a client-supplied path
+// segment. Appended last, directly above the error-handling block, per
+// that PRD's own instruction — every existing route above is registered
+// completely unchanged.
+app.use("/", publicLandingPageRoute);
 
 // Error handling
 app.use(notFoundHandler);
@@ -300,6 +332,7 @@ const startServer = async () => {
     NotificationDeliveryService.initEventListeners();
     DocumentVerificationService.initEventListeners();
     ApprovalNotificationListener.initEventListeners();
+    AgentCommissionService.initEventListeners();
 
     // Voice-Based Booking Creation PRD B4.4/Step 3 — Express itself cannot
     // handle a WebSocket upgrade, so the bare `app.listen(PORT)` this

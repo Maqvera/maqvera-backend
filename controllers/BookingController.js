@@ -5,6 +5,7 @@ import BookingServiceModel from "../models/BookingServiceModel.js";
 import TravelerServiceAssignmentModel from "../models/TravelerServiceAssignmentModel.js";
 import BookingDocumentModel from "../models/BookingDocumentModel.js";
 import BookingTaskModel from "../models/BookingTaskModel.js";
+import PilgrimKitModel from "../models/PilgrimKitModel.js";
 import BookingTimelineModel from "../models/BookingTimelineModel.js";
 import BookingNoteModel from "../models/BookingNoteModel.js";
 import BookingWorkflowModel from "../models/BookingWorkflowModel.js";
@@ -393,7 +394,12 @@ export const CreateBooking = async (req, res) => {
       priority = bookingConfig.defaultPriority,
       paymentStatus = bookingConfig.defaultPaymentStatus,
       visaStatus = bookingConfig.defaultVisaStatus,
-      convertedCurrency = null
+      convertedCurrency = null,
+      // B2B Agent Portal (PRD "CRM Feature Map by Phase" Phase 2 module 14)
+      // — set only for an agent-initiated booking
+      // (controllers/AgentPortalController.js createMyBooking), never
+      // caller-trusted for a staff-created one beyond what's explicitly sent.
+      agentUserId = null
     } = req.body;
 
     if (!customerId) return sendError(res, 422, "customerId is required.", requestId);
@@ -508,6 +514,7 @@ export const CreateBooking = async (req, res) => {
         visaStatus,
         assignedTo: assignedConsultant,
         assignedConsultant: assignedConsultant,
+        agentUserId,
         travelDate: parsedTravelDate,
         returnDate: parsedReturnDate,
         totalAmount: initialAmount,
@@ -2667,6 +2674,57 @@ export const ListBookingTimeline = async (req, res) => {
 };
 
 // --- Tasks ---
+/**
+ * GET /bookings/my-tasks — PRD "CRM Feature Map by Phase" Phase 1 module 29
+ * (Enhanced Staff & Role Management: "daily task checklist per staff").
+ * BookingTaskModel already models this (entityType/entityId cover Booking/
+ * Visa/Payment/Customer/Employee/Supplier tasks); this is the one
+ * cross-booking, staff-facing read view that was missing — every existing
+ * task row is real, this just resolves "everything assigned to me,"
+ * grouped by day, rather than requiring one bookingId at a time.
+ */
+export const GetMyTasks = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    const permissions = req.auth?.permissions || [];
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!permissions.includes("bookings.read") && !permissions.includes("booking.read")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
+
+    const userId = req.auth?.id || req.auth?.userId;
+    if (!userId) return sendError(res, 403, "Unable to resolve the requesting user.", requestId);
+
+    const filter = { tenantId: scope.tenantId, assignedTo: userId, status: { $ne: "archived" } };
+    if (req.query.includeCompleted !== "true") {
+      filter.workflowStatus = { $nin: ["completed", "cancelled"] };
+    }
+    if (req.query.date) {
+      const dateStr = req.query.date === "today" ? new Date().toISOString().slice(0, 10) : req.query.date;
+      const day = new Date(dateStr);
+      if (Number.isNaN(day.getTime())) return sendError(res, 400, `Invalid date "${req.query.date}".`, requestId);
+      const start = new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate()));
+      filter.dueDate = { $gte: start, $lt: new Date(start.getTime() + 86400000) };
+    }
+
+    const tasks = await BookingTaskModel.find(filter).sort({ dueDate: 1, priority: -1, createdAt: -1 }).lean();
+
+    const groups = new Map();
+    for (const task of tasks) {
+      const key = task.dueDate ? task.dueDate.toISOString().slice(0, 10) : "noDueDate";
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(task);
+    }
+    const grouped = [...groups.entries()].map(([date, items]) => ({ date, items }));
+
+    return sendSuccess(res, 200, "My tasks loaded.", { grouped, total: tasks.length }, requestId);
+  } catch (error) {
+    console.error("GetMyTasks error:", error);
+    return sendError(res, 500, "Unable to load my tasks.", requestId);
+  }
+};
+
 export const ListBookingTasks = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
@@ -2869,6 +2927,103 @@ export const UpdateBookingTask = async (req, res) => {
   } catch (error) {
     console.error("UpdateBookingTask error:", error);
     return sendError(res, 400, error.message || "Unable to update task.", requestId);
+  }
+};
+
+// ==========================================
+// PRD "CRM Feature Map by Phase" Phase 4 module 40 — Pilgrim Kit Management
+// ==========================================
+
+export const GetBookingKit = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    const permissions = req.auth?.permissions || [];
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!permissions.includes("bookings.read") && !permissions.includes("booking.read")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
+
+    const { bookingId } = req.params;
+    const booking = await BookingHeaderModel.findOne({ _id: bookingId, ...scope }).lean();
+    if (!booking) return sendError(res, 404, "Booking not found.", requestId);
+
+    const kit = await PilgrimKitModel.findOne({ bookingId: booking._id, tenantId: scope.tenantId }).lean();
+    return sendSuccess(res, 200, "Pilgrim kit loaded.", kit || { bookingId: booking._id, items: [] }, requestId);
+  } catch (error) {
+    console.error("GetBookingKit error:", error);
+    return sendError(res, 500, "Unable to load pilgrim kit.", requestId);
+  }
+};
+
+/** Adds one item to this booking's kit — find-or-creates the kit row itself, mirroring AddBookingTask's own "no separate create-kit step" convenience. */
+export const AddBookingKitItem = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    const permissions = req.auth?.permissions || [];
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!permissions.includes("bookings.update") && !permissions.includes("booking.update")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
+
+    const { bookingId } = req.params;
+    const { itemName, quantity = 1 } = req.body;
+    if (!itemName || !itemName.trim()) return sendError(res, 422, "itemName is required.", requestId);
+
+    const booking = await BookingHeaderModel.findOne({ _id: bookingId, ...scope }).lean();
+    if (!booking) return sendError(res, 404, "Booking not found.", requestId);
+
+    const kit = await PilgrimKitModel.findOneAndUpdate(
+      { bookingId: booking._id, tenantId: scope.tenantId },
+      {
+        $push: { items: { itemName: itemName.trim(), quantity } },
+        $set: { updatedBy: req.auth?.id || null },
+        $setOnInsert: { customerId: booking.customerId, createdBy: req.auth?.id || null }
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+
+    return sendSuccess(res, 201, "Kit item added successfully.", kit.toJSON(), requestId);
+  } catch (error) {
+    console.error("AddBookingKitItem error:", error);
+    return sendError(res, 500, "Unable to add kit item.", requestId);
+  }
+};
+
+/** PATCH /bookings/:bookingId/kit/items/:itemId — mark distributed (or update quantity). */
+export const UpdateBookingKitItem = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    const permissions = req.auth?.permissions || [];
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!permissions.includes("bookings.update") && !permissions.includes("booking.update")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
+
+    const { bookingId, itemId } = req.params;
+    const { distributed, quantity } = req.body;
+
+    const kit = await PilgrimKitModel.findOne({ bookingId, tenantId: scope.tenantId });
+    if (!kit) return sendError(res, 404, "Pilgrim kit not found.", requestId);
+
+    const item = kit.items.id(itemId);
+    if (!item) return sendError(res, 404, "Kit item not found.", requestId);
+
+    if (distributed !== undefined) {
+      item.distributed = Boolean(distributed);
+      item.distributedAt = distributed ? new Date() : null;
+      item.distributedBy = distributed ? (req.auth?.id || null) : null;
+    }
+    if (quantity !== undefined) item.quantity = quantity;
+    kit.updatedBy = req.auth?.id || null;
+    await kit.save();
+
+    return sendSuccess(res, 200, "Kit item updated successfully.", kit.toJSON(), requestId);
+  } catch (error) {
+    console.error("UpdateBookingKitItem error:", error);
+    return sendError(res, 500, "Unable to update kit item.", requestId);
   }
 };
 

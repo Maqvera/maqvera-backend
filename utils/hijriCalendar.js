@@ -59,3 +59,20 @@ export const formatHijriDate = (gregorianDate = new Date()) => {
   if (!asOf.isValid()) return null;
   return `${asOf.format("iD iMMMM iYYYY")}H`;
 };
+
+/**
+ * PRD "CRM Feature Map by Phase" Phase 4 module 27 (AI Dynamic Pricing) —
+ * "is this date inside Ramadan, or inside the Hajj window (1-13 Dhul
+ * Hijjah)." `iMonth()` is 0-indexed (Muharram=0 ... Ramadan=8, Dhul
+ * Hijjah=11) — same UTC-anchored Umm al-Qura authority as every other
+ * function in this file, deliberately not a third Hijri conversion.
+ */
+export const getIslamicSeason = (gregorianDate = new Date()) => {
+  const asOf = moment.utc(gregorianDate);
+  if (!asOf.isValid()) throw new Error(`Invalid date: ${gregorianDate}`);
+  const iMonth = asOf.iMonth();
+  const iDate = asOf.iDate();
+  if (iMonth === 8) return "Ramadan";
+  if (iMonth === 11 && iDate >= 1 && iDate <= 13) return "Hajj";
+  return null;
+};

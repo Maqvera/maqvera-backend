@@ -43,6 +43,7 @@ import {
   convertPackageToBooking,
   saveAsTemplate,
   listPackageTemplates,
+  updatePackageTemplate,
   cloneFromTemplate,
   getRoomCombinations,
   comparePackages,
@@ -53,6 +54,9 @@ import {
   listQuotationsForPackage,
   getQuotation,
   generateQuotationPdf,
+  sendQuotation,
+  convertQuotationToBooking,
+  getDynamicPricingSuggestion,
   generateFlyer,
   listFlyersForPackage,
   sendWhatsAppMessage,
@@ -146,11 +150,14 @@ router.post("/commission-rules", authenticateAccessToken, limiter, validate(pack
 
 // ---- Package Templates (PRD §82) ----
 router.get("/package-templates", authenticateAccessToken, limiter, listPackageTemplates);
+router.patch("/package-templates/:templateId", authenticateAccessToken, limiter, validate(packagePricingSchemas.updatePackageTemplate), updatePackageTemplate);
 router.post("/package-templates/:templateId/clone", authenticateAccessToken, limiter, validate(packagePricingSchemas.cloneFromTemplate), cloneFromTemplate);
 
 // ---- Quotations ----
 router.get("/quotations/:quotationId", authenticateAccessToken, limiter, getQuotation);
 router.post("/quotations/:quotationId/pdf", authenticateAccessToken, limiter, generateQuotationPdf);
+router.post("/quotations/:quotationId/send", authenticateAccessToken, limiter, validate(packagePricingSchemas.sendQuotation), sendQuotation);
+router.post("/quotations/:quotationId/convert-to-booking", authenticateAccessToken, limiter, validate(packagePricingSchemas.convertQuotationToBooking), convertQuotationToBooking);
 
 // ---- Packages ----
 // This router is mounted at /api/v1/packages (server.js), so these are the
@@ -165,6 +172,7 @@ router.post("/compare", authenticateAccessToken, limiter, validate(packagePricin
 router.get("/analytics/summary", authenticateAccessToken, limiter, getAnalyticsSummary);
 router.get("/:packageId", authenticateAccessToken, limiter, getPackage);
 router.get("/:packageId/room-combinations", authenticateAccessToken, limiter, getRoomCombinations);
+router.get("/:packageId/dynamic-pricing-suggestion", authenticateAccessToken, limiter, getDynamicPricingSuggestion);
 router.patch("/:packageId", authenticateAccessToken, limiter, validate(packagePricingSchemas.updatePackage), updatePackage);
 router.post("/:packageId/link-booking", authenticateAccessToken, limiter, validate(packagePricingSchemas.linkBooking), linkPackageToBooking);
 router.post("/:packageId/convert-to-booking", authenticateAccessToken, limiter, validate(packagePricingSchemas.convertToBooking), convertPackageToBooking);

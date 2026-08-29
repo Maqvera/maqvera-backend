@@ -10,6 +10,7 @@ import AuditLogModel from "../models/AuditLogmodel.js";
 import EnterpriseDocumentService from "../services/EnterpriseDocumentService.js";
 import CustomerStatisticsEngine from "../services/CustomerStatisticsEngine.js";
 import CustomerAccountStatementService from "../services/CustomerAccountStatementService.js";
+import CustomerRecommendationService from "../services/CustomerRecommendationService.js";
 import CustomerStatementPdfService from "../services/CustomerStatementPdfService.js";
 import storeDocumentPdf from "../utils/documentPdfStorage.js";
 import CacheManager from "../utils/cacheManager.js";
@@ -744,6 +745,35 @@ export const CreateCustomer = async (req, res) => {
   } catch (error) {
     console.error("CreateCustomer error:", error);
     return sendError(res, 500, "Unable to create customer.", requestId);
+  }
+};
+
+/**
+ * GET /customers/:customerId/recommendations — PRD "CRM Feature Map by
+ * Phase" Phase 4 module 27 (AI Smart System). See
+ * services/CustomerRecommendationService.js's own doc comment — a thin
+ * composition over the already-built AI Model Router, never a new ML
+ * pipeline; honestly reports aiAvailable:false rather than fabricating a
+ * response when no AI provider is configured/reachable.
+ */
+export const GetCustomerRecommendations = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    const permissions = req.auth?.permissions || [];
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!permissions.includes("customers.read") && !permissions.includes("customer.read")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
+
+    const customer = await CustomerModel.findOne({ _id: req.params.customerId, ...scope }).lean();
+    if (!customer) return sendError(res, 404, "Customer not found.", requestId);
+
+    const result = await CustomerRecommendationService.getRecommendations(req.params.customerId, scope.tenantId);
+    return sendSuccess(res, 200, "Customer recommendations computed.", result, requestId);
+  } catch (error) {
+    console.error("GetCustomerRecommendations error:", error);
+    return sendError(res, 500, "Unable to compute customer recommendations.", requestId);
   }
 };
 
