@@ -2,6 +2,8 @@ import LeadModel from "../models/LeadModel.js";
 import { getLeadConfig } from "../utils/leadConfig.js";
 import { publishEvent } from "../utils/eventBus.js";
 import logger from "../utils/logger.js";
+import { withDistributedLock } from "../utils/distributedLock.js";
+import { getSchedulerLockConfig } from "../utils/schedulerLockConfig.js";
 
 let cronLib = null;
 let reminderJob = null;
@@ -75,7 +77,8 @@ class LeadFollowUpReminderScheduler {
     if (expr !== config.leadFollowUpReminderCronSchedule) logger.error(`Invalid LEAD_FOLLOWUP_REMINDER_CRON_SCHEDULE: "${config.leadFollowUpReminderCronSchedule}". Falling back to "*/30 * * * *".`);
 
     reminderJob = cronLib.schedule(expr, () => {
-      runLeadFollowUpSweep().catch((err) => logger.error("Cron lead follow-up sweep error", { error: err.message }));
+      withDistributedLock("scheduler:LeadFollowUpReminderScheduler", getSchedulerLockConfig().defaultLockTtlMs, runLeadFollowUpSweep)
+        .catch((err) => logger.error("Cron lead follow-up sweep error", { error: err.message }));
     }, { scheduled: true, timezone: process.env.TZ || undefined });
 
     logger.info(`LeadFollowUpReminderScheduler started — schedule: "${expr}".`);

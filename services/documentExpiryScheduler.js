@@ -2,6 +2,8 @@ import EnterpriseDocumentModel from "../models/EnterpriseDocumentModel.js";
 import VisaCaseModel from "../models/VisaCaseModel.js";
 import { publishEvent } from "../utils/eventBus.js";
 import logger from "../utils/logger.js";
+import { withDistributedLock } from "../utils/distributedLock.js";
+import { getSchedulerLockConfig } from "../utils/schedulerLockConfig.js";
 
 // ─────────────────────────────────────────────────────────────
 // Configuration — all from environment
@@ -121,7 +123,8 @@ class DocumentExpiryScheduler {
     if (expr !== EXPIRY_CHECK_CRON) logger.error(`Invalid DOCUMENT_EXPIRY_CRON_SCHEDULE: "${EXPIRY_CHECK_CRON}". Falling back to "0 3 * * *".`);
 
     expiryJob = cronLib.schedule(expr, () => {
-      runExpiryCheck().catch((err) => logger.error("Cron document expiry error", { error: err.message }));
+      withDistributedLock("scheduler:DocumentExpiryScheduler", getSchedulerLockConfig().defaultLockTtlMs, runExpiryCheck)
+        .catch((err) => logger.error("Cron document expiry error", { error: err.message }));
     }, { scheduled: true, timezone: process.env.TZ || undefined });
 
     logger.info(`DocumentExpiryScheduler started — schedule: "${expr}", reminder window: ${REMINDER_WINDOW_DAYS} days.`);

@@ -2,6 +2,8 @@ import CurrencyModel from "../models/CurrencyModel.js";
 import CurrencyService from "./CurrencyService.js";
 import { getFinanceConfig } from "../utils/financeConfig.js";
 import logger from "../utils/logger.js";
+import { withDistributedLock } from "../utils/distributedLock.js";
+import { getSchedulerLockConfig } from "../utils/schedulerLockConfig.js";
 
 // Enterprise Multi-Currency & Foreign Exchange — Finance Module Part 19.
 // "Automatic period-end revaluation." Unlike receivableOverdueScheduler.js
@@ -54,7 +56,8 @@ class CurrencyRevaluationScheduler {
     if (expr !== config.fxRevaluationCron) logger.error(`Invalid FX_REVALUATION_CRON_SCHEDULE: "${config.fxRevaluationCron}". Falling back to "0 1 1 * *".`);
 
     revaluationJob = cronLib.schedule(expr, () => {
-      runRevaluation().catch((err) => logger.error("Cron currency revaluation error", { error: err.message }));
+      withDistributedLock("scheduler:CurrencyRevaluationScheduler", getSchedulerLockConfig().defaultLockTtlMs, runRevaluation)
+        .catch((err) => logger.error("Cron currency revaluation error", { error: err.message }));
     }, { scheduled: true, timezone: process.env.TZ || undefined });
 
     logger.info(`CurrencyRevaluationScheduler started — schedule: "${expr}".`);

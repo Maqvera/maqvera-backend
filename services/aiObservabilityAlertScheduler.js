@@ -5,6 +5,8 @@ import AIAssistantService from "./AIAssistantService.js";
 import AIOrchestrationService from "./AIOrchestrationService.js";
 import { getAIObservabilityConfig } from "../utils/aiObservabilityConfig.js";
 import logger from "../utils/logger.js";
+import { withDistributedLock } from "../utils/distributedLock.js";
+import { getSchedulerLockConfig } from "../utils/schedulerLockConfig.js";
 
 /**
  * EXT-033 §19 "Alerting." Real threshold evaluation on a cron sweep — the
@@ -65,7 +67,8 @@ class AIObservabilityAlertScheduler {
     if (expr !== sweepCronSchedule) logger.error(`Invalid AI_OBSERVABILITY_ALERT_CRON_SCHEDULE: "${sweepCronSchedule}". Falling back to "*/10 * * * *".`);
 
     sweepJob = cronLib.schedule(expr, () => {
-      runObservabilityAlertSweep().catch((err) => logger.error("Cron AI observability alert sweep error", { error: err.message }));
+      withDistributedLock("scheduler:AIObservabilityAlertScheduler", getSchedulerLockConfig().defaultLockTtlMs, runObservabilityAlertSweep)
+        .catch((err) => logger.error("Cron AI observability alert sweep error", { error: err.message }));
     }, { scheduled: true, timezone: process.env.TZ || undefined });
 
     logger.info(`AIObservabilityAlertScheduler started — schedule: "${expr}".`);

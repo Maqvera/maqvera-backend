@@ -1,6 +1,8 @@
 import FinancialPeriodModel from "../models/FinancialPeriodModel.js";
 import { getCurrentMuharramPeriod, hasCrossedMuharramPeriod } from "../utils/hijriCalendar.js";
 import logger from "../utils/logger.js";
+import { withDistributedLock } from "../utils/distributedLock.js";
+import { getSchedulerLockConfig } from "../utils/schedulerLockConfig.js";
 
 const ROLLOVER_CRON = process.env.MUHARRAM_PERIOD_ROLLOVER_CRON_SCHEDULE || "0 2 * * *";
 
@@ -81,7 +83,8 @@ class MuharramPeriodScheduler {
     if (expr !== ROLLOVER_CRON) logger.error(`Invalid MUHARRAM_PERIOD_ROLLOVER_CRON_SCHEDULE: "${ROLLOVER_CRON}". Falling back to "0 2 * * *".`);
 
     rolloverJob = cronLib.schedule(expr, () => {
-      runRolloverCheck().catch((err) => logger.error("Cron Muharram period rollover error", { error: err.message }));
+      withDistributedLock("scheduler:MuharramPeriodScheduler", getSchedulerLockConfig().defaultLockTtlMs, runRolloverCheck)
+        .catch((err) => logger.error("Cron Muharram period rollover error", { error: err.message }));
     }, { scheduled: true, timezone: process.env.TZ || undefined });
 
     logger.info(`MuharramPeriodScheduler started — schedule: "${expr}".`);

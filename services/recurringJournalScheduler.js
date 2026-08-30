@@ -1,6 +1,8 @@
 import JournalService from "./JournalService.js";
 import { getFinanceConfig } from "../utils/financeConfig.js";
 import logger from "../utils/logger.js";
+import { withDistributedLock } from "../utils/distributedLock.js";
+import { getSchedulerLockConfig } from "../utils/schedulerLockConfig.js";
 
 // "Recurring Journals" — File 2, Journal Platform Part 2, item 19. Real
 // cron-based generation, the same proven pattern as every other scheduler
@@ -41,7 +43,9 @@ class RecurringJournalScheduler {
     if (expr !== config.recurringJournalCron) logger.error(`Invalid RECURRING_JOURNAL_CRON_SCHEDULE: "${config.recurringJournalCron}". Falling back to "0 3 * * *".`);
 
     recurringJob = cronLib.schedule(expr, () => {
-      runRecurringJournals().catch((err) => logger.error("Cron recurring journal error", { error: err.message }));
+      // Real money — a duplicate run here means a duplicate journal entry.
+      withDistributedLock("scheduler:RecurringJournalScheduler", getSchedulerLockConfig().defaultLockTtlMs, runRecurringJournals)
+        .catch((err) => logger.error("Cron recurring journal error", { error: err.message }));
     }, { scheduled: true, timezone: process.env.TZ || undefined });
 
     logger.info(`RecurringJournalScheduler started — schedule: "${expr}".`);

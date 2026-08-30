@@ -1,6 +1,8 @@
 import CommunicationPlatformService from "./CommunicationPlatformService.js";
 import { getFinanceConfig } from "../utils/financeConfig.js";
 import logger from "../utils/logger.js";
+import { withDistributedLock } from "../utils/distributedLock.js";
+import { getSchedulerLockConfig } from "../utils/schedulerLockConfig.js";
 
 // Communication Platform (Part 11 fix, gap 2.6) — a real scheduled sweep
 // for 'Failed' Email/SMS/WhatsApp/Push messages, mirroring
@@ -42,7 +44,8 @@ class CommunicationRetryScheduler {
     if (expr !== config.communicationRetryPollCron) logger.error(`Invalid COMMUNICATION_RETRY_POLL_CRON_SCHEDULE: "${config.communicationRetryPollCron}". Falling back to "*/5 * * * *".`);
 
     retryJob = cronLib.schedule(expr, () => {
-      runCommunicationRetrySweep().catch((err) => logger.error("Cron communication retry sweep error", { error: err.message }));
+      withDistributedLock("scheduler:CommunicationRetryScheduler", getSchedulerLockConfig().defaultLockTtlMs, runCommunicationRetrySweep)
+        .catch((err) => logger.error("Cron communication retry sweep error", { error: err.message }));
     }, { scheduled: true, timezone: process.env.TZ || undefined });
 
     logger.info(`CommunicationRetryScheduler started — schedule: "${expr}".`);

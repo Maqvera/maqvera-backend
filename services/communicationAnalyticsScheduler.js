@@ -1,6 +1,8 @@
 import mongoose from "mongoose";
 import CommunicationAnalyticsEngine from "./CommunicationAnalyticsEngine.js";
 import logger from "../utils/logger.js";
+import { withDistributedLock } from "../utils/distributedLock.js";
+import { getSchedulerLockConfig } from "../utils/schedulerLockConfig.js";
 
 // Same division of responsibility as every other *Scheduler.js in this
 // codebase (analyticsScheduler.js, webhookRetryScheduler.js,
@@ -67,7 +69,8 @@ class CommunicationAnalyticsScheduler {
     if (expr !== COMMUNICATION_ANALYTICS_CRON) logger.error(`Invalid COMMUNICATION_ANALYTICS_CRON_SCHEDULE: "${COMMUNICATION_ANALYTICS_CRON}". Falling back to "*/10 * * * *".`);
 
     sweepJob = cronLib.schedule(expr, () => {
-      runCommunicationAnalyticsSweep().catch((err) => logger.error("Cron Communication analytics sweep error", { error: err.message }));
+      withDistributedLock("scheduler:CommunicationAnalyticsScheduler", getSchedulerLockConfig().defaultLockTtlMs, runCommunicationAnalyticsSweep)
+        .catch((err) => logger.error("Cron Communication analytics sweep error", { error: err.message }));
     }, { scheduled: true, timezone: process.env.TZ || undefined });
 
     logger.info(`CommunicationAnalyticsScheduler started — schedule: "${expr}".`);

@@ -3,6 +3,8 @@ import AuditLogModel from "../models/AuditLogmodel.js";
 import { publishEvent } from "../utils/eventBus.js";
 import { getFinanceConfig } from "../utils/financeConfig.js";
 import logger from "../utils/logger.js";
+import { withDistributedLock } from "../utils/distributedLock.js";
+import { getSchedulerLockConfig } from "../utils/schedulerLockConfig.js";
 
 // Enterprise Discount & Pricing Engine — Finance Module Part 21. "Rule
 // Versioning... Effective Dates, End Dates." Mirrors Part 20's own
@@ -59,7 +61,8 @@ class PricingRuleExpiryScheduler {
     if (expr !== config.pricingRuleExpiryCron) logger.error(`Invalid PRICING_RULE_EXPIRY_CRON_SCHEDULE: "${config.pricingRuleExpiryCron}". Falling back to "0 3 1 * *".`);
 
     expiryJob = cronLib.schedule(expr, () => {
-      runPricingRuleExpiry().catch((err) => logger.error("Cron pricing rule expiry error", { error: err.message }));
+      withDistributedLock("scheduler:PricingRuleExpiryScheduler", getSchedulerLockConfig().defaultLockTtlMs, runPricingRuleExpiry)
+        .catch((err) => logger.error("Cron pricing rule expiry error", { error: err.message }));
     }, { scheduled: true, timezone: process.env.TZ || undefined });
 
     logger.info(`PricingRuleExpiryScheduler started — schedule: "${expr}".`);

@@ -8,6 +8,8 @@ import TenantSubscriptionService from "./TenantSubscriptionService.js";
 import { publishEvent } from "../utils/eventBus.js";
 import { getFinanceConfig } from "../utils/financeConfig.js";
 import logger from "../utils/logger.js";
+import { withDistributedLock } from "../utils/distributedLock.js";
+import { getSchedulerLockConfig } from "../utils/schedulerLockConfig.js";
 
 // Enterprise Financial Reporting — Finance Module Part 24. "Report
 // Scheduling... Daily, Weekly, Monthly, Quarterly, Yearly." Real,
@@ -112,8 +114,11 @@ class FinancialReportScheduler {
     if (expr !== config.reportScheduleCron) logger.error(`Invalid REPORT_SCHEDULE_CRON_SCHEDULE: "${config.reportScheduleCron}". Falling back to "0 5 * * *".`);
 
     scheduleJob = cronLib.schedule(expr, () => {
-      runDueSchedules().catch((err) => logger.error("Cron financial report schedule error", { error: err.message }));
-      runReportExpiry().catch((err) => logger.error("Cron financial report expiry error", { error: err.message }));
+      const ttlMs = getSchedulerLockConfig().defaultLockTtlMs;
+      withDistributedLock("scheduler:FinancialReportScheduler:dueSchedules", ttlMs, runDueSchedules)
+        .catch((err) => logger.error("Cron financial report schedule error", { error: err.message }));
+      withDistributedLock("scheduler:FinancialReportScheduler:reportExpiry", ttlMs, runReportExpiry)
+        .catch((err) => logger.error("Cron financial report expiry error", { error: err.message }));
     }, { scheduled: true, timezone: process.env.TZ || undefined });
 
     logger.info(`FinancialReportScheduler started — schedule: "${expr}".`);

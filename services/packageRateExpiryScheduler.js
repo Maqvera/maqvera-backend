@@ -7,6 +7,8 @@ import AuditLogModel from "../models/AuditLogmodel.js";
 import { publishEvent } from "../utils/eventBus.js";
 import { getPackagePricingConfig } from "../utils/packagePricingConfig.js";
 import logger from "../utils/logger.js";
+import { withDistributedLock } from "../utils/distributedLock.js";
+import { getSchedulerLockConfig } from "../utils/schedulerLockConfig.js";
 
 // Package Pricing Engine — PRD §26/§110-111 "Rate expiry dashboard/alerts."
 // Same structure as services/taxRuleExpiryScheduler.js: cross-tenant query
@@ -89,7 +91,8 @@ class PackageRateExpiryScheduler {
     if (expr !== config.rateExpiryCron) logger.error(`Invalid PACKAGE_RATE_EXPIRY_CRON_SCHEDULE: "${config.rateExpiryCron}". Falling back to "0 3 * * *".`);
 
     expiryJob = cronLib.schedule(expr, () => {
-      runPackageRateExpiry().catch((err) => logger.error("Cron package rate expiry error", { error: err.message }));
+      withDistributedLock("scheduler:PackageRateExpiryScheduler", getSchedulerLockConfig().defaultLockTtlMs, runPackageRateExpiry)
+        .catch((err) => logger.error("Cron package rate expiry error", { error: err.message }));
     }, { scheduled: true, timezone: process.env.TZ || undefined });
 
     logger.info(`PackageRateExpiryScheduler started — schedule: "${expr}".`);

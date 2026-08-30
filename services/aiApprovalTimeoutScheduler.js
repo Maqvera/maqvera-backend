@@ -3,6 +3,8 @@ import AIApprovalRequestModel from "../models/AIApprovalRequestModel.js";
 import { getAIApprovalTimeoutConfig } from "../utils/aiConfig.js";
 import { publishEvent } from "../utils/eventBus.js";
 import logger from "../utils/logger.js";
+import { withDistributedLock } from "../utils/distributedLock.js";
+import { getSchedulerLockConfig } from "../utils/schedulerLockConfig.js";
 
 /**
  * EXT-029 §15 "Timeout Handling — Approval Timeout -> Reminder ->
@@ -90,7 +92,10 @@ class AIApprovalTimeoutScheduler {
     if (expr !== sweepCronSchedule) logger.error(`Invalid AI_APPROVAL_TIMEOUT_CRON_SCHEDULE: "${sweepCronSchedule}". Falling back to "*/15 * * * *".`);
 
     sweepJob = cronLib.schedule(expr, () => {
-      runApprovalTimeoutSweep().catch((err) => logger.error("Cron AI approval timeout sweep error", { error: err.message }));
+      // Production Readiness — distributed lock so 2+ app instances never
+      // both run this tick (see utils/distributedLock.js).
+      withDistributedLock("scheduler:AIApprovalTimeoutScheduler", getSchedulerLockConfig().defaultLockTtlMs, runApprovalTimeoutSweep)
+        .catch((err) => logger.error("Cron AI approval timeout sweep error", { error: err.message }));
     }, { scheduled: true, timezone: process.env.TZ || undefined });
 
     logger.info(`AIApprovalTimeoutScheduler started — schedule: "${expr}".`);

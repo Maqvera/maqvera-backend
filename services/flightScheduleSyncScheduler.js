@@ -1,6 +1,8 @@
 import FlightScheduleSyncService from "./FlightScheduleSyncService.js";
 import logger from "../utils/logger.js";
 import { getFlightScheduleSyncPolicy } from "../utils/gdsConfig.js";
+import { withDistributedLock } from "../utils/distributedLock.js";
+import { getSchedulerLockConfig } from "../utils/schedulerLockConfig.js";
 
 let cronLib = null;
 let standardJob = null;
@@ -37,11 +39,13 @@ class FlightScheduleSyncScheduler {
     }
 
     standardJob = cronLib.schedule(standardExpr, () => {
-      FlightScheduleSyncService.runSyncCycle({ tier: "standard", triggeredBy: "scheduler" }).catch((err) => logger.error("Flight schedule sync (standard) cron error", { error: err.message }));
+      withDistributedLock("scheduler:FlightScheduleSyncScheduler:standard", getSchedulerLockConfig().defaultLockTtlMs, () => FlightScheduleSyncService.runSyncCycle({ tier: "standard", triggeredBy: "scheduler" }))
+        .catch((err) => logger.error("Flight schedule sync (standard) cron error", { error: err.message }));
     }, { scheduled: true, timezone: process.env.TZ || undefined });
 
     highPriorityJob = cronLib.schedule(highPriorityExpr, () => {
-      FlightScheduleSyncService.runSyncCycle({ tier: "high", triggeredBy: "scheduler" }).catch((err) => logger.error("Flight schedule sync (high-priority) cron error", { error: err.message }));
+      withDistributedLock("scheduler:FlightScheduleSyncScheduler:highPriority", getSchedulerLockConfig().defaultLockTtlMs, () => FlightScheduleSyncService.runSyncCycle({ tier: "high", triggeredBy: "scheduler" }))
+        .catch((err) => logger.error("Flight schedule sync (high-priority) cron error", { error: err.message }));
     }, { scheduled: true, timezone: process.env.TZ || undefined });
 
     logger.info(`FlightScheduleSyncScheduler started — standard: "${standardExpr}", high-priority: "${highPriorityExpr}"`);

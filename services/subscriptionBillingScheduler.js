@@ -1,6 +1,8 @@
 import SubscriptionService from "./SubscriptionService.js";
 import { getFinanceConfig } from "../utils/financeConfig.js";
 import logger from "../utils/logger.js";
+import { withDistributedLock } from "../utils/distributedLock.js";
+import { getSchedulerLockConfig } from "../utils/schedulerLockConfig.js";
 
 // Enterprise Customer Payments — Finance Module Part 18 Part 4. Mirrors
 // services/customerCollectionScheduler.js's own real node-cron pattern
@@ -41,7 +43,9 @@ class SubscriptionBillingScheduler {
     if (expr !== config.subscriptionBillingCron) logger.error(`Invalid SUBSCRIPTION_BILLING_CRON_SCHEDULE: "${config.subscriptionBillingCron}". Falling back to "0 6 * * *".`);
 
     billingJob = cronLib.schedule(expr, () => {
-      runSubscriptionBilling().catch((err) => logger.error("Cron subscription billing error", { error: err.message }));
+      // Real money — a duplicate run here means a customer billed twice.
+      withDistributedLock("scheduler:SubscriptionBillingScheduler", getSchedulerLockConfig().defaultLockTtlMs, runSubscriptionBilling)
+        .catch((err) => logger.error("Cron subscription billing error", { error: err.message }));
     }, { scheduled: true, timezone: process.env.TZ || undefined });
 
     logger.info(`SubscriptionBillingScheduler started — schedule: "${expr}".`);

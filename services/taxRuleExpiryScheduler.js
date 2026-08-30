@@ -3,6 +3,8 @@ import AuditLogModel from "../models/AuditLogmodel.js";
 import { publishEvent } from "../utils/eventBus.js";
 import { getFinanceConfig } from "../utils/financeConfig.js";
 import logger from "../utils/logger.js";
+import { withDistributedLock } from "../utils/distributedLock.js";
+import { getSchedulerLockConfig } from "../utils/schedulerLockConfig.js";
 
 // Enterprise Tax Engine — Finance Module Part 20. "Tax Versioning...
 // Historical Rules, Future Rules, Effective Dates, End Dates. Immutable
@@ -57,7 +59,8 @@ class TaxRuleExpiryScheduler {
     if (expr !== config.taxRuleExpiryCron) logger.error(`Invalid TAX_RULE_EXPIRY_CRON_SCHEDULE: "${config.taxRuleExpiryCron}". Falling back to "0 2 1 * *".`);
 
     expiryJob = cronLib.schedule(expr, () => {
-      runTaxRuleExpiry().catch((err) => logger.error("Cron tax rule expiry error", { error: err.message }));
+      withDistributedLock("scheduler:TaxRuleExpiryScheduler", getSchedulerLockConfig().defaultLockTtlMs, runTaxRuleExpiry)
+        .catch((err) => logger.error("Cron tax rule expiry error", { error: err.message }));
     }, { scheduled: true, timezone: process.env.TZ || undefined });
 
     logger.info(`TaxRuleExpiryScheduler started — schedule: "${expr}".`);

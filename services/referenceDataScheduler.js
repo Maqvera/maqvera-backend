@@ -3,6 +3,8 @@ import ReferenceDataService from "./ReferenceDataService.js";
 import ReferenceAirportModel from "../models/ReferenceAirportModel.js";
 import logger from "../utils/logger.js";
 import { getReferenceDataSyncConfig } from "../utils/referenceDataConfig.js";
+import { withDistributedLock } from "../utils/distributedLock.js";
+import { getSchedulerLockConfig } from "../utils/schedulerLockConfig.js";
 
 let cronLib = null;
 let syncJob = null;
@@ -32,7 +34,8 @@ class ReferenceDataScheduler {
     }
 
     syncJob = cronLib.schedule(expr, () => {
-      ReferenceDataService.syncAll({ triggeredBy: "scheduler" }).catch((err) => logger.error("Reference data cron sync error", { error: err.message }));
+      withDistributedLock("scheduler:ReferenceDataScheduler", getSchedulerLockConfig().defaultLockTtlMs, () => ReferenceDataService.syncAll({ triggeredBy: "scheduler" }))
+        .catch((err) => logger.error("Reference data cron sync error", { error: err.message }));
     }, { scheduled: true, timezone: process.env.TZ || undefined });
 
     logger.info(`ReferenceDataScheduler started — schedule: "${expr}"`);
@@ -40,12 +43,15 @@ class ReferenceDataScheduler {
     // First-boot convenience: a fresh install would otherwise sit with
     // empty master tables until the next 3am run, breaking every consumer
     // (booking dropdowns, AI lookups) in the meantime. Fire-and-forget,
-    // never blocks server startup.
+    // never blocks server startup. Same lock key as the cron job above —
+    // N instances all starting up at once and all seeing count === 0 must
+    // still only trigger one real sync, not N.
     if (mongoose.connection?.readyState === 1) {
       const count = await ReferenceAirportModel.countDocuments().catch(() => 0);
       if (count === 0) {
         logger.info("Reference master tables are empty — triggering an initial sync.");
-        ReferenceDataService.syncAll({ triggeredBy: "initial-boot" }).catch((err) => logger.error("Reference data initial sync error", { error: err.message }));
+        withDistributedLock("scheduler:ReferenceDataScheduler", getSchedulerLockConfig().defaultLockTtlMs, () => ReferenceDataService.syncAll({ triggeredBy: "initial-boot" }))
+          .catch((err) => logger.error("Reference data initial sync error", { error: err.message }));
       }
     }
   }

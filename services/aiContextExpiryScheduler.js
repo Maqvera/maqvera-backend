@@ -3,6 +3,8 @@ import AIConversationModel from "../models/AIConversationModel.js";
 import AIContextMemory from "./ai/AIContextMemory.js";
 import { publishEvent } from "../utils/eventBus.js";
 import logger from "../utils/logger.js";
+import { withDistributedLock } from "../utils/distributedLock.js";
+import { getSchedulerLockConfig } from "../utils/schedulerLockConfig.js";
 
 const SWEEP_CRON = process.env.AI_MEMORY_EXPIRY_CRON_SCHEDULE || "*/15 * * * *";
 
@@ -71,7 +73,8 @@ class AIContextExpiryScheduler {
     if (expr !== SWEEP_CRON) logger.error(`Invalid AI_MEMORY_EXPIRY_CRON_SCHEDULE: "${SWEEP_CRON}". Falling back to "*/15 * * * *".`);
 
     expiryJob = cronLib.schedule(expr, () => {
-      runContextExpirySweep().catch((err) => logger.error("Cron AI context expiry sweep error", { error: err.message }));
+      withDistributedLock("scheduler:AIContextExpiryScheduler", getSchedulerLockConfig().defaultLockTtlMs, runContextExpirySweep)
+        .catch((err) => logger.error("Cron AI context expiry sweep error", { error: err.message }));
     }, { scheduled: true, timezone: process.env.TZ || undefined });
 
     logger.info(`AIContextExpiryScheduler started — schedule: "${expr}".`);

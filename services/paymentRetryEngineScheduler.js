@@ -2,6 +2,8 @@ import PaymentRetryEngineService from "./PaymentRetryEngineService.js";
 import { getPlatformConfig } from "../utils/platformConfig.js";
 import SchedulerRunTracker from "../utils/schedulerRunTracker.js";
 import logger from "../utils/logger.js";
+import { withDistributedLock } from "../utils/distributedLock.js";
+import { getSchedulerLockConfig } from "../utils/schedulerLockConfig.js";
 
 const JOB_NAME = "PaymentRetryEngine";
 
@@ -51,7 +53,12 @@ class PaymentRetryEngineScheduler {
     if (expr !== config.paymentRetryPollCron) logger.error(`Invalid PLATFORM_PAYMENT_RETRY_POLL_CRON: "${config.paymentRetryPollCron}". Falling back to "*/15 * * * *".`);
 
     retryJob = cronLib.schedule(expr, () => {
-      runRetrySweep().catch((err) => logger.error("Cron payment retry sweep error", { error: err.message }));
+      // Real money — a failed payment must never be retried N times because
+      // N instances all won this tick. SchedulerRunTracker (above) is
+      // observability only, not mutual exclusion; this lock is the actual
+      // "only one instance runs this" guarantee.
+      withDistributedLock("scheduler:PaymentRetryEngineScheduler", getSchedulerLockConfig().defaultLockTtlMs, runRetrySweep)
+        .catch((err) => logger.error("Cron payment retry sweep error", { error: err.message }));
     }, { scheduled: true, timezone: process.env.TZ || undefined });
 
     logger.info(`PaymentRetryEngineScheduler started — schedule: "${expr}".`);

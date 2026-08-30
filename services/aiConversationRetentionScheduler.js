@@ -3,6 +3,8 @@ import AIConversationModel from "../models/AIConversationModel.js";
 import AIAssistantService from "./AIAssistantService.js";
 import { getAIConversationRetentionConfig } from "../utils/aiConfig.js";
 import logger from "../utils/logger.js";
+import { withDistributedLock } from "../utils/distributedLock.js";
+import { getSchedulerLockConfig } from "../utils/schedulerLockConfig.js";
 
 /**
  * Gap 1.2 "AI Conversation retention config is dead" — utils/aiConfig.js's
@@ -65,7 +67,8 @@ class AIConversationRetentionScheduler {
     if (expr !== sweepCronSchedule) logger.error(`Invalid AI_CONVERSATION_RETENTION_CRON_SCHEDULE: "${sweepCronSchedule}". Falling back to "0 3 * * *".`);
 
     sweepJob = cronLib.schedule(expr, () => {
-      runConversationRetentionSweep().catch((err) => logger.error("Cron AI conversation retention sweep error", { error: err.message }));
+      withDistributedLock("scheduler:AIConversationRetentionScheduler", getSchedulerLockConfig().defaultLockTtlMs, runConversationRetentionSweep)
+        .catch((err) => logger.error("Cron AI conversation retention sweep error", { error: err.message }));
     }, { scheduled: true, timezone: process.env.TZ || undefined });
 
     logger.info(`AIConversationRetentionScheduler started — schedule: "${expr}".`);

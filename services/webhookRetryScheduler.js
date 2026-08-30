@@ -1,6 +1,8 @@
 import WebhookService from "./WebhookService.js";
 import { getFinanceConfig } from "../utils/financeConfig.js";
 import logger from "../utils/logger.js";
+import { withDistributedLock } from "../utils/distributedLock.js";
+import { getSchedulerLockConfig } from "../utils/schedulerLockConfig.js";
 
 // Enterprise Webhook Standard (Enterprise Architecture Hardening Phase,
 // Improvement 14). "Retry Policy... 1 Minute -> 5 Minutes -> ... -> 24
@@ -43,7 +45,10 @@ class WebhookRetryScheduler {
     if (expr !== config.webhookRetryPollCron) logger.error(`Invalid WEBHOOK_RETRY_POLL_CRON_SCHEDULE: "${config.webhookRetryPollCron}". Falling back to "* * * * *".`);
 
     retryJob = cronLib.schedule(expr, () => {
-      runWebhookRetrySweep().catch((err) => logger.error("Cron webhook retry sweep error", { error: err.message }));
+      // A duplicate run here means a duplicate outbound webhook delivery to
+      // a customer's own system.
+      withDistributedLock("scheduler:WebhookRetryScheduler", getSchedulerLockConfig().defaultLockTtlMs, runWebhookRetrySweep)
+        .catch((err) => logger.error("Cron webhook retry sweep error", { error: err.message }));
     }, { scheduled: true, timezone: process.env.TZ || undefined });
 
     logger.info(`WebhookRetryScheduler started — schedule: "${expr}".`);

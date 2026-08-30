@@ -1,6 +1,8 @@
 import mongoose from "mongoose";
 import SmsPlatformService from "./SmsPlatformService.js";
 import logger from "../utils/logger.js";
+import { withDistributedLock } from "../utils/distributedLock.js";
+import { getSchedulerLockConfig } from "../utils/schedulerLockConfig.js";
 
 const SMS_CAMPAIGN_RECOVERY_CRON = process.env.SMS_CAMPAIGN_RECOVERY_CRON_SCHEDULE || "*/5 * * * *";
 const STALE_AFTER_MS = parseInt(process.env.SMS_CAMPAIGN_STALE_AFTER_MS || String(10 * 60 * 1000), 10);
@@ -45,7 +47,8 @@ class SmsCampaignRecoveryScheduler {
     if (expr !== SMS_CAMPAIGN_RECOVERY_CRON) logger.error(`Invalid SMS_CAMPAIGN_RECOVERY_CRON_SCHEDULE: "${SMS_CAMPAIGN_RECOVERY_CRON}". Falling back to "*/5 * * * *".`);
 
     recoveryJob = cronLib.schedule(expr, () => {
-      runRecoverySweep().catch((err) => logger.error("Cron SMS campaign recovery sweep error", { error: err.message }));
+      withDistributedLock("scheduler:SmsCampaignRecoveryScheduler", getSchedulerLockConfig().defaultLockTtlMs, runRecoverySweep)
+        .catch((err) => logger.error("Cron SMS campaign recovery sweep error", { error: err.message }));
     }, { scheduled: true, timezone: process.env.TZ || undefined });
 
     logger.info(`SmsCampaignRecoveryScheduler started — schedule: "${expr}".`);

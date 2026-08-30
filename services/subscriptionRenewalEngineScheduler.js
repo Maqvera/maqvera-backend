@@ -2,6 +2,8 @@ import SubscriptionRenewalEngineService from "./SubscriptionRenewalEngineService
 import { getPlatformConfig } from "../utils/platformConfig.js";
 import SchedulerRunTracker from "../utils/schedulerRunTracker.js";
 import logger from "../utils/logger.js";
+import { withDistributedLock } from "../utils/distributedLock.js";
+import { getSchedulerLockConfig } from "../utils/schedulerLockConfig.js";
 
 const JOB_NAME = "SubscriptionRenewalEngine";
 
@@ -48,7 +50,8 @@ class SubscriptionRenewalEngineScheduler {
     if (expr !== config.renewalEngineCron) logger.error(`Invalid PLATFORM_RENEWAL_ENGINE_CRON: "${config.renewalEngineCron}". Falling back to "15 0 * * *".`);
 
     renewalJob = cronLib.schedule(expr, () => {
-      runRenewalSweep().catch((err) => logger.error("Cron automatic renewal sweep error", { error: err.message }));
+      withDistributedLock("scheduler:SubscriptionRenewalEngineScheduler", getSchedulerLockConfig().defaultLockTtlMs, runRenewalSweep)
+        .catch((err) => logger.error("Cron automatic renewal sweep error", { error: err.message }));
     }, { scheduled: true, timezone: process.env.TZ || undefined });
 
     logger.info(`SubscriptionRenewalEngineScheduler started — schedule: "${expr}".`);

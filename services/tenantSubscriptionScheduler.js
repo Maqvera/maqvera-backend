@@ -2,6 +2,8 @@ import TenantSubscriptionService from "./TenantSubscriptionService.js";
 import { getPlatformConfig } from "../utils/platformConfig.js";
 import SchedulerRunTracker from "../utils/schedulerRunTracker.js";
 import logger from "../utils/logger.js";
+import { withDistributedLock } from "../utils/distributedLock.js";
+import { getSchedulerLockConfig } from "../utils/schedulerLockConfig.js";
 
 const JOB_NAME = "SubscriptionScheduler";
 
@@ -51,7 +53,8 @@ class TenantSubscriptionScheduler {
     if (expr !== config.subscriptionLifecycleCron) logger.error(`Invalid PLATFORM_SUBSCRIPTION_LIFECYCLE_CRON: "${config.subscriptionLifecycleCron}". Falling back to "5 0 * * *".`);
 
     lifecycleJob = cronLib.schedule(expr, () => {
-      runLifecycleSweep().catch((err) => logger.error("Cron tenant subscription lifecycle sweep error", { error: err.message }));
+      withDistributedLock("scheduler:TenantSubscriptionScheduler", getSchedulerLockConfig().defaultLockTtlMs, runLifecycleSweep)
+        .catch((err) => logger.error("Cron tenant subscription lifecycle sweep error", { error: err.message }));
     }, { scheduled: true, timezone: process.env.TZ || undefined });
 
     logger.info(`TenantSubscriptionScheduler started — schedule: "${expr}".`);
