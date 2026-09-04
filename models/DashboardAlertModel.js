@@ -9,6 +9,13 @@ import mongoose from "mongoose";
 // branchId.
 const DashboardAlertSchema = new mongoose.Schema({
   tenantId: { type: String, required: true, index: true },
+  // Reporting Platform Part 4 fix — first-class module discriminator
+  // (config-driven, dashboardModules). Defaults to "Finance" since this
+  // model has only ever been written by KPIEngine.refreshFinanceSummary
+  // to date; the default keeps that call site honest without requiring
+  // every existing caller to change, while new Travel/Visa alert-raising
+  // (not added by this change) can pass its own module explicitly.
+  module: { type: String, required: true, index: true, default: "Finance" },
   // Config-driven (dashboardAlertTypes) — LowCash, HighExpenses,
   // LargePayment, OverdueReceivable, OverduePayable, BudgetExceeded,
   // NegativeCashFlow, TaxDue, Custom.
@@ -31,8 +38,8 @@ const DashboardAlertSchema = new mongoose.Schema({
   triggeredAt: { type: Date, default: Date.now }
 }, { timestamps: true });
 
-DashboardAlertSchema.index({ tenantId: 1, status: 1, triggeredAt: -1 });
-DashboardAlertSchema.index({ tenantId: 1, alertType: 1, status: 1 });
+DashboardAlertSchema.index({ tenantId: 1, module: 1, status: 1, triggeredAt: -1 });
+DashboardAlertSchema.index({ tenantId: 1, module: 1, alertType: 1, status: 1 });
 
 DashboardAlertSchema.set("toJSON", {
   transform: (_, ret) => {

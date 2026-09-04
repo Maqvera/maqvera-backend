@@ -10,6 +10,7 @@ import { storeDocumentPdf } from "../utils/documentPdfStorage.js";
 import { getDeliveryAdapter } from "./delivery/index.js";
 import { publishEvent } from "../utils/eventBus.js";
 import { getFinanceConfig } from "../utils/financeConfig.js";
+import { resolveTenantBranding } from "../utils/tenantBranding.js";
 
 // ---------------------------------------------------------------------------
 // Pure helpers — no DB access, unit-testable directly (see
@@ -117,10 +118,11 @@ class ReceiptService {
     const qrPngBuffer = await ReceiptQrService.generateQrPngBuffer(verificationUrl);
 
     const allocationsSnapshot = (payment.allocations || []).map((a) => ({ targetType: a.targetType, targetId: a.targetId, amount: a.amount }));
+    const company = await resolveTenantBranding(tenantId);
 
     const pdfBuffer = await ReceiptPdfService.generatePdfBuffer({
       receiptNumber, template, issueDate: new Date(), amount: payment.amount, currency: payment.currency,
-      paymentNumber: payment.paymentNumber, partyName, allocations: allocationsSnapshot, qrPngBuffer
+      paymentNumber: payment.paymentNumber, partyName, allocations: allocationsSnapshot, qrPngBuffer, company
     });
     const storedPdf = await storeDocumentPdf({ tenantId, folder: "receipts", filename: `${receiptNumber}.pdf`, buffer: pdfBuffer });
 
@@ -234,9 +236,10 @@ class ReceiptService {
     const verificationUrl = ReceiptQrService.buildVerificationUrl(config.receiptVerificationBaseUrl, token);
     const qrPngBuffer = await ReceiptQrService.generateQrPngBuffer(verificationUrl);
 
+    const company = await resolveTenantBranding(tenantId);
     const pdfBuffer = await ReceiptPdfService.generatePdfBuffer({
       receiptNumber, template: original.template, issueDate: new Date(), amount: original.amount, currency: original.currency,
-      paymentNumber: original.paymentNumber, partyName, allocations: original.allocationsSnapshot, qrPngBuffer
+      paymentNumber: original.paymentNumber, partyName, allocations: original.allocationsSnapshot, qrPngBuffer, company
     });
     const storedPdf = await storeDocumentPdf({ tenantId, folder: "receipts", filename: `${receiptNumber}.pdf`, buffer: pdfBuffer });
 

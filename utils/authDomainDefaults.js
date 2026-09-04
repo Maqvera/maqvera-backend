@@ -29,6 +29,12 @@ export const DEFAULT_PERMISSIONS = [
   { key: "bookings.create", description: "Create booking records (plural alias)" },
   { key: "bookings.update", description: "Update booking records (plural alias)" },
   { key: "bookings.delete", description: "Delete booking records (plural alias)" },
+  // Per-Tenant Payment Gateway Integration — the agency's OWN connected
+  // Stripe (later HyperPay/PayPal) account, distinct from `finance.payment.*`
+  // below (the Enterprise Payment Engine's own AR/AP payment recording).
+  { key: "payments.connect", description: "Connect the tenant's own payment gateway account (e.g. Stripe Connect OAuth)" },
+  { key: "payments.disconnect", description: "Disconnect the tenant's own connected payment gateway account" },
+  { key: "payments.view", description: "View the tenant's own connected payment gateway accounts (masked account id)" },
   { key: "travel.read", description: "Read travel plan records" },
   { key: "travel.write", description: "Create/update travel plan records" },
   { key: "travel_plans.read", description: "Read travel plan records (alias)" },
@@ -135,6 +141,13 @@ export const DEFAULT_PERMISSIONS = [
   { key: "finance.pricing.read", description: "Read pricing rules, price lists, coupons, and calculate prices" },
   { key: "finance.pricing.approve", description: "Approve a pricing rule" },
   { key: "finance.pricing.manage", description: "Create/archive pricing rules, manage price lists and price list entries, and create/revoke coupons" },
+  { key: "package.pricing.read", description: "Read package pricing master/rate data (room types, hotel/transport/flight/visa/service rates, markup rules) and packages" },
+  { key: "package.pricing.manage", description: "Create package pricing master/rate data and create packages" },
+  { key: "package.pricing.calculate", description: "Run the room-wise price calculation for a package" },
+  { key: "package.pricing.finalize", description: "Lock a calculated package and snapshot the rates that produced its price" },
+  { key: "package.pricing.cost.read", description: "See supplier cost, markup, and commission breakdown on a package's price matrix (PRD profit-visibility rule)" },
+  { key: "package.pricing.quotation.manage", description: "Generate and manage quotations from a calculated package" },
+  { key: "package.pricing.marketing.manage", description: "Generate flyers and send WhatsApp package messages from a calculated package" },
   { key: "finance.approvalworkflow.read", description: "Read approval workflow definitions, approval requests, and delegations" },
   { key: "finance.approvalworkflow.approve", description: "Approve an approval workflow definition" },
   { key: "finance.approvalworkflow.manage", description: "Create/archive workflow definitions, start/cancel approval requests, and manage delegations" },
@@ -189,9 +202,124 @@ export const DEFAULT_PERMISSIONS = [
   { key: "visa.read", description: "Read visa records" },
   { key: "visa.dashboard.management", description: "View management-only visa dashboards (executive, finance, compliance, AI insights)" },
   { key: "reporting.read", description: "Read reporting data" },
+  // Reporting Platform Part 8 fix — report template registry CRUD
+  // (ReportTemplateModel). Read is folded into the existing
+  // "reporting.read" key rather than a new one; only the write/lifecycle
+  // actions (create/edit/publish/archive a template) get their own key,
+  // matching the read-vs-manage split every other module in this catalog uses.
+  { key: "reporting.templates.manage", description: "Create, edit, publish, and archive report templates" },
+  // Reporting Platform Part 5 fix — KPI definition registry CRUD
+  // (KPIDefinitionModel). Same read-vs-manage split as
+  // reporting.templates.manage above.
+  { key: "reporting.kpis.manage", description: "Register and deprecate KPI definitions" },
+  // Reporting Platform Part 2 fix — report catalog registry CRUD
+  // (ReportCatalogModel). Same read-vs-manage split as the two entries above.
+  { key: "reporting.catalog.manage", description: "Register report catalog entries and transition their lifecycle state" },
   { key: "roles.read", description: "View the company's role catalog and permission assignments" },
   { key: "roles.manage", description: "Create, edit, and delete roles and their permission assignments" },
   { key: "admin", description: "Full administrative override across all modules" },
+  // Enterprise Subscription Platform. `platform.subscription.*`/
+  // `platform.billing.*` are this tenant's own admin managing their own
+  // subscription/billing account — same tenant-scoped RBAC as every
+  // other module. `platform.plan.manage` (Plan catalog CRUD) and the
+  // cross-tenant suspend/reactivate override endpoints deliberately reuse
+  // the existing tenant-scoped "admin" permission rather than a separate
+  // platform-operator identity — no such actor (distinct from any
+  // tenant's own admin) exists anywhere in this codebase's auth model,
+  // and inventing one wasn't part of what was asked; a real, separate
+  // "Platform Operator" authentication surface is legitimate future
+  // infrastructure, not guessed at here.
+  { key: "platform.subscription.read", description: "Read the tenant's own subscription, plan, and billing history" },
+  { key: "platform.subscription.manage", description: "Change plan, cancel, or manage the tenant's own subscription" },
+  { key: "platform.billing.read", description: "Read the tenant's own billing account and subscription invoices" },
+  { key: "platform.billing.manage", description: "Create/update the tenant's own billing account and record/attempt subscription payments" },
+  { key: "platform.plan.read", description: "Read the platform's sellable plan catalog" },
+  // Enterprise Merchant & Billing Platform (Improvement 3). Merchant
+  // create/verify/suspend/reactivate/close and cross-tenant billing
+  // consolidation reuse the existing "admin" permission — same
+  // no-separate-platform-operator-identity reasoning already recorded in
+  // Improvement 1/File 0.
+  { key: "platform.merchant.read", description: "Read merchant accounts, wallets, and consolidated billing history" },
+  { key: "platform.merchant.manage", description: "Create/verify merchants, manage payment methods, wallets, and refunds" },
+  // Enterprise Organisation Structure Platform (Improvement 4). Tenant-scoped
+  // like every other module permission — the Organisation hierarchy below
+  // Tenant (Organisation -> Legal Entity -> Business Unit -> Company ->
+  // Branch -> Department -> Team) is business-owned data, not a second
+  // access-control dimension (see utils/accessScope.js and
+  // utils/organisationConfig.js's own doc comment on why Branch here is
+  // descriptive-only).
+  { key: "organisation.read", description: "Read organisation records" },
+  { key: "organisation.manage", description: "Create and update organisation records" },
+  { key: "legalentity.read", description: "Read legal entity records" },
+  { key: "legalentity.manage", description: "Create, update, and activate legal entity records" },
+  { key: "businessunit.read", description: "Read business unit records" },
+  { key: "businessunit.manage", description: "Create and update business unit records" },
+  { key: "company.read", description: "Read company records" },
+  { key: "company.manage", description: "Create and update company records" },
+  { key: "branch.read", description: "Read branch records" },
+  { key: "branch.manage", description: "Create, update, and close branch records" },
+  { key: "department.read", description: "Read department records" },
+  { key: "department.manage", description: "Create and update department records" },
+  { key: "team.read", description: "Read team records" },
+  { key: "team.manage", description: "Create and update team records" },
+  // Enterprise Identity & Global Resource ID Platform (Improvement 5).
+  // numbering.generate is deliberately separate from numbering.manage —
+  // any authorized user creating an Invoice/Payment/etc. should be able to
+  // trigger number generation without also holding scheme-admin rights.
+  { key: "numbering.read", description: "Read numbering schemes and generated-number history" },
+  { key: "numbering.manage", description: "Create/update numbering schemes and reset sequence counters" },
+  { key: "numbering.generate", description: "Generate, register, and roll back document numbers" },
+  // Enterprise Resilience & Reliability Standard (Improvement 6).
+  { key: "resilience.read", description: "Read Dead Letter Queue records and Circuit Breaker status" },
+  { key: "resilience.manage", description: "Mark Dead Letter Queue records as a permanent failure" },
+  // Enterprise Event Versioning Standard (Improvement 7).
+  { key: "eventregistry.read", description: "Read the central Event Registry" },
+  { key: "eventregistry.manage", description: "Register events and manage their deprecation/retirement lifecycle" },
+  // Enterprise API Version Strategy Standard (Improvement 8).
+  { key: "apiversion.read", description: "Read the central API Version Registry" },
+  { key: "apiversion.manage", description: "Register API versions and manage their deprecation/sunset/retirement lifecycle" },
+  // Enterprise API Rate Limiting & Throttling Standard (Improvement 13).
+  { key: "ratelimit.read", description: "Read rate limit rules, violations, and top-consumer monitoring data" },
+  { key: "ratelimit.manage", description: "Create/update rate limit rules" },
+  // Booking-module PRD Part C — Agency/Tenant onboarding profile & document
+  // branding (Issue 13/14).
+  { key: "tenantprofile.read", description: "Read the tenant's company profile (branding, VAT/registration, default bank account, document settings)" },
+  { key: "tenantprofile.manage", description: "Create/update the tenant's company profile, including logo upload" },
+  // Owner Dashboard — single-screen agency-owner overview (bookings,
+  // revenue/profit, pending visas, upcoming departures), distinct from the
+  // ops-role-specific Travel/Visa/Finance dashboards above.
+  { key: "dashboard.overview.read", description: "Read the owner overview dashboard (bookings, revenue/profit, customers, pending visas, upcoming departures)" },
+  // Lead & Marketing Management (PRD "CRM Feature Map by Phase" Phase 2
+  // module 17).
+  { key: "lead.read", description: "Read lead records and the lead pipeline" },
+  { key: "lead.create", description: "Create lead records" },
+  { key: "lead.manage", description: "Update, reassign, and convert lead records (includes read/create)" },
+  // Developer Portal (PRD "CRM Feature Map by Phase" Phase 4 module 33).
+  { key: "apikey.manage", description: "Issue, list, and revoke this tenant's API keys" },
+  // B2B Agent Portal (PRD "CRM Feature Map by Phase" Phase 2 module 14).
+  { key: "agent.read", description: "Read this tenant's Agent records" },
+  { key: "agent.manage", description: "Create, suspend, and manage this tenant's Agent records (includes read)" },
+  // Embassy/consulate contact directory (PRD "CRM Feature Map by Phase"
+  // Phase 4 module 40 — Emergency Support).
+  { key: "reference.read", description: "Read this tenant's reference/master data (e.g. the embassy contact directory)" },
+  { key: "reference.manage", description: "Create and update this tenant's reference/master data (e.g. the embassy contact directory; includes read)" },
+  // Review & Rating System (PRD "CRM Feature Map by Phase" Phase 4 module 40).
+  { key: "review.read", description: "Read customer reviews, including unmoderated ones" },
+  { key: "review.manage", description: "Record and moderate customer reviews (includes read)" },
+  // Marketing Campaign System (PRD "CRM Feature Map by Phase" Phase 2 module 20).
+  { key: "campaign.read", description: "Read marketing campaigns and their analytics" },
+  { key: "campaign.create", description: "Create marketing campaigns" },
+  { key: "campaign.manage", description: "Create, send, and manage marketing campaigns (includes read/create)" },
+  // One-Click Automation Engine (PRD "CRM Feature Map by Phase" Phase 3
+  // module 22) — deliberately its own key, distinct from bookings.update:
+  // this single call can create a visa case, generate an invoice, and send
+  // a WhatsApp message, so it's gated separately from ordinary booking edits.
+  { key: "booking.automation.run", description: "Run the one-click automation engine on a booking (visa case, invoice, WhatsApp confirmation)" },
+  // Supplier Self-Service Portal (PRD "CRM Feature Map by Phase" Phase 3
+  // module 24) — issuing/revoking a supplier's own standing login
+  // credential is sensitive enough to gate separately from ordinary
+  // finance.vendor.*/finance.vendorpayment.* permissions.
+  { key: "finance.vendorportal.manage", description: "Issue and revoke a supplier's own self-service portal login token" },
 ];
 
 export const ADMINISTRATOR_ROLE_NAME = "Administrator";
@@ -220,6 +348,39 @@ export const ensureAdministratorRole = async (tenantId) => {
   return RoleModel.findOneAndUpdate(
     { tenantId, name: ADMINISTRATOR_ROLE_NAME },
     { tenantId, name: ADMINISTRATOR_ROLE_NAME, permissions: administratorPermissions, description: "Full administrative access to every module.", isSystemRole: true, status: "active" },
+    { upsert: true, new: true }
+  );
+};
+
+/**
+ * Generic counterpart to `ensureAdministratorRole` above, for an
+ * ARBITRARY role name (e.g. `controllers/UserController.js`'s own
+ * create-user/invite flows, which accept a free-text `role` field) —
+ * ensures a `RoleModel` document exists for this tenant + name, creating
+ * a minimal one if not. Deliberately NEVER grants the full Administrator
+ * permission set for an arbitrary/unrecognized name (that would be a real
+ * privilege-escalation bug: any caller supplying an arbitrary role string
+ * would otherwise get full admin rights) — routes to `ensureAdministratorRole`
+ * only when the name genuinely IS "Administrator" (case-insensitive),
+ * otherwise creates a real, safe, empty-permission starting point a
+ * tenant admin must deliberately grant permissions to via
+ * `RoleController.js`. `$setOnInsert` (not a full replace, unlike
+ * `ensureAdministratorRole`'s own re-sync-to-defaults behavior) — a
+ * second caller inviting another user under the same already-customized
+ * role name must never silently wipe that role back to zero permissions.
+ */
+export const ensureTenantRole = async (tenantId, roleName) => {
+  if (!tenantId) throw new Error("tenantId is required to provision a role.");
+  const trimmedName = (roleName || "").trim();
+  if (!trimmedName) throw new Error("roleName is required to provision a role.");
+
+  if (trimmedName.toLowerCase() === ADMINISTRATOR_ROLE_NAME.toLowerCase()) {
+    return ensureAdministratorRole(tenantId);
+  }
+
+  return RoleModel.findOneAndUpdate(
+    { tenantId, name: trimmedName },
+    { $setOnInsert: { tenantId, name: trimmedName, permissions: [], description: `Auto-provisioned role: ${trimmedName}.`, isSystemRole: false, status: "active" } },
     { upsert: true, new: true }
   );
 };

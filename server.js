@@ -1,4 +1,5 @@
 import express from "express";
+import http from "http";
 import mongoose from "mongoose";
 import dotenv from "dotenv";
 import cors from "cors";
@@ -12,6 +13,7 @@ import { requestLogger } from "./utils/logger.js";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler.js";
 import requestContext from "./middleware/requestContext.js";
 import swaggerUi from "swagger-ui-express";
+import { dump as dumpYaml } from "js-yaml";
 import { swaggerSpec } from "./config/swaggerConfig.js";
 
 import route from "./routes/Authroute.js";
@@ -23,6 +25,18 @@ import travelPlanRoute from "./routes/TravelPlanRoutes.js";
 import incidentRoute from "./routes/IncidentRoutes.js";
 import notesTimelineRoute from "./routes/NotesTimelineRoutes.js";
 import dashboardRoute from "./routes/TravelDashboardRoutes.js";
+import ownerDashboardRoute from "./routes/OwnerDashboardRoutes.js";
+import leadRoute from "./routes/LeadRoutes.js";
+import apiKeyRoute from "./routes/ApiKeyRoutes.js";
+import agentPortalRoute from "./routes/AgentPortalRoutes.js";
+import employeeAttendanceRoute from "./routes/EmployeeAttendanceRoutes.js";
+import embassyDirectoryRoute from "./routes/EmbassyDirectoryRoutes.js";
+import reviewRoute from "./routes/ReviewRoutes.js";
+import publicBookingRoute from "./routes/PublicBookingRoutes.js";
+import marketingCampaignRoute from "./routes/MarketingCampaignRoutes.js";
+import supplierPortalRoute from "./routes/SupplierPortalRoutes.js";
+import publicLandingPageRoute from "./routes/PublicLandingPageRoutes.js";
+import AgentCommissionService from "./services/AgentCommissionService.js";
 import enterpriseSearchRoute from "./routes/EnterpriseSearchRoutes.js";
 import flightSearchRoute from "./routes/FlightSearchRoutes.js";
 import flightBookingRoute from "./routes/FlightBookingRoutes.js";
@@ -42,53 +56,102 @@ import visaRoute from "./routes/VisaRoutes.js";
 import visaDashboardRoute from "./routes/VisaDashboardRoutes.js";
 import referenceDataRoute from "./routes/ReferenceDataRoutes.js";
 import financeRoute from "./routes/FinanceRoutes.js";
+import packageRoute from "./routes/PackageRoutes.js";
+import subscriptionPlatformRoute from "./routes/SubscriptionPlatformRoutes.js";
+import subscriptionResourceRoute from "./routes/SubscriptionResourceRoutes.js";
+import merchantPlatformRoute from "./routes/MerchantPlatformRoutes.js";
+import organisationRoute from "./routes/OrganisationRoutes.js";
+import numberingRoute from "./routes/NumberingRoutes.js";
+import tenantProfileRoute from "./routes/TenantProfileRoutes.js";
+import resilienceRoute from "./routes/ResilienceRoutes.js";
+import eventRegistryRoute from "./routes/EventRegistryRoutes.js";
+import apiVersionRegistryRoute from "./routes/ApiVersionRegistryRoutes.js";
+import rateLimitRoute from "./routes/RateLimitRoutes.js";
 import communicationRoute from "./routes/CommunicationRoutes.js";
+import inAppNotificationRoute from "./routes/InAppNotificationRoutes.js";
+import pushRoute from "./routes/PushRoutes.js";
+import reportTemplateRoute from "./routes/ReportTemplateRoutes.js";
+import kpiDefinitionRoute from "./routes/KPIDefinitionRoutes.js";
+import reportCatalogRoute from "./routes/ReportCatalogRoutes.js";
+import reportUsageRoute from "./routes/ReportUsageRoutes.js";
+import paymentGatewayRoute from "./routes/PaymentGatewayRoutes.js";
+import paymentWebhookRoute from "./routes/PaymentWebhookRoutes.js";
 import DBconfig from "./config/DbConfig.js";
 import TravelOrchestrationEngine from "./services/TravelOrchestrationEngine.js";
 import VisaTimelineEventBus from "./services/VisaTimelineEventBus.js";
 import CustomerTimelineEventBus from "./services/CustomerTimelineEventBus.js";
+import PaymentNotificationListener from "./services/paymentNotificationListener.js";
 import CustomerStatisticsEngine from "./services/CustomerStatisticsEngine.js";
 import VisaAnalyticsEngine from "./services/VisaAnalyticsEngine.js";
 import CacheManager from "./utils/cacheManager.js";
 import AnalyticsScheduler from "./services/analyticsScheduler.js";
+import CommunicationAnalyticsEngine from "./services/CommunicationAnalyticsEngine.js";
+import CommunicationAnalyticsScheduler from "./services/communicationAnalyticsScheduler.js";
+import SmsCampaignRecoveryScheduler from "./services/smsCampaignRecoveryScheduler.js";
+import CommunicationRetryScheduler from "./services/communicationRetryScheduler.js";
 import DocumentExpiryScheduler from "./services/documentExpiryScheduler.js";
 import SearchEngineService from "./services/SearchEngineService.js";
+import ReportUsageAnalyticsService from "./services/ReportUsageAnalyticsService.js";
 import EmbassyProcessingService from "./services/EmbassyProcessingService.js";
 import AppointmentReminderScheduler from "./services/appointmentReminderScheduler.js";
+import LeadFollowUpReminderScheduler from "./services/leadFollowUpReminderScheduler.js";
 import IncidentSlaScheduler from "./services/incidentSlaScheduler.js";
 import ReferenceDataScheduler from "./services/referenceDataScheduler.js";
 import FlightScheduleSyncScheduler from "./services/flightScheduleSyncScheduler.js";
 import AIWorkflowRecoveryScheduler from "./services/aiWorkflowRecoveryScheduler.js";
 import AIContextExpiryScheduler from "./services/aiContextExpiryScheduler.js";
 import AIApprovalTimeoutScheduler from "./services/aiApprovalTimeoutScheduler.js";
+import AIConversationRetentionScheduler from "./services/aiConversationRetentionScheduler.js";
 import AIObservabilityAlertScheduler from "./services/aiObservabilityAlertScheduler.js";
 import ReceivableOverdueScheduler from "./services/receivableOverdueScheduler.js";
 import AccountsReceivableService from "./services/AccountsReceivableService.js";
 import InvoiceService from "./services/InvoiceService.js";
+import BookingFinanceLinkService from "./services/BookingFinanceLinkService.js";
+import VisaFinanceLinkService from "./services/VisaFinanceLinkService.js";
+import VisaCommunicationListener from "./services/VisaCommunicationListener.js";
+import { closeBrowser as closeHtmlPdfBrowser } from "./services/HtmlPdfRenderer.js";
+import { attachVoiceBookingWebSocketServer } from "./services/BookingVoiceSocketServer.js";
+import { attachNotificationSocketServer } from "./services/NotificationSocketServer.js";
+import ApprovalNotificationListener from "./services/ApprovalNotificationListener.js";
 import RefundService from "./services/RefundService.js";
 import BankAccountService from "./services/BankAccountService.js";
 import CustomerCollectionService from "./services/CustomerCollectionService.js";
 import WebhookService from "./services/WebhookService.js";
+import NotificationDeliveryService from "./services/NotificationDeliveryService.js";
+import DocumentVerificationService from "./services/DocumentVerificationService.js";
 import CustomerCollectionScheduler from "./services/customerCollectionScheduler.js";
 import SubscriptionBillingScheduler from "./services/subscriptionBillingScheduler.js";
 import CurrencyRevaluationScheduler from "./services/currencyRevaluationScheduler.js";
+import TenantSubscriptionScheduler from "./services/tenantSubscriptionScheduler.js";
+import SubscriptionSuspensionEnforcementScheduler from "./services/subscriptionSuspensionEnforcementScheduler.js";
+import SubscriptionRenewalEngineScheduler from "./services/subscriptionRenewalEngineScheduler.js";
+import PaymentRetryEngineScheduler from "./services/paymentRetryEngineScheduler.js";
 import TaxRuleExpiryScheduler from "./services/taxRuleExpiryScheduler.js";
 import PricingRuleExpiryScheduler from "./services/pricingRuleExpiryScheduler.js";
+import PackageRateExpiryScheduler from "./services/packageRateExpiryScheduler.js";
 import ApprovalEscalationScheduler from "./services/approvalEscalationScheduler.js";
 import FinancialReportScheduler from "./services/financialReportScheduler.js";
 import AuditRetentionScheduler from "./services/auditRetentionScheduler.js";
+import WebhookRetryScheduler from "./services/webhookRetryScheduler.js";
 import RecurringJournalScheduler from "./services/recurringJournalScheduler.js";
+import MuharramPeriodScheduler from "./services/muharramPeriodScheduler.js";
 
 validateEnv();
 
 const bootstrapEnterpriseServices = async () => {
   await CacheManager.init();
   VisaAnalyticsEngine.init();
+  CommunicationAnalyticsEngine.init();
   SearchEngineService.init();
+  ReportUsageAnalyticsService.init();
   EmbassyProcessingService.init();
   await AnalyticsScheduler.init();
+  await CommunicationAnalyticsScheduler.init();
+  await SmsCampaignRecoveryScheduler.init();
+  await CommunicationRetryScheduler.init();
   await DocumentExpiryScheduler.init();
   await AppointmentReminderScheduler.init();
+  await LeadFollowUpReminderScheduler.init();
   await IncidentSlaScheduler.init();
   await ReferenceDataScheduler.init();
   await FlightScheduleSyncScheduler.init();
@@ -98,14 +161,22 @@ const bootstrapEnterpriseServices = async () => {
   await CurrencyRevaluationScheduler.init();
   await TaxRuleExpiryScheduler.init();
   await PricingRuleExpiryScheduler.init();
+  await PackageRateExpiryScheduler.init();
   await ApprovalEscalationScheduler.init();
   await FinancialReportScheduler.init();
   await AuditRetentionScheduler.init();
+  await WebhookRetryScheduler.init();
   await RecurringJournalScheduler.init();
   await AIWorkflowRecoveryScheduler.init();
   await AIContextExpiryScheduler.init();
   await AIApprovalTimeoutScheduler.init();
+  await AIConversationRetentionScheduler.init();
   await AIObservabilityAlertScheduler.init();
+  await TenantSubscriptionScheduler.init();
+  await SubscriptionSuspensionEnforcementScheduler.init();
+  await SubscriptionRenewalEngineScheduler.init();
+  await PaymentRetryEngineScheduler.init();
+  await MuharramPeriodScheduler.init();
 };
 
 const app = express();
@@ -113,6 +184,15 @@ const app = express();
 // Security & parsing (Disable CSP for Swagger UI compatibility)
 app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" }, contentSecurityPolicy: false }));
 app.use(compression());
+
+// Per-Tenant Payment Gateway Integration — Stripe webhook signature
+// verification needs the RAW, unparsed request body. Must be mounted
+// BEFORE the global `express.json()` below (or the raw body is gone by
+// the time the webhook route sees it, and signature verification always
+// fails) — `express.raw()` is scoped to exactly this one path, so every
+// other route's JSON body parsing is completely unaffected.
+app.use("/api/v1/webhooks", express.raw({ type: "application/json" }), paymentWebhookRoute);
+
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.use(cors({ origin: process.env.FRONTEND_URL || "http://localhost:5173", credentials: true }));
@@ -123,6 +203,14 @@ app.use(requestLogger);
 
 // Static files for local uploads
 app.use("/uploads", express.static("uploads"));
+// Per-Tenant Domain-Masked Landing Page follow-up audit, Gap 2 — shared,
+// tenant-agnostic static media (hero/gallery/hotel-card images or video)
+// for templates/landingPage/index.html. Empty today (no real licensed
+// assets sourced yet — the template currently falls back to a
+// hand-authored inline SVG pattern instead); this mount exists so dropping
+// real files into templates/landingPage/assets/ and referencing them as
+// <img src="/landing-assets/...">  needs no further server.js change.
+app.use("/landing-assets", express.static("templates/landingPage/assets"));
 
 // Health Check — real, not a fixed 200: checks the two actual runtime
 // dependencies every request downstream relies on.
@@ -143,16 +231,39 @@ app.get("/health", async (req, res) => {
 // Swagger OpenAPI Documentation
 app.use("/api-docs", swaggerUi.serve, swaggerUi.setup(swaggerSpec, { explorer: true }));
 
+// Enterprise OpenAPI / Swagger / SDK Generation Standard (Enterprise
+// Architecture Hardening Phase, Improvement 15). "Every API should expose
+// /openapi.json or /openapi.yaml. This becomes the single source of
+// truth." Both serialize the SAME `swaggerSpec` object `/api-docs`
+// already renders — one real source, two formats, never a second,
+// hand-maintained copy. Public/unauthenticated, same as `/api-docs`
+// itself — the machine-readable contract is offered at the same access
+// level as its human-readable rendering.
+app.get("/openapi.json", (req, res) => res.status(200).json(swaggerSpec));
+app.get("/openapi.yaml", (req, res) => {
+  res.status(200).type("text/yaml").send(dumpYaml(swaggerSpec));
+});
+
 // Routes
 app.use("/api/v1/auth", route);
 app.use("/api/auth", route);
 app.use("/api/v1/customers", customerRoute);
+app.use("/api/v1/leads", leadRoute);
+app.use("/api/v1/api-keys", apiKeyRoute);
+app.use("/api/v1/agents", agentPortalRoute);
+app.use("/api/v1/attendance", employeeAttendanceRoute);
+app.use("/api/v1/embassy-directory", embassyDirectoryRoute);
+app.use("/api/v1/reviews", reviewRoute);
+app.use("/api/v1/public", publicBookingRoute);
+app.use("/api/v1/campaigns", marketingCampaignRoute);
+app.use("/api/v1/supplier-portal", supplierPortalRoute);
 app.use("/api/v1/users", userRoute);
 app.use("/api/v1/roles", roleRoute);
 app.use("/api/v1/bookings", bookingRoute);
 app.use("/api/v1/travel-plans", travelPlanRoute);
 app.use("/api/v1/incidents", incidentRoute);
 app.use("/api/v1/travel/dashboard", dashboardRoute);
+app.use("/api/v1/dashboard/overview", ownerDashboardRoute);
 app.use("/api/v1/dashboard", visaDashboardRoute);
 app.use("/api/v1/search", enterpriseSearchRoute);
 app.use("/api/v1/flight-search", flightSearchRoute);
@@ -173,9 +284,35 @@ app.use("/api/v1/reference", referenceDataRoute);
 app.use("/api/v1", notesTimelineRoute);
 app.use("/api/v1", visaRoute);
 app.use("/api/v1", financeRoute);
+app.use("/api/v1/packages", packageRoute);
+app.use("/api/v1/platform", subscriptionPlatformRoute);
+app.use("/api/v1/subscriptions", subscriptionResourceRoute);
+app.use("/api/v1", merchantPlatformRoute);
+app.use("/api/v1", organisationRoute);
+app.use("/api/v1/numbering", numberingRoute);
+app.use("/api/v1/tenant-profile", tenantProfileRoute);
+app.use("/api/v1/resilience", resilienceRoute);
+app.use("/api/v1/event-registry", eventRegistryRoute);
+app.use("/api/v1/api-version-registry", apiVersionRegistryRoute);
+app.use("/api/v1/rate-limits", rateLimitRoute);
 app.use("/api/v1/communication", communicationRoute);
+app.use("/api/v1/notifications", inAppNotificationRoute);
+app.use("/api/v1/push", pushRoute);
+app.use("/api/v1/reporting/templates", reportTemplateRoute);
+app.use("/api/v1/reporting/kpi-definitions", kpiDefinitionRoute);
+app.use("/api/v1/reporting/catalog", reportCatalogRoute);
+app.use("/api/v1/reporting/usage", reportUsageRoute);
 app.use("/api/v1/emails", communicationRoute);
 app.use("/api/v1/sms", communicationRoute);
+app.use("/api/v1/payment-gateways", paymentGatewayRoute);
+// Per-Tenant Domain-Masked Landing Page (PRD v2 §Task D) — mounted at "/"
+// (root), not under /api/v1/*: this is the page a visitor's browser
+// actually lands on at {slug}.maqvera.com, resolved via the Host header
+// (middleware/resolveTenantByHost.js), never a client-supplied path
+// segment. Appended last, directly above the error-handling block, per
+// that PRD's own instruction — every existing route above is registered
+// completely unchanged.
+app.use("/", publicLandingPageRoute);
 
 // Error handling
 app.use(notFoundHandler);
@@ -189,14 +326,35 @@ const startServer = async () => {
     TravelOrchestrationEngine.init();
     VisaTimelineEventBus.init();
     CustomerTimelineEventBus.init();
+    PaymentNotificationListener.init();
     CustomerStatisticsEngine.init();
     AccountsReceivableService.initEventListeners();
     InvoiceService.initEventListeners();
+    BookingFinanceLinkService.initEventListeners();
+    VisaFinanceLinkService.initEventListeners();
+    VisaCommunicationListener.initEventListeners();
     RefundService.initEventListeners();
     BankAccountService.initEventListeners();
     CustomerCollectionService.initEventListeners();
     WebhookService.initEventListeners();
-    app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
+    NotificationDeliveryService.initEventListeners();
+    DocumentVerificationService.initEventListeners();
+    ApprovalNotificationListener.initEventListeners();
+    AgentCommissionService.initEventListeners();
+
+    // Voice-Based Booking Creation PRD B4.4/Step 3 — Express itself cannot
+    // handle a WebSocket upgrade, so the bare `app.listen(PORT)` this
+    // codebase previously had (verified — no existing http.createServer
+    // wrapper before this change) becomes an explicit http.Server that
+    // both Express and the Mode B voice-session WS endpoint attach to.
+    // Every scheduler/event-listener .init() above still runs first,
+    // unchanged in order. In-App Notification Platform (Part 6) reuses the
+    // exact same http.Server for its own WS path, rather than a second
+    // server/port.
+    const httpServer = http.createServer(app);
+    attachVoiceBookingWebSocketServer(httpServer);
+    attachNotificationSocketServer(httpServer);
+    httpServer.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
   } catch (error) {
     console.error("Application bootstrap failed:", error.message);
     process.exitCode = 1;
@@ -204,3 +362,15 @@ const startServer = async () => {
 };
 
 startServer();
+
+// PRD "HTML-Template PDF Architecture Migration" Issue 2b — this codebase
+// had no existing SIGTERM/graceful-shutdown handler to append to (verified
+// by grep across every *.js file before adding this), so this is a new,
+// standalone hook, not an addition to something pre-existing. Releases the
+// shared headless-Chromium process HtmlPdfRenderer.js lazily launches, so a
+// container restart/redeploy doesn't leave an orphaned Chromium process.
+process.on("SIGTERM", async () => {
+  console.log("SIGTERM received — closing shared Puppeteer browser instance.");
+  await closeHtmlPdfBrowser().catch((err) => console.error("Failed to close Puppeteer browser on shutdown:", err.message));
+  process.exit(0);
+});

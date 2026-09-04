@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>{{{sharedCss}}}</style>
+</head>
+<body>
+  <h1 class="doc-title">CUSTOMER ACCOUNT STATEMENT</h1>
+
+  <div class="meta-block">
+    <div>Customer: {{customer.name}}</div>
+    {{#if customer.customerCode}}<div>Customer Code: {{customer.customerCode}}</div>{{/if}}
+    {{#if hasPeriod}}<div>Period: {{#if period.dateFrom}}{{period.dateFrom}}{{else}}Inception{{/if}} to {{#if period.dateTo}}{{period.dateTo}}{{else}}Present{{/if}}</div>{{/if}}
+    <div>Generated: {{formatDate generatedAt}}</div>
+  </div>
+
+  <div class="section-title">Statement Rows</div>
+  <table class="doc-table">
+    <thead><tr><th>Reference</th><th>Description</th><th>Debit</th><th>Credit</th><th>Balance</th><th>Status</th></tr></thead>
+    <tbody>
+      {{#each rows}}
+      <tr>
+        <td>{{this.referenceNumber}}</td>
+        <td>{{this.description}}</td>
+        <td>{{formatNumber this.debit}} {{this.currency}}</td>
+        <td>{{formatNumber this.credit}} {{this.currency}}</td>
+        <td>{{formatNumber this.balance}} {{this.currency}}</td>
+        <td>{{this.status}}{{#if this.originalCurrency}}{{#unless (eq this.originalCurrency this.currency)}} <span class="original-currency">(orig. {{this.originalCurrency}})</span>{{/unless}}{{/if}}</td>
+      </tr>
+      {{/each}}
+    </tbody>
+  </table>
+
+  <div class="totals-block">
+    <div>Total Debit: {{formatNumber totals.totalDebit}} {{currency}}</div>
+    <div>Total Credit: {{formatNumber totals.totalCredit}} {{currency}}</div>
+    <div class="grand-total">Outstanding Balance: {{formatNumber totals.totalBalance}} {{currency}}</div>
+  </div>
+</body>
+</html>

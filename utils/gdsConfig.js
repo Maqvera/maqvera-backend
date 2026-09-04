@@ -273,6 +273,13 @@ export const getFlightSearchValidationConfig = () => ({
 
 export const getGdsConfig = (provider = 'amadeus') => {
   const baseUrl = process.env.AMADEUS_BASE_URL || process.env.GDS_BASE_URL || 'https://test.api.amadeus.com';
+  // These three are per-tenant-deployment config (set explicitly in
+  // .env.example to PKR/KHI/JED for this agency's current primary market),
+  // never a value baked into search/booking logic itself — every real
+  // currency/route calculation in this codebase resolves through
+  // CurrencyService/the caller's own request instead of reading these.
+  // A different-market tenant overrides all three via its own .env; these
+  // are NOT hardcoded business logic, just this deployment's own default.
   const defaultCurrency = process.env.GDS_DEFAULT_CURRENCY || 'PKR';
   const defaultOrigin = process.env.GDS_DEFAULT_ORIGIN || 'KHI';
   const defaultDestination = process.env.GDS_DEFAULT_DESTINATION || 'JED';

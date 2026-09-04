@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>{{{sharedCss}}}</style>
+</head>
+<body>
+  {{> companyHeader}}
+
+  <h1 class="doc-title">CREDIT NOTE</h1>
+  {{#if isDraft}}<div class="draft-banner">DRAFT — NOT YET ISSUED</div>{{/if}}
+
+  <div class="meta-block">
+    <div>Credit Note Number: {{creditNumber}}</div>
+    <div>Against Invoice: {{invoiceNumber}}</div>
+    <div>Date: {{formatDate issuedAt}}</div>
+    <div>Customer: {{customerName}}</div>
+    <div>Reason: {{reason}}</div>
+  </div>
+
+  <div class="section-title">Credited Items</div>
+  <table class="doc-table">
+    <thead><tr><th>Description</th><th>Qty</th><th>Amount</th><th>Tax</th><th>Line Total</th></tr></thead>
+    <tbody>
+      {{#each items}}
+      <tr>
+        <td>{{this.description}}</td>
+        <td>{{this.quantity}}</td>
+        <td>{{formatNumber this.amount}} {{../currency}}</td>
+        <td>{{#if this.taxCode}}{{this.taxCode}}: +{{formatNumber this.taxAdjustment}}{{/if}}</td>
+        <td>{{formatNumber this.lineTotal}} {{../currency}}</td>
+      </tr>
+      {{/each}}
+    </tbody>
+  </table>
+
+  <div class="totals-block">
+    <div>Credit Amount: {{formatNumber creditAmount}} {{currency}}</div>
+    {{#if (gt taxAdjustmentTotal 0)}}<div>Tax Adjustment: +{{formatNumber taxAdjustmentTotal}} {{currency}}</div>{{/if}}
+    <div class="grand-total">Grand Total Credited: {{formatNumber grandTotal}} {{currency}}</div>
+    <div>Disposition: {{#if (eq disposition "Refund")}}Refund Requested{{else}}Customer Credit Wallet{{/if}}</div>
+  </div>
+</body>
+</html>

@@ -3,7 +3,7 @@ import CustomerModel from "../models/CustomerModel.js";
 import AuditLogModel from "../models/AuditLogmodel.js";
 import { publishEvent } from "../utils/eventBus.js";
 import { VISA_CASE_STATUSES, VISA_TYPES, VISA_DOMAIN_EVENTS } from "../utils/visaConstants.js";
-import VisaRequirementService from "./VisaRequirementService.js";
+import VisaRequirementService, { calculateVisaSellingPrice } from "./VisaRequirementService.js";
 import EnterpriseIncidentEngineService from "./EnterpriseIncidentEngineService.js";
 import EnterpriseTimelineEngineService from "./EnterpriseTimelineEngineService.js";
 import VisaTypeModel from "../models/VisaTypeModel.js";
@@ -342,6 +342,7 @@ class VisaService {
         { caseNumber: new RegExp(search, "i") },
         { "travelerSnapshot.fullName": new RegExp(search, "i") },
         { "travelerSnapshot.passportNumber": new RegExp(search, "i") },
+        { "travelerSnapshot.phone": new RegExp(search, "i") },
         { destinationCountry: new RegExp(search, "i") }
       ];
     }
@@ -501,6 +502,64 @@ class VisaService {
     publishEvent("VisaCaseUpdated", { visaCaseId, tenantId, updatedBy: userId });
     for (const [eventName, payload] of domainEventsToPublish) {
       publishEvent(eventName, payload);
+    }
+
+    return visaCase;
+  }
+
+  /**
+   * Price a Visa Case's Application — PRD §8/§12. Nothing else in this
+   * codebase ever sets applications[].feeAmount past its hardcoded 0 at
+   * case-creation time; this is the one place a real cost breakdown +
+   * sellingPrice get computed and persisted for a specific case's
+   * application. sellingPrice is always server-computed (never trusted from
+   * the client) via calculateVisaSellingPrice — the same formula
+   * VisaType-level pricing uses. Publishes VISA_CASE_INVOICED the first time
+   * sellingPrice moves from 0 to a positive amount, for
+   * VisaFinanceLinkService to post the matching Invoice/AccountsReceivable.
+   */
+  static async updateApplicationPricing(visaCaseId, applicationNumber, pricingData, tenantId, userId) {
+    const visaCase = await VisaCaseModel.findOne({ tenantId, _id: visaCaseId, isSoftDeleted: { $ne: true } });
+    if (!visaCase) throw new Error("Visa Case not found.");
+
+    const application = visaCase.applications.find((app) => app.applicationNumber === applicationNumber);
+    if (!application) throw new Error(`Application "${applicationNumber}" not found on this Visa Case.`);
+
+    const { vendorCost, governmentFee, insuranceFee, serviceCharges, otherCharges, discount, currency } = pricingData;
+    const pricingFields = { vendorCost, governmentFee, insuranceFee, serviceCharges, otherCharges, discount };
+    Object.entries(pricingFields).forEach(([key, value]) => {
+      if (value !== undefined) application[key] = Number(value) || 0;
+    });
+    if (currency) application.currency = currency.toUpperCase();
+
+    const previousSellingPrice = application.sellingPrice || 0;
+    const sellingPrice = calculateVisaSellingPrice({
+      vendorCost: application.vendorCost, governmentFee: application.governmentFee, insuranceFee: application.insuranceFee,
+      serviceCharges: application.serviceCharges, otherCharges: application.otherCharges, discount: application.discount
+    });
+    application.sellingPrice = sellingPrice;
+    application.feeAmount = sellingPrice;
+
+    visaCase.timeline.push({
+      event: "ApplicationPriced",
+      description: `Application ${applicationNumber} priced: ${sellingPrice} ${application.currency}.`,
+      performedBy: userId || "system",
+      timestamp: new Date()
+    });
+    visaCase.version = (visaCase.version || 1) + 1;
+    await visaCase.save();
+
+    await AuditLogModel.create({
+      tenantId, userId: userId || "system", action: "UPDATE_VISA_APPLICATION_PRICING", resource: "VisaCase",
+      resourceId: visaCase._id.toString(), details: { applicationNumber, sellingPrice, previousSellingPrice }
+    }).catch((err) => console.error("Audit error:", err));
+
+    publishEvent("VisaApplicationPriced", { visaCaseId, tenantId, applicationNumber, sellingPrice, currency: application.currency });
+    if (previousSellingPrice === 0 && sellingPrice > 0) {
+      publishEvent(VISA_DOMAIN_EVENTS.VISA_CASE_INVOICED, {
+        visaCaseId, tenantId, applicationNumber, sellingPrice, currency: application.currency,
+        travelerId: visaCase.travelerId?.toString() || null
+      });
     }
 
     return visaCase;

@@ -1,4 +1,5 @@
 import BaseGdsAdapter from "./BaseGdsAdapter.js";
+import NumberGeneratorService from "../NumberGeneratorService.js";
 
 /**
  * Enterprise Production Sabre GDS Adapter
@@ -10,7 +11,13 @@ class SabreAdapter extends BaseGdsAdapter {
   }
 
   async searchFlights(params) {
-    const { origin = "KHI", destination = "JED", departureDate = "2027-01-15", adults = 1, cabin = "Economy", currency = "PKR" } = params;
+    // Golden Rule 2 (never hardcode a currency) — the mock sandbox no longer
+    // silently assumes PKR; a caller (GdsIntegrationService, itself called
+    // from a controller that already resolves a real currency) must supply
+    // one. Origin/destination/departureDate/adults/cabin sandbox defaults
+    // are unrelated (not currency/destination-of-record) and left as-is.
+    const { origin = "KHI", destination = "JED", departureDate = "2027-01-15", adults = 1, cabin = "Economy", currency } = params;
+    if (!currency) throw new Error("SabreAdapter.searchFlights: currency is required (no silent default).");
 
     const basePrice = origin === "KHI" && destination === "JED" ? 147000 : 188000;
     const mockOffers = [
@@ -43,7 +50,11 @@ class SabreAdapter extends BaseGdsAdapter {
   }
 
   async searchHotels(params) {
-    const { city = "Makkah", currency = "PKR" } = params;
+    // Golden Rule 1/2 (never hardcode a destination or currency) — the mock
+    // sandbox no longer silently assumes Makkah/PKR; a caller must supply both.
+    const { city, currency } = params;
+    if (!city) throw new Error("SabreAdapter.searchHotels: city is required (no silent default).");
+    if (!currency) throw new Error("SabreAdapter.searchHotels: currency is required (no silent default).");
     return {
       provider: this.providerName,
       hotels: [
@@ -88,6 +99,8 @@ class SabreAdapter extends BaseGdsAdapter {
   }
 
   async createFlightBooking(params) {
+    // Golden Rule 2 — no silent PKR fallback on a real booking record.
+    if (!params.currency) throw new Error("SabreAdapter.createFlightBooking: currency is required (no silent default).");
     const pnr = `SABR-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
     return {
       provider: this.providerName,
@@ -95,7 +108,7 @@ class SabreAdapter extends BaseGdsAdapter {
       providerBookingReference: pnr,
       status: "Reserved",
       totalPrice: params.totalPrice || 147000,
-      currency: params.currency || "PKR",
+      currency: params.currency,
       ticketingDeadline: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
       travelersCount: params.travelers ? params.travelers.length : 1
     };
@@ -111,15 +124,18 @@ class SabreAdapter extends BaseGdsAdapter {
   }
 
   async createHotelBooking(params) {
+    // Golden Rule 1/2 — no silent Makkah/PKR fallback on a real booking record.
+    if (!params.hotelName) throw new Error("SabreAdapter.createHotelBooking: hotelName is required (no silent default).");
+    if (!params.currency) throw new Error("SabreAdapter.createHotelBooking: currency is required (no silent default).");
     const reservationNumber = `SABRE-HB-${Math.floor(10000 + Math.random() * 90000)}`;
     return {
       provider: this.providerName,
       reservationNumber,
       status: "Confirmed",
-      hotelName: params.hotelName || "Hilton Suite Makkah",
+      hotelName: params.hotelName,
       roomType: params.roomType || "Deluxe Suite",
       totalPrice: params.totalPrice || 360000,
-      currency: params.currency || "PKR"
+      currency: params.currency
     };
   }
 
@@ -143,8 +159,15 @@ class SabreAdapter extends BaseGdsAdapter {
     };
   }
 
+  // Collision-free, tenant-scoped voucher numbers — replaces the old
+  // Math.random() generator (booking-module PRD Part B item #7's "second,
+  // independent instance of the same anti-pattern" as the booking
+  // reference number bug). This is the supplier's own GDS confirmation
+  // voucher, distinct from the agency's branded Client Voucher
+  // (BookingVoucherModel/BookingVoucherPdfService).
   async generateHotelVoucher(params) {
-    const voucherNumber = `SABRE-VOUCH-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
+    const generated = await NumberGeneratorService.generateNumber(params.tenantId, { resourceType: "GdsVoucher" }, "system");
+    const voucherNumber = generated.documentNumber;
     return {
       provider: this.providerName,
       voucherNumber,
@@ -241,7 +264,12 @@ class SabreAdapter extends BaseGdsAdapter {
   }
 
   async getFareRules(params) {
-    return { provider: this.providerName, offerId: params.offerId, rules: { cancellationFee: "PKR 15,000" } };
+    // Golden Rule 2 — the cancellation fee currency is the caller's own
+    // currency, never a baked-in "PKR"; the mock amount itself stays
+    // illustrative (15,000 units), since no real Sabre fare-rules call
+    // backs this sandbox method.
+    if (!params.currency) throw new Error("SabreAdapter.getFareRules: currency is required (no silent default).");
+    return { provider: this.providerName, offerId: params.offerId, rules: { cancellationFee: `${params.currency} 15,000` } };
   }
 
   async getBaggageInfo(params) {
@@ -253,7 +281,10 @@ class SabreAdapter extends BaseGdsAdapter {
   }
 
   async getAirlinePricing(params) {
-    return { provider: this.providerName, totalPrice: 147000, currency: "PKR" };
+    // Golden Rule 2 — no silent PKR fallback; the caller must parameterize
+    // the currency it's pricing in.
+    if (!params.currency) throw new Error("SabreAdapter.getAirlinePricing: currency is required (no silent default).");
+    return { provider: this.providerName, totalPrice: 147000, currency: params.currency };
   }
 
   async checkHealth() {

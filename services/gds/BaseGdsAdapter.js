@@ -118,6 +118,69 @@ class BaseGdsAdapter {
   async checkHealth() {
     return { provider: this.providerName, status: "UP", latencyMs: 45 };
   }
+
+  // EXT-004/008/009/011-022 — AmadeusAdapter-only methods GdsIntegrationService
+  // calls generically via `adapter[method](...)` for whichever provider the
+  // caller selects. Without a base default here, selecting a provider (e.g.
+  // Sabre) that hasn't implemented one of these throws a raw, unhandled
+  // `TypeError: adapter.X is not a function` instead of the clean, caught,
+  // mapped-to-4xx Error every other unimplemented method on this class
+  // already produces.
+  async getFlightOfferPricing(rawFlightOffer, options) {
+    throw new Error(`getFlightOfferPricing() not implemented in ${this.providerName}`);
+  }
+
+  async getFlightOrderSeatMap(seatMapParams) {
+    throw new Error(`getFlightOrderSeatMap() not implemented in ${this.providerName}`);
+  }
+
+  async assignSeats(seatAssignmentParams) {
+    throw new Error(`assignSeats() not implemented in ${this.providerName}`);
+  }
+
+  async getFlightStatus(flightStatusParams) {
+    throw new Error(`getFlightStatus() not implemented in ${this.providerName}`);
+  }
+
+  async getFlightSchedules(scheduleParams) {
+    throw new Error(`getFlightSchedules() not implemented in ${this.providerName}`);
+  }
+
+  async searchLocations(locationParams) {
+    throw new Error(`searchLocations() not implemented in ${this.providerName}`);
+  }
+
+  async getAirlinesByCodes(airlineLookupParams) {
+    throw new Error(`getAirlinesByCodes() not implemented in ${this.providerName}`);
+  }
+
+  async getFlightInspiration(inspirationParams) {
+    throw new Error(`getFlightInspiration() not implemented in ${this.providerName}`);
+  }
+
+  async getBrandedFares(brandedFareParams) {
+    throw new Error(`getBrandedFares() not implemented in ${this.providerName}`);
+  }
+
+  async getAncillaryServices(ancillaryParams) {
+    throw new Error(`getAncillaryServices() not implemented in ${this.providerName}`);
+  }
+
+  async searchHotelList(hotelListParams) {
+    throw new Error(`searchHotelList() not implemented in ${this.providerName}`);
+  }
+
+  async getHotelOffers(hotelOfferParams) {
+    throw new Error(`getHotelOffers() not implemented in ${this.providerName}`);
+  }
+
+  async getHotelOfferPricing(hotelPricingParams) {
+    throw new Error(`getHotelOfferPricing() not implemented in ${this.providerName}`);
+  }
+
+  async createHotelBookingReservation(hotelBookingParams) {
+    throw new Error(`createHotelBookingReservation() not implemented in ${this.providerName}`);
+  }
 }
 
 export default BaseGdsAdapter;

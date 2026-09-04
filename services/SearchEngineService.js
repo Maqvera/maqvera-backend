@@ -35,6 +35,16 @@ import ExpenseModel from "../models/ExpenseModel.js";
 import BankAccountModel from "../models/BankAccountModel.js";
 import AuditEventModel from "../models/AuditEventModel.js";
 import FinancialReportModel from "../models/FinancialReportModel.js";
+import ReportScheduleModel from "../models/ReportScheduleModel.js";
+// File 7 — Enterprise Multi-Currency & FX's own "Update Search Index" step.
+import CurrencyModel from "../models/CurrencyModel.js";
+import ExchangeRateModel from "../models/ExchangeRateModel.js";
+import CurrencyRevaluationModel from "../models/CurrencyRevaluationModel.js";
+// Communication Platform (Parts 1-4) — Part 16's own "communication records
+// are not indexed" gap.
+import CommunicationMessageModel from "../models/CommunicationMessageModel.js";
+import CommunicationTemplateModel from "../models/CommunicationTemplateModel.js";
+import CommunicationAuditModel from "../models/CommunicationAuditModel.js";
 import { publishEvent, subscribeEvent } from "../utils/eventBus.js";
 
 const MAX_PAGE_SIZE = Number.parseInt(process.env.ENTERPRISE_SEARCH_MAX_PAGE_SIZE || "100", 10) || 100;
@@ -236,6 +246,60 @@ class SearchEngineService {
       AuditEventStored: (p) => this.indexAuditEventRecord(p),
       ReportGenerated: (p) => this.indexFinancialReport(p),
       ReportArchived: (p) => this.indexFinancialReport(p),
+      // Reporting Platform (Part 14 fix) — report schedules weren't indexed
+      // at all before this (confirmed: zero matches for indexReportSchedule).
+      ReportScheduleCreated: (p) => this.indexReportSchedule(p),
+      ReportScheduleCancelled: (p) => this.indexReportSchedule(p),
+      // File 7 — Enterprise Multi-Currency & FX.
+      CurrencyCreated: (p) => this.indexCurrency(p),
+      CurrencyApproved: (p) => this.indexCurrency(p),
+      CurrencyActivated: (p) => this.indexCurrency(p),
+      CurrencySuspended: (p) => this.indexCurrency(p),
+      CurrencyArchived: (p) => this.indexCurrency(p),
+      CurrencyDeprecated: (p) => this.indexCurrency(p),
+      // File 7 Part 4 — "Search Integration... Exchange Rates... Revaluations."
+      // `ExchangeRateUpdated` now fires with a real `exchangeRateId` from
+      // every creation path — manual (createExchangeRate), approval
+      // (approveExchangeRate), AND automatic import (importRatesFromProvider,
+      // per-row, closing a real gap that only ever published the bulk
+      // `RateImported` summary before).
+      ExchangeRateUpdated: (p) => this.indexExchangeRate({ tenantId: p.tenantId, exchangeRateId: p.exchangeRateId }),
+      CurrencyRevalued: (p) => this.indexCurrencyRevaluation({ tenantId: p.tenantId, revaluationId: p.revaluationId }),
+      // Communication Platform (Parts 1-4) — Part 16 fix. Real event names,
+      // verified against their own publishEvent call sites: the generic
+      // Part-1 dispatch path (CommunicationPlatformService) and
+      // WhatsAppPlatformService (Part 4) publish the "Communication*"
+      // vocabulary carrying `messageId`; EmailPlatformService (Part 2) and
+      // SmsPlatformService (Part 3) publish their own channel-prefixed
+      // vocabulary carrying `trackingId` — same underlying identifier
+      // (`trackingId` IS `messageId` for those two), so one indexer handles both.
+      CommunicationRequested: (p) => this.indexCommunicationMessage({ tenantId: p.tenantId, messageId: p.messageId }),
+      CommunicationQueued: (p) => this.indexCommunicationMessage({ tenantId: p.tenantId, messageId: p.messageId }),
+      CommunicationDelivered: (p) => this.indexCommunicationMessage({ tenantId: p.tenantId, messageId: p.messageId }),
+      CommunicationFailed: (p) => this.indexCommunicationMessage({ tenantId: p.tenantId, messageId: p.messageId }),
+      CommunicationRetried: (p) => this.indexCommunicationMessage({ tenantId: p.tenantId, messageId: p.messageId }),
+      CommunicationCancelled: (p) => this.indexCommunicationMessage({ tenantId: p.tenantId, messageId: p.messageId }),
+      EmailRequested: (p) => this.indexCommunicationMessage({ tenantId: p.tenantId, messageId: p.trackingId }),
+      EmailQueued: (p) => this.indexCommunicationMessage({ tenantId: p.tenantId, messageId: p.trackingId }),
+      EmailSent: (p) => this.indexCommunicationMessage({ tenantId: p.tenantId, messageId: p.trackingId }),
+      EmailDelivered: (p) => this.indexCommunicationMessage({ tenantId: p.tenantId, messageId: p.trackingId }),
+      EmailFailed: (p) => this.indexCommunicationMessage({ tenantId: p.tenantId, messageId: p.trackingId }),
+      SMSRequested: (p) => this.indexCommunicationMessage({ tenantId: p.tenantId, messageId: p.trackingId }),
+      SMSQueued: (p) => this.indexCommunicationMessage({ tenantId: p.tenantId, messageId: p.trackingId }),
+      SMSSent: (p) => this.indexCommunicationMessage({ tenantId: p.tenantId, messageId: p.trackingId }),
+      SMSDelivered: (p) => this.indexCommunicationMessage({ tenantId: p.tenantId, messageId: p.trackingId }),
+      SMSFailed: (p) => this.indexCommunicationMessage({ tenantId: p.tenantId, messageId: p.trackingId }),
+      WhatsAppRequested: (p) => this.indexCommunicationMessage({ tenantId: p.tenantId, messageId: p.trackingId }),
+      WhatsAppQueued: (p) => this.indexCommunicationMessage({ tenantId: p.tenantId, messageId: p.trackingId }),
+      WhatsAppDelivered: (p) => this.indexCommunicationMessage({ tenantId: p.tenantId, messageId: p.trackingId }),
+      WhatsAppFailed: (p) => this.indexCommunicationMessage({ tenantId: p.tenantId, messageId: p.trackingId }),
+      PushRequested: (p) => this.indexCommunicationMessage({ tenantId: p.tenantId, messageId: p.trackingId }),
+      PushDelivered: (p) => this.indexCommunicationMessage({ tenantId: p.tenantId, messageId: p.trackingId }),
+      PushFailed: (p) => this.indexCommunicationMessage({ tenantId: p.tenantId, messageId: p.trackingId }),
+      CommunicationTemplateCreated: (p) => this.indexCommunicationTemplate(p),
+      CommunicationTemplateUpdated: (p) => this.indexCommunicationTemplate(p),
+      TemplateRolledBack: (p) => this.indexCommunicationTemplate(p),
+      CommunicationAuditCreated: (p) => this.indexCommunicationAudit(p),
     };
     for (const [eventName, handler] of Object.entries(handlers)) {
       subscribeEvent(eventName, (payload) => queueMicrotask(() => handler(payload).catch((error) =>
@@ -658,6 +722,120 @@ class SearchEngineService {
     });
   }
 
+  /** Reporting Platform (Part 14 fix) — same real DB-backed indexer shape as indexFinancialReport above. */
+  static async indexReportSchedule({ tenantId, scheduleId }) {
+    if (!tenantId || !scheduleId) return;
+    const item = await ReportScheduleModel.findOne({ _id: scheduleId, tenantId }).lean();
+    if (!item) return this.removeEntity({ tenantId, entityType: "ReportSchedule", entityId: scheduleId });
+    return this.indexEntity({ tenantId, entityType: "ReportSchedule", entityId: item._id,
+      title: `${item.name} (${item.frequency})`, description: `${item.reportType} · ${item.status} · next run ${new Date(item.nextRunAt).toISOString().slice(0, 10)}`,
+      keywords: [item.name, item.reportType, item.frequency].filter(Boolean),
+      matchedFields: [{ field: "name", value: item.name }, { field: "reportType", value: item.reportType }].filter((f) => f.value),
+      module: "Finance", status: item.status, navigationUrl: `/finance/report-schedules/${item._id}`, permissionsRequired: ["finance.report.read"],
+      facets: { status: item.status, frequency: item.frequency, category: item.reportType },
+    });
+  }
+
+  /** File 7 — Enterprise Multi-Currency & FX's own "Update Search Index" workflow step for `POST /currencies`. */
+  static async indexCurrency({ tenantId, currencyId }) {
+    if (!tenantId || !currencyId) return;
+    const item = await CurrencyModel.findOne({ _id: currencyId, tenantId }).lean();
+    if (!item) return this.removeEntity({ tenantId, entityType: "Currency", entityId: currencyId });
+    return this.indexEntity({ tenantId, entityType: "Currency", entityId: item._id,
+      title: `${item.currencyCode} — ${item.name}`, description: `${item.currencyType || "Transaction"} · ${item.status}${item.isBaseCurrency ? " · Base Currency" : ""}${item.isReportingCurrency ? " · Reporting Currency" : ""}`,
+      keywords: [item.currencyCode, item.name, item.isoNumericCode].filter(Boolean),
+      matchedFields: [{ field: "currencyCode", value: item.currencyCode }, { field: "name", value: item.name }].filter((f) => f.value),
+      module: "Finance", status: item.status, navigationUrl: `/finance/currencies/${item._id}`, permissionsRequired: ["finance.currency.read"],
+      facets: { status: item.status, currency: item.currencyCode, category: item.currencyType },
+    });
+  }
+
+  /** File 7 Part 4 — "Search Integration... Exchange Rates... Rate Versions... Providers." */
+  static async indexExchangeRate({ tenantId, exchangeRateId }) {
+    if (!tenantId || !exchangeRateId) return;
+    const item = await ExchangeRateModel.findOne({ _id: exchangeRateId, tenantId }).lean();
+    if (!item) return this.removeEntity({ tenantId, entityType: "ExchangeRate", entityId: exchangeRateId });
+    return this.indexEntity({ tenantId, entityType: "ExchangeRate", entityId: item._id,
+      title: `${item.fromCurrency} → ${item.toCurrency} (v${item.version})`, description: `${item.rate} · ${item.rateType} · ${item.provider} · ${item.approvalStatus || "Activated"}`,
+      keywords: [item.fromCurrency, item.toCurrency, item.provider, item.rateType].filter(Boolean),
+      matchedFields: [{ field: "fromCurrency", value: item.fromCurrency }, { field: "toCurrency", value: item.toCurrency }].filter((f) => f.value),
+      module: "Finance", status: item.approvalStatus || "Activated", navigationUrl: `/finance/exchange-rates/${item._id}`, permissionsRequired: ["finance.currency.read"],
+      facets: { status: item.approvalStatus, currency: item.toCurrency, category: item.rateType, provider: item.provider },
+    });
+  }
+
+  /** File 7 Part 4 — "Search Integration... Revaluations." */
+  static async indexCurrencyRevaluation({ tenantId, revaluationId }) {
+    if (!tenantId || !revaluationId) return;
+    const item = await CurrencyRevaluationModel.findOne({ _id: revaluationId, tenantId }).lean();
+    if (!item) return this.removeEntity({ tenantId, entityType: "CurrencyRevaluation", entityId: revaluationId });
+    return this.indexEntity({ tenantId, entityType: "CurrencyRevaluation", entityId: item._id,
+      title: `${item.targetType} — ${item.currencyCode} → ${item.baseCurrencyCode}`, description: `${item.gainLossType || "No movement"} · ${item.gainLossAmount} ${item.baseCurrencyCode} · ${new Date(item.revaluationDate).toISOString().slice(0, 10)}`,
+      keywords: [item.targetType, item.currencyCode, item.baseCurrencyCode].filter(Boolean),
+      matchedFields: [{ field: "targetType", value: item.targetType }, { field: "currencyCode", value: item.currencyCode }].filter((f) => f.value),
+      module: "Finance", status: item.gainLossType || "None", navigationUrl: `/finance/currency-revaluations/${item._id}`, permissionsRequired: ["finance.currency.read"],
+      facets: { status: item.gainLossType, currency: item.currencyCode, category: item.targetType },
+    });
+  }
+
+  // -- Communication Platform (Parts 1-4) — Part 16 fix. Same real
+  // DB-backed indexer shape as every entity above. `permissionsRequired: []`
+  // (visible to any authenticated tenant user) is the accurate reflection
+  // of today's real access model, not a guess — Communication Platform has
+  // no dedicated RBAC permission key of its own yet (confirmed: no
+  // "communication.*" entry exists in utils/authDomainDefaults.js's
+  // DEFAULT_PERMISSIONS, and CommunicationPlatformController.js's own
+  // endpoints check only tenant scope today, no permission key); tighten
+  // this once that separate gap is closed, rather than inventing a
+  // permission key here that no role could ever actually be granted. --
+
+  static async indexCommunicationMessage({ tenantId, messageId }) {
+    if (!tenantId || !messageId) return;
+    const item = await CommunicationMessageModel.findOne({ tenantId, $or: [{ messageId }, { trackingId: messageId }] }).lean();
+    if (!item) return this.removeEntity({ tenantId, entityType: "CommunicationMessage", entityId: messageId });
+    const recipient = item.recipient?.email || item.recipient?.phone || item.recipient?.endpointUrl || "";
+    return this.indexEntity({
+      tenantId, entityType: "CommunicationMessage", entityId: item.messageId,
+      title: `${item.channel} — ${recipient || item.messageId}`,
+      description: item.subject || (item.content ? item.content.slice(0, 200) : `${item.channel} message`),
+      keywords: [item.messageId, item.trackingId, recipient, item.sourceModule, item.provider].filter(Boolean),
+      matchedFields: [{ field: "recipient", value: recipient }, { field: "messageId", value: item.messageId }].filter((f) => f.value),
+      module: "Communication", status: item.status, navigationUrl: `/communication/messages/${item.messageId}`,
+      permissionsRequired: [],
+      facets: { channel: item.channel, status: item.status, provider: item.provider, sourceModule: item.sourceModule },
+    });
+  }
+
+  static async indexCommunicationTemplate({ tenantId, templateId }) {
+    if (!tenantId || !templateId) return;
+    const item = await CommunicationTemplateModel.findOne({ tenantId, templateId }).lean();
+    if (!item) return this.removeEntity({ tenantId, entityType: "CommunicationTemplate", entityId: templateId });
+    return this.indexEntity({
+      tenantId, entityType: "CommunicationTemplate", entityId: item.templateId,
+      title: `${item.name} (${item.channel})`, description: item.subjectTemplate || item.bodyTemplate?.slice(0, 200) || "",
+      keywords: [item.name, item.channel, item.templateId].filter(Boolean),
+      matchedFields: [{ field: "name", value: item.name }, { field: "templateId", value: item.templateId }].filter((f) => f.value),
+      module: "Communication", status: item.status, navigationUrl: `/communication/templates/${item.templateId}`,
+      permissionsRequired: [],
+      facets: { channel: item.channel, status: item.status, category: "Template" },
+    });
+  }
+
+  static async indexCommunicationAudit({ tenantId, auditId }) {
+    if (!tenantId || !auditId) return;
+    const item = await CommunicationAuditModel.findOne({ tenantId, auditId }).lean();
+    if (!item) return this.removeEntity({ tenantId, entityType: "CommunicationAudit", entityId: auditId });
+    return this.indexEntity({
+      tenantId, entityType: "CommunicationAudit", entityId: item.auditId,
+      title: `[${item.channel}] ${item.event}`, description: `${item.provider || ""}`.trim() || `${item.channel} audit entry`,
+      keywords: [item.event, item.channel, item.provider, item.messageId].filter(Boolean),
+      matchedFields: [{ field: "event", value: item.event }, { field: "messageId", value: item.messageId }].filter((f) => f.value),
+      module: "Communication", status: item.event, navigationUrl: `/communication/messages/${item.messageId}`,
+      permissionsRequired: [],
+      facets: { channel: item.channel, event: item.event, category: "CommunicationAudit" },
+    });
+  }
+
   static async globalSearch({ tenantId, query = "", entityType, permissions = [], filters = {}, page = 1, pageSize = 20, sort = "score", order = "desc" }) {
     const safePage = Math.max(Number.parseInt(page, 10) || 1, 1);
     const safePageSize = Math.min(Math.max(Number.parseInt(pageSize, 10) || 20, 1), MAX_PAGE_SIZE);
@@ -862,7 +1040,7 @@ class SearchEngineService {
     if (!tenantId) return { indexed: 0 };
 
     const [visaCases, travelers, documents, submissions, appointments, passports, incidents,
-      invoices, payments, receipts, journals, accounts, vendors, expenses, bankAccounts, auditEvents, reports] = await Promise.all([
+      invoices, payments, receipts, journals, accounts, vendors, expenses, bankAccounts, auditEvents, reports, currencies, exchangeRates, revaluations] = await Promise.all([
       VisaCaseModel.find({ tenantId, isSoftDeleted: { $ne: true } }).select("_id").lean(),
       CustomerModel.find({ tenantId, status: { $ne: "archived" } }).select("_id").lean(),
       EnterpriseDocumentModel.find({ tenantId, isSoftDeleted: { $ne: true } }).select("_id").lean(),
@@ -881,6 +1059,9 @@ class SearchEngineService {
       BankAccountModel.find({ tenantId }).select("_id").lean(),
       AuditEventModel.find({ tenantId, status: "Active" }).select("_id").lean(),
       FinancialReportModel.find({ tenantId }).select("_id").lean(),
+      CurrencyModel.find({ tenantId }).select("_id").lean(),
+      ExchangeRateModel.find({ tenantId }).select("_id").lean(),
+      CurrencyRevaluationModel.find({ tenantId }).select("_id").lean(),
     ]);
 
     const tasks = [
@@ -901,6 +1082,9 @@ class SearchEngineService {
       ...bankAccounts.map((r) => () => this.indexBankAccountRecord({ tenantId, bankAccountId: r._id })),
       ...auditEvents.map((r) => () => this.indexAuditEventRecord({ tenantId, eventId: r._id })),
       ...reports.map((r) => () => this.indexFinancialReport({ tenantId, reportId: r._id })),
+      ...currencies.map((r) => () => this.indexCurrency({ tenantId, currencyId: r._id })),
+      ...exchangeRates.map((r) => () => this.indexExchangeRate({ tenantId, exchangeRateId: r._id })),
+      ...revaluations.map((r) => () => this.indexCurrencyRevaluation({ tenantId, revaluationId: r._id })),
     ];
 
     const BATCH_SIZE = 25;
@@ -916,7 +1100,8 @@ class SearchEngineService {
       invoices: invoices.length, payments: payments.length, receipts: receipts.length,
       journals: journals.length, accounts: accounts.length, vendors: vendors.length,
       expenses: expenses.length, bankAccounts: bankAccounts.length,
-      auditEvents: auditEvents.length, reports: reports.length
+      auditEvents: auditEvents.length, reports: reports.length, currencies: currencies.length,
+      exchangeRates: exchangeRates.length, revaluations: revaluations.length
     };
     publishEvent("SearchRebuilt", { tenantId, indexed: tasks.length, entityCounts });
     return { indexed: tasks.length, entityCounts };

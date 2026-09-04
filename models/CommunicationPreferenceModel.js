@@ -44,6 +44,19 @@ const CommunicationPreferenceSchema = new mongoose.Schema({
   doNotDisturb: {
     type: Boolean,
     default: false
+  },
+  quietHours: {
+    start: { type: String, default: null },
+    end: { type: String, default: null },
+    timezone: { type: String, default: "UTC" }
+  },
+  subscribedTopics: {
+    type: [String],
+    default: []
+  },
+  unsubscribedTopics: {
+    type: [String],
+    default: []
   }
 }, { timestamps: true });
 

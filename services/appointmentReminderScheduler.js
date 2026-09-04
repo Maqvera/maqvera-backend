@@ -2,6 +2,8 @@ import VisaAppointmentModel from "../models/VisaAppointmentModel.js";
 import VisaCaseModel from "../models/VisaCaseModel.js";
 import { publishEvent } from "../utils/eventBus.js";
 import logger from "../utils/logger.js";
+import { withDistributedLock } from "../utils/distributedLock.js";
+import { getSchedulerLockConfig } from "../utils/schedulerLockConfig.js";
 
 // ─────────────────────────────────────────────────────────────
 // Configuration — all from environment
@@ -142,7 +144,8 @@ class AppointmentReminderScheduler {
     if (expr !== REMINDER_CHECK_CRON) logger.error(`Invalid APPOINTMENT_REMINDER_CRON_SCHEDULE: "${REMINDER_CHECK_CRON}". Falling back to "*/15 * * * *".`);
 
     reminderJob = cronLib.schedule(expr, () => {
-      runAppointmentSweep().catch((err) => logger.error("Cron appointment sweep error", { error: err.message }));
+      withDistributedLock("scheduler:AppointmentReminderScheduler", getSchedulerLockConfig().defaultLockTtlMs, runAppointmentSweep)
+        .catch((err) => logger.error("Cron appointment sweep error", { error: err.message }));
     }, { scheduled: true, timezone: process.env.TZ || undefined });
 
     logger.info(`AppointmentReminderScheduler started — schedule: "${expr}".`);

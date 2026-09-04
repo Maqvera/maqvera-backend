@@ -55,9 +55,9 @@ const AGENTS = [
   {
     agentId: "operations-agent",
     name: "Operations Agent",
-    description: "Booking/travel-plan status lookups, operations and incident dashboards.",
+    description: "Booking/travel-plan status lookups and the operations dashboard.",
     capabilities: ["operations-visibility"],
-    toolNames: ["get_booking_status", "get_travel_plan_status", "get_operations_dashboard", "get_incidents_summary"],
+    toolNames: ["get_booking_status", "get_travel_plan_status", "get_operations_dashboard"],
     version: "1.0.0",
     status: "active"
   },
@@ -96,6 +96,37 @@ const AGENTS = [
     description: "Traveler attendance/check-in visibility for a travel plan's activities — who's present, checked in, late, absent, or missing.",
     capabilities: ["attendance-visibility"],
     toolNames: ["get_travel_plan_attendance"],
+    version: "1.0.0",
+    status: "active"
+  },
+  {
+    // Gap 1.7 "Reporting agent" — real backing: VisaAnalyticsEngine's
+    // already-existing executive/compliance dashboards (the same ones
+    // controllers/VisaDashboardController.js already serves over REST),
+    // not every internal KPIEngine/VisaAnalyticsEngine method blindly
+    // exposed — see AIToolRegistry.js's own tool descriptions for which
+    // ones and why.
+    agentId: "reporting-agent",
+    name: "Reporting Agent",
+    description: "Executive KPI and compliance reporting — cross-tenant summary dashboards, gated by the same visa.dashboard.management permission this codebase's own executive/compliance REST endpoints already require.",
+    capabilities: ["executive-reporting", "compliance-reporting"],
+    toolNames: ["get_executive_dashboard", "get_compliance_dashboard"],
+    version: "1.0.0",
+    status: "active"
+  },
+  {
+    // Gap 1.7 "Incident Response agent" — real backing:
+    // EnterpriseIncidentEngineService. Deeper than the old read-only
+    // get_incidents_summary alone (moved here from operations-agent, since
+    // incident visibility+action now belongs together as its own bounded
+    // capability): full incident detail, plus ONE real mutating action
+    // (assignment), and only via the propose_*+human-approval pattern —
+    // this agent can never directly mutate an incident record itself.
+    agentId: "incident-response-agent",
+    name: "Incident Response Agent",
+    description: "Incident visibility (summary + full detail) and incident-assignment proposals — every assignment still requires explicit human approval before it takes effect.",
+    capabilities: ["incident-visibility", "incident-assignment-proposal"],
+    toolNames: ["get_incidents_summary", "get_incident_details", "propose_incident_assignment"],
     version: "1.0.0",
     status: "active"
   }

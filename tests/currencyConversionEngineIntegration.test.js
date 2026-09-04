@@ -1,4 +1,4 @@
-import test from "node:test";
+import test, { after } from "node:test";
 import assert from "node:assert/strict";
 import dotenv from "dotenv";
 import mongoose from "mongoose";
@@ -214,4 +214,8 @@ test("TreasuryService.calculateFXExposure resolves a real exchange rate instead 
   assert.equal(eurExposure.exchangeRate, 1.25);
   assert.notEqual(eurExposure.exchangeRate, 1);
   assert.equal(eurExposure.baseCurrencyValue, 1250);
+});
+
+after(async () => {
+  if (dbAvailable) await mongoose.disconnect();
 });

@@ -1,5 +1,7 @@
 import express from "express";
 import authenticateAccessToken from "../middleware/authenticateAccessToken.js";
+import { requireUsageLimit } from "../middleware/subscriptionEnforcement.js";
+import EmployeeProfileModel from "../models/EmployeeProfilemodel.js";
 import validate, { userSchemas } from "../middleware/validateRequest.js";
 import rateLimit from "express-rate-limit";
 import {
@@ -40,7 +42,12 @@ router.use(authenticateAccessToken);
 
 // Core User / Employee CRUD
 router.get("/", limiter, ListUsers);
-router.post("/", limiter, validate(userSchemas.createUser), CreateUser);
+// Enterprise Subscription Platform — "Usage Validation... Starter Plan
+// Maximum Users 20... 21st create -> Reject." Real count: active
+// EmployeeProfileModel rows (this endpoint's own real create target —
+// see controllers/UserController.js's own CreateUser, which provisions
+// an employee profile + invitation, not a UserModel row directly).
+router.post("/", limiter, requireUsageLimit("maxUsers", (tenantId) => EmployeeProfileModel.countDocuments({ tenantId, status: "active" })), validate(userSchemas.createUser), CreateUser);
 
 // User Invitations
 router.post("/invite", limiter, validate(userSchemas.inviteUser), InviteUser);

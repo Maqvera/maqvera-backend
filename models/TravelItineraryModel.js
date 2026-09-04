@@ -66,8 +66,20 @@ const TravelItinerarySchema = new mongoose.Schema({
   // "Activity Resources": Guide, Vehicle, Driver, Hotel, Meeting Room,
   // Equipment, Translator — "equipment" was missing from the original 7.
   resources: {
+    // guideId (loose String, pre-existing) is already used elsewhere as a
+    // recipientId for push notifications (TravelAttendanceController.js)
+    // and as an analytics grouping key (AnalyticsEngine.js/KPIEngine.js) —
+    // left untouched (no type change, no migration) since it may hold a
+    // free-text identifier for a non-employee/external guide, which
+    // guideUserId below deliberately cannot represent.
     guideId: { type: String, default: null },
     guideName: { type: String, default: null },
+    // International Tour Management (PRD gap-audit "Gap F") — the
+    // FK-validated counterpart to guideId, set only when the assigned
+    // guide is a real internal employee (ref employee_profile's
+    // registered model name "employee"). guideName stays the
+    // denormalized display fallback for either case.
+    guideUserId: { type: mongoose.Schema.Types.ObjectId, ref: "employee", default: null },
     vehicleId: { type: String, default: null },
     vehicleNumber: { type: String, default: null },
     driverId: { type: String, default: null },

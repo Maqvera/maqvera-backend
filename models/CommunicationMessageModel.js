@@ -28,7 +28,9 @@ const CommunicationMessageSchema = new mongoose.Schema({
   sourceModule: {
     type: String,
     required: true,
-    enum: ["CRM", "Booking", "Travel", "Visa", "Finance", "HR", "Inventory", "Sales", "Procurement", "AI", "System"],
+    // "Platform" — Enterprise Subscription Platform (a CORE platform, same
+    // real module label its own AuditLogModel entries already use).
+    enum: ["CRM", "Booking", "Travel", "Visa", "Finance", "HR", "Inventory", "Sales", "Procurement", "AI", "Platform", "System"],
     default: "System",
     index: true
   },
@@ -58,6 +60,14 @@ const CommunicationMessageSchema = new mongoose.Schema({
   content: {
     type: String,
     default: null
+  },
+  // Push Notification Platform (Part 5) — "the push payload carries
+  // { screen, params }, not business logic." The push platform stays
+  // ignorant of what a visa/booking/invoice IS; the calling module supplies
+  // where the app should navigate on tap.
+  deepLink: {
+    screen: { type: String, default: null },
+    params: { type: mongoose.Schema.Types.Mixed, default: {} }
   },
   status: {
     type: String,
@@ -99,6 +109,11 @@ const CommunicationMessageSchema = new mongoose.Schema({
   errorDetails: {
     type: mongoose.Schema.Types.Mixed,
     default: null
+  },
+  dlqId: {
+    type: mongoose.Schema.Types.ObjectId,
+    default: null,
+    ref: "dead_letter_queue"
   },
   idempotencyKey: {
     type: String,
@@ -188,11 +203,30 @@ const CommunicationMessageSchema = new mongoose.Schema({
   createdBy: {
     type: String,
     default: null
-  }
+  },
+  // Part 15 fix — Enterprise Data Retention & Legal Hold Standard fields
+  // (utils/archivalService.js / utils/legalHold.js), the exact same shape
+  // every other archivable record in this codebase carries. Wiring
+  // Communication messages into that shared engine rather than a second,
+  // Communication-specific retention mechanism.
+  isArchived: { type: Boolean, default: false, index: true },
+  archivedAt: { type: Date, default: null },
+  archivedBy: { type: String, default: null },
+  archiveReason: { type: String, default: null },
+  purgeEligibleAt: { type: Date, default: null, index: true },
+  retentionPolicy: { type: String, default: null },
+  restoredAt: { type: Date, default: null },
+  restoredBy: { type: String, default: null },
+  legalHold: { type: Boolean, default: false, index: true },
+  legalHoldReason: { type: String, default: null }
 }, { timestamps: true });
 
 CommunicationMessageSchema.index({ tenantId: 1, status: 1, scheduledAt: 1 });
 CommunicationMessageSchema.index({ tenantId: 1, channel: 1, createdAt: -1 });
+// Communication Platform (gap 2.6) — cross-tenant sweep query in
+// services/communicationRetryScheduler.js, same no-tenantId-filter shape
+// as ReportScheduleModel's own due-schedule index.
+CommunicationMessageSchema.index({ status: 1, updatedAt: 1 });
 CommunicationMessageSchema.index({ tenantId: 1, idempotencyKey: 1 }, { sparse: true });
 
 CommunicationMessageSchema.set("toJSON", {

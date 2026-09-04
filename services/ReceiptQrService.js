@@ -18,7 +18,7 @@ class ReceiptQrService {
     return `${baseUrl.replace(/\/$/, "")}/api/v1/receipts/verify/${token}`;
   }
 
-  /** Returns a PNG Buffer, embeddable directly into the PDF via pdfkit's doc.image(). */
+  /** Returns a PNG Buffer — ReceiptPdfService.js base64-encodes it into a data: URI for the template's <img>. */
   static async generateQrPngBuffer(verificationUrl) {
     return QRCode.toBuffer(verificationUrl, { type: "png", margin: 1, width: 200 });
   }

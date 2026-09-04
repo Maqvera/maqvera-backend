@@ -33,7 +33,11 @@ export const getAIConfig = () => ({
   openai: {
     apiKey: process.env.OPENAI_API_KEY || null,
     model: process.env.OPENAI_MODEL || "gpt-4o-mini",
-    baseUrl: process.env.OPENAI_BASE_URL || undefined
+    baseUrl: process.env.OPENAI_BASE_URL || undefined,
+    // Voice-Based Booking Creation PRD B3.1 — same apiKey/client this
+    // provider already resolves for chatWithTools; only the model name for
+    // the separate audio/transcriptions endpoint is new.
+    transcriptionModel: process.env.OPENAI_TRANSCRIPTION_MODEL || "whisper-1"
   },
   anthropic: {
     apiKey: process.env.ANTHROPIC_API_KEY || null,
@@ -41,15 +45,20 @@ export const getAIConfig = () => ({
   },
   // API-006G "Supported AI Providers" also names Google Gemini and Azure
   // OpenAI. Azure is real and implemented (same `openai` SDK, different
-  // base URL) since it's a light, genuine addition. Gemini needs a
-  // separate SDK (@google/generative-ai) and is deliberately deferred —
-  // both this doc's own list and API-006F/006B/006C mark less-critical
-  // providers "(Future)" rather than fabricate an untested integration.
+  // base URL) since it's a light, genuine addition.
   azureOpenAI: {
     apiKey: process.env.AZURE_OPENAI_API_KEY || null,
     endpoint: process.env.AZURE_OPENAI_ENDPOINT || null,
     deployment: process.env.AZURE_OPENAI_DEPLOYMENT || null,
     apiVersion: process.env.AZURE_OPENAI_API_VERSION || "2024-08-01-preview"
+  },
+  // Gap 1.6 (Multi-LLM Router provider coverage) — real as of this change,
+  // via the current @google/genai SDK (services/ai/GeminiAdapter.js). The
+  // older @google/generative-ai package this section used to defer to is
+  // itself deprecated in favor of @google/genai.
+  gemini: {
+    apiKey: process.env.GEMINI_API_KEY || null,
+    model: process.env.GEMINI_MODEL || "gemini-2.5-flash"
   },
 
   // EXT-034 "AI Model Management & Multi-LLM Routing" — per-provider cost
@@ -159,6 +168,16 @@ export const getAIApprovalTimeoutConfig = () => ({
   reminderAfterMs: parseNumber(process.env.AI_APPROVAL_REMINDER_AFTER_MS, 2 * 60 * 60 * 1000),
   escalationAfterMs: parseNumber(process.env.AI_APPROVAL_ESCALATION_AFTER_MS, 8 * 60 * 60 * 1000),
   sweepCronSchedule: process.env.AI_APPROVAL_TIMEOUT_CRON_SCHEDULE || "*/15 * * * *"
+});
+
+// Gap 1.2 "AI Conversation retention config is dead" — conversationRetentionDays
+// above has always been read into getAIConfig() but never consumed by any
+// sweep (services/aiConversationRetentionScheduler.js). `retentionDays`
+// deliberately reuses getAIConfig().conversationRetentionDays as the single
+// source of truth rather than a second env var that could drift from it.
+export const getAIConversationRetentionConfig = () => ({
+  retentionDays: getAIConfig().conversationRetentionDays,
+  sweepCronSchedule: process.env.AI_CONVERSATION_RETENTION_CRON_SCHEDULE || "0 3 * * *"
 });
 
 export default getAIConfig;

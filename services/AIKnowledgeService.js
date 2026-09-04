@@ -237,9 +237,17 @@ class AIKnowledgeService {
     const filter = { tenantId };
     if (!includeArchived) filter.isActive = true;
     const candidates = await AIKnowledgeChunkModel.find(filter).lean();
+    // Gap 1.4 "RAG similarity search has no dedicated vector index" — this
+    // in-app cosine-similarity scan is correctly scoped for today's data
+    // volume, but nothing measured it, so a future vector-DB decision would
+    // be a guess rather than data-driven. `scannedCount` is that real,
+    // logged/observable number (persisted via AIRequestMetricModel.ragChunksScanned
+    // — see AIAssistantService.chat's search_knowledge_base handling and
+    // AIObservabilityService.getRAGMetrics' averageChunksScanned).
+    const scannedCount = candidates.length;
 
     const authorized = candidates.filter((c) => this.hasKnowledgeAccess(c.visibilityLevel, { role, permissions }));
-    if (authorized.length === 0) return { chunks: [], contextText: null, citations: [] };
+    if (authorized.length === 0) return { chunks: [], contextText: null, citations: [], scannedCount };
 
     const ranked = this.rankChunks(authorized, embedding, query);
     const top = ranked.slice(0, topK || config.defaultTopK);
@@ -250,7 +258,7 @@ class AIKnowledgeService {
     }
 
     const { contextText, citations } = this.buildContextBlock(top, config.maxContextChars);
-    return { chunks: top, contextText, citations };
+    return { chunks: top, contextText, citations, scannedCount };
   }
 }
 

@@ -4,9 +4,12 @@ import FinancialReportService from "./FinancialReportService.js";
 import FinancialReportExportService from "./FinancialReportExportService.js";
 import { getDeliveryAdapter } from "./delivery/index.js";
 import AuditLogModel from "../models/AuditLogmodel.js";
+import TenantSubscriptionService from "./TenantSubscriptionService.js";
 import { publishEvent } from "../utils/eventBus.js";
 import { getFinanceConfig } from "../utils/financeConfig.js";
 import logger from "../utils/logger.js";
+import { withDistributedLock } from "../utils/distributedLock.js";
+import { getSchedulerLockConfig } from "../utils/schedulerLockConfig.js";
 
 // Enterprise Financial Reporting — Finance Module Part 24. "Report
 // Scheduling... Daily, Weekly, Monthly, Quarterly, Yearly." Real,
@@ -27,8 +30,21 @@ async function runDueSchedules() {
     const due = await ReportScheduleModel.find({ status: "Active", nextRunAt: { $lte: now } });
 
     let ranCount = 0;
+    let skippedSuspended = 0;
     for (const schedule of due) {
       try {
+        // Enterprise Access Revocation Engine (Automation #5) — "Background
+        // Services... Scheduled Reports MUST stop." Real, reuses the exact
+        // same cached enforcement check every HTTP request already goes
+        // through (middleware/authenticateAccessToken.js) — no new
+        // suspension-detection mechanism, no per-tenant special-casing.
+        // Proof-of-pattern on this one scheduler; retrofitting the same
+        // one-line guard onto every other cross-tenant scheduler in this
+        // codebase is real, deliberate, incremental Adoption work (see
+        // docs/07-enterprise-standards-equivalent doc for this automation).
+        const block = await TenantSubscriptionService.getEnforcementBlock(schedule.tenantId);
+        if (block) { skippedSuspended += 1; continue; }
+
         const report = await FinancialReportService.generateReport({ reportType: schedule.reportType, ...schedule.parameters }, schedule.tenantId, "system");
         const reportDoc = await FinancialReportModel.findOne({ _id: report._id, tenantId: schedule.tenantId });
         const exportResult = await FinancialReportExportService.exportAndStore(reportDoc, schedule.format, schedule.tenantId);
@@ -59,7 +75,7 @@ async function runDueSchedules() {
     }
 
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-    logger.info(`Financial report schedule check completed in ${elapsed}s — ${ranCount}/${due.length} schedule(s) ran.`);
+    logger.info(`Financial report schedule check completed in ${elapsed}s — ${ranCount}/${due.length} schedule(s) ran${skippedSuspended > 0 ? `, ${skippedSuspended} skipped (tenant suspended)` : ""}.`);
   } catch (err) {
     logger.error("Financial report schedule check failed.", { error: err.message });
   }
@@ -98,8 +114,11 @@ class FinancialReportScheduler {
     if (expr !== config.reportScheduleCron) logger.error(`Invalid REPORT_SCHEDULE_CRON_SCHEDULE: "${config.reportScheduleCron}". Falling back to "0 5 * * *".`);
 
     scheduleJob = cronLib.schedule(expr, () => {
-      runDueSchedules().catch((err) => logger.error("Cron financial report schedule error", { error: err.message }));
-      runReportExpiry().catch((err) => logger.error("Cron financial report expiry error", { error: err.message }));
+      const ttlMs = getSchedulerLockConfig().defaultLockTtlMs;
+      withDistributedLock("scheduler:FinancialReportScheduler:dueSchedules", ttlMs, runDueSchedules)
+        .catch((err) => logger.error("Cron financial report schedule error", { error: err.message }));
+      withDistributedLock("scheduler:FinancialReportScheduler:reportExpiry", ttlMs, runReportExpiry)
+        .catch((err) => logger.error("Cron financial report expiry error", { error: err.message }));
     }, { scheduled: true, timezone: process.env.TZ || undefined });
 
     logger.info(`FinancialReportScheduler started — schedule: "${expr}".`);

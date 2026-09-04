@@ -5,6 +5,7 @@ import BookingServiceModel from "../models/BookingServiceModel.js";
 import TravelerServiceAssignmentModel from "../models/TravelerServiceAssignmentModel.js";
 import BookingDocumentModel from "../models/BookingDocumentModel.js";
 import BookingTaskModel from "../models/BookingTaskModel.js";
+import PilgrimKitModel from "../models/PilgrimKitModel.js";
 import BookingTimelineModel from "../models/BookingTimelineModel.js";
 import BookingNoteModel from "../models/BookingNoteModel.js";
 import BookingWorkflowModel from "../models/BookingWorkflowModel.js";
@@ -13,13 +14,27 @@ import EmployeeProfileModel from "../models/EmployeeProfilemodel.js";
 import FlightCatalogModel from "../models/FlightCatalogModel.js";
 import HotelCatalogModel from "../models/HotelCatalogModel.js";
 import HotelRoomInventoryModel from "../models/HotelRoomInventoryModel.js";
+import HotelBookingModel from "../models/HotelBookingModel.js";
+import FlightBookingModel from "../models/FlightBookingModel.js";
+import CarRentalBookingModel from "../models/CarRentalBookingModel.js";
+import BookingVoucherService from "../services/BookingVoucherService.js";
+import InvoiceModel from "../models/InvoiceModel.js";
+import InvoiceService from "../services/InvoiceService.js";
+import { validateBookingForDocumentGeneration } from "../utils/bookingDocumentValidation.js";
+import BookingDocumentParserService from "../services/BookingDocumentParserService.js";
+import BookingVoiceParserService from "../services/BookingVoiceParserService.js";
+import { SUPPORTED_VOICE_BOOKING_TYPES } from "../utils/voiceBookingExtractionRegistry.js";
+import multer from "multer";
 import AuditLogModel from "../models/AuditLogmodel.js";
 import EnterpriseDocumentService from "../services/EnterpriseDocumentService.js";
+import NumberGeneratorService from "../services/NumberGeneratorService.js";
+import CurrencyService from "../services/CurrencyService.js";
 import { sendError, sendSuccess } from "../utils/apiResponse.js";
 import { publishEvent } from "../utils/eventBus.js";
 import { createRequestId } from "../utils/authTokens.js";
 import { handleBookingCreatedSaga } from "../utils/BookingSagaManager.js";
 import { getBookingConfig } from "../utils/bookingConfig.js";
+import { normalizeHotelServiceDetails } from "../utils/hotelServiceDetails.js";
 import { getStorageConfig } from "../utils/storageConfig.js";
 import { saveBookingDocumentFile, resolveBookingDocumentUrl } from "../utils/fileStorage.js";
 import CacheManager from "../utils/cacheManager.js";
@@ -378,7 +393,13 @@ export const CreateBooking = async (req, res) => {
       totalAmount = 0,
       priority = bookingConfig.defaultPriority,
       paymentStatus = bookingConfig.defaultPaymentStatus,
-      visaStatus = bookingConfig.defaultVisaStatus
+      visaStatus = bookingConfig.defaultVisaStatus,
+      convertedCurrency = null,
+      // B2B Agent Portal (PRD "CRM Feature Map by Phase" Phase 2 module 14)
+      // — set only for an agent-initiated booking
+      // (controllers/AgentPortalController.js createMyBooking), never
+      // caller-trusted for a staff-created one beyond what's explicitly sent.
+      agentUserId = null
     } = req.body;
 
     if (!customerId) return sendError(res, 422, "customerId is required.", requestId);
@@ -392,6 +413,9 @@ export const CreateBooking = async (req, res) => {
     // hardcoded list duplicated here.
     if (!bookingConfig.supportedCurrencies.includes(currencyId.toLowerCase())) {
       return sendError(res, 422, `Currency "${currencyId}" is not supported. Allowed: ${bookingConfig.supportedCurrencies.join(", ")}.`, requestId);
+    }
+    if (convertedCurrency && !bookingConfig.supportedCurrencies.includes(convertedCurrency.toLowerCase())) {
+      return sendError(res, 422, `Currency "${convertedCurrency}" is not supported. Allowed: ${bookingConfig.supportedCurrencies.join(", ")}.`, requestId);
     }
 
     // Validation Rule: "Travel Date Valid"
@@ -434,45 +458,92 @@ export const CreateBooking = async (req, res) => {
     // there is nothing real to validate packageId against without fabricating
     // a catalog. Left as an unvalidated optional reference, same as before.
 
-    const bookingNumber = `BK-${new Date().getFullYear()}-${Math.floor(100000 + Math.random() * 900000)}`;
+    // Tenant-scoped, atomic, collision-free reference — replaces the old
+    // Math.random() generator (two concurrent creates could mint the same
+    // reference and hit the unique index with an unhandled 500).
+    let generatedNumber;
+    try {
+      generatedNumber = await NumberGeneratorService.generateNumber(tenantId, { resourceType: "Booking" }, req.auth?.id || null);
+    } catch (numberError) {
+      console.error("Booking reference generation error:", numberError);
+      return sendError(res, 422, numberError.message || "Unable to generate a booking reference.", requestId);
+    }
+    const bookingNumber = generatedNumber.documentNumber;
 
     const initialAmount = Number(totalAmount) || 0;
 
-    const booking = await BookingHeaderModel.create({
-      tenantId,
-      bookingReference: bookingNumber,
-      bookingNumber,
-      customerId: customer._id,
-      customerCode: customer.customerCode,
-      customerName: `${customer.firstName} ${customer.lastName}`.trim(),
-      packageId: packageId || null,
-      bookingType: bookingType.toLowerCase(),
-      status: bookingConfig.defaultBookingStatus,
-      priority,
-      paymentStatus,
-      visaStatus,
-      assignedTo: assignedConsultant,
-      assignedConsultant: assignedConsultant,
-      travelDate: parsedTravelDate,
-      returnDate: parsedReturnDate,
-      totalAmount: initialAmount,
-      paidAmount: 0,
-      currency: currencyId,
-      remarks: remarks || null,
-      financialSnapshot: {
-        packagePrice: initialAmount,
-        discounts: 0,
-        taxes: 0,
-        serviceCharges: 0,
+    // Multi-currency balance entry — server-side authoritative recompute.
+    // Never trust a client-sent convertedAmount for anything that could
+    // later be posted to Finance; CurrencyService.convert() is the single
+    // source of truth for rates (see CurrencyService.getRate/convert,
+    // services/CurrencyService.js lines ~721-808).
+    let conversionFields = {
+      convertedAmount: null, convertedCurrency: null,
+      conversionRate: null, conversionRateId: null, conversionAsOf: null
+    };
+    if (convertedCurrency && initialAmount > 0) {
+      try {
+        const conversion = await CurrencyService.convert(initialAmount, currencyId, convertedCurrency, tenantId);
+        conversionFields = {
+          convertedAmount: conversion.convertedAmount,
+          convertedCurrency: convertedCurrency.toUpperCase(),
+          conversionRate: conversion.rate,
+          conversionRateId: conversion.rateId || null,
+          conversionAsOf: new Date()
+        };
+      } catch (conversionError) {
+        console.error("Booking creation currency conversion error:", conversionError);
+        return sendError(res, 422, conversionError.message || `Unable to convert ${currencyId} to ${convertedCurrency}.`, requestId);
+      }
+    }
+
+    let booking;
+    try {
+      booking = await BookingHeaderModel.create({
+        tenantId,
+        bookingReference: bookingNumber,
+        bookingNumber,
+        customerId: customer._id,
+        customerCode: customer.customerCode,
+        customerName: `${customer.firstName} ${customer.lastName}`.trim(),
+        packageId: packageId || null,
+        bookingType: bookingType.toLowerCase(),
+        status: bookingConfig.defaultBookingStatus,
+        priority,
+        paymentStatus,
+        visaStatus,
+        assignedTo: assignedConsultant,
+        assignedConsultant: assignedConsultant,
+        agentUserId,
+        travelDate: parsedTravelDate,
+        returnDate: parsedReturnDate,
         totalAmount: initialAmount,
         paidAmount: 0,
-        outstandingBalance: initialAmount,
-        refundAmount: 0,
         currency: currencyId,
-        paymentStatus,
-        lastCalculatedAt: new Date()
-      }
-    });
+        remarks: remarks || null,
+        financialSnapshot: {
+          packagePrice: initialAmount,
+          discounts: 0,
+          taxes: 0,
+          serviceCharges: 0,
+          totalAmount: initialAmount,
+          paidAmount: 0,
+          outstandingBalance: initialAmount,
+          refundAmount: 0,
+          currency: currencyId,
+          ...conversionFields,
+          paymentStatus,
+          lastCalculatedAt: new Date()
+        }
+      });
+    } catch (createError) {
+      await NumberGeneratorService.rollbackSequence(tenantId, generatedNumber._id, "Booking creation failed.", req.auth?.id || null)
+        .catch((rollbackError) => console.error("rollbackSequence error:", rollbackError));
+      throw createError;
+    }
+
+    await NumberGeneratorService.registerResource(tenantId, generatedNumber._id, booking._id.toString(), req.auth?.id || null)
+      .catch((registerError) => console.error("registerResource error:", registerError));
 
     await BookingWorkflowModel.create({
       bookingId: booking._id,
@@ -548,7 +619,7 @@ export const GetBooking = async (req, res) => {
       return sendError(res, 403, "Permission denied to view archived booking.", requestId);
     }
 
-    const [customer, travelers, services, workflow, notesCount, documentsCount, tasksCount, timelineSummary] = await Promise.all([
+    const [customer, travelers, services, workflow, notesCount, documentsCount, tasksCount, timelineSummary, hotelLegs, flightLegs, carRentalLegs, relatedInvoices] = await Promise.all([
       CustomerModel.findOne({ _id: booking.customerId, tenantId }).lean(),
       BookingTravelerModel.find({ bookingId, tenantId, status: "active" }).lean(),
       BookingServiceModel.find({ bookingId, tenantId }).lean(),
@@ -556,7 +627,11 @@ export const GetBooking = async (req, res) => {
       BookingNoteModel.countDocuments({ bookingId, tenantId, status: "active" }),
       BookingDocumentModel.countDocuments({ bookingId, tenantId, status: { $ne: "archived" } }),
       BookingTaskModel.countDocuments({ bookingId, tenantId, status: "active" }),
-      BookingTimelineModel.find({ bookingId, tenantId }).sort({ createdAt: -1 }).limit(10).lean()
+      BookingTimelineModel.find({ bookingId, tenantId }).sort({ createdAt: -1 }).limit(10).lean(),
+      HotelBookingModel.find({ bookingId, tenantId }).lean(),
+      FlightBookingModel.find({ bookingId, tenantId }).lean(),
+      CarRentalBookingModel.find({ bookingId, tenantId }).lean(),
+      InvoiceModel.find({ bookingId, tenantId }).select("invoiceNumber invoiceType status currency grandTotal issueDate dueDate").sort({ createdAt: -1 }).lean()
     ]);
 
     return sendSuccess(res, 200, "Booking aggregate profile loaded.", {
@@ -603,6 +678,17 @@ export const GetBooking = async (req, res) => {
         sellingPrice: s.sellingPrice,
         status: s.status
       })),
+      // Type-specific detail legs (Booking-module PRD Part A item #4): a
+      // bookingType here is a package category (umrah/hajj/holiday_package/
+      // etc, see bookingConfig.bookingTypes), not a 1:1 label, so a single
+      // booking can legitimately carry zero, one, or several Hotel/Flight
+      // legs — never a fixed one-of-each shape with nulled-out placeholders
+      // for types the booking doesn't have.
+      typeDetails: {
+        ...(hotelLegs.length > 0 ? { hotels: hotelLegs } : {}),
+        ...(flightLegs.length > 0 ? { flights: flightLegs } : {}),
+        ...(carRentalLegs.length > 0 ? { carRentals: carRentalLegs } : {})
+      },
       financialSummary: booking.financialSnapshot || {
         totalAmount: booking.totalAmount || 0,
         paidAmount: booking.paidAmount || 0,
@@ -622,6 +708,18 @@ export const GetBooking = async (req, res) => {
         description: t.description,
         performedByName: t.performedByName || "Staff",
         timestamp: t.createdAt
+      })),
+      // PRD A4 — lets the Account Statement / booking detail view resolve
+      // straight through to whichever invoice(s) this booking produced.
+      relatedInvoices: relatedInvoices.map((inv) => ({
+        invoiceId: inv._id,
+        invoiceNumber: inv.invoiceNumber,
+        invoiceType: inv.invoiceType,
+        status: inv.status,
+        currency: inv.currency,
+        grandTotal: inv.grandTotal,
+        issueDate: inv.issueDate,
+        dueDate: inv.dueDate
       })),
       counts: {
         notesCount,
@@ -1677,6 +1775,21 @@ export const AddBookingServices = async (req, res) => {
       const numQty = Math.max(Number(quantity) || 1, 1);
       const calculatedTotal = numSelling * numQty;
 
+      let resolvedDetails = details;
+      if (normalizedServiceType === "hotel") {
+        if (details.view && !bookingConfig.hotelRoomViews.includes(`${details.view}`.trim().toLowerCase())) {
+          return sendError(res, 422, `Unsupported hotel view '${details.view}'.`, requestId);
+        }
+        if (details.mealPlan && !bookingConfig.hotelMealPlans.includes(`${details.mealPlan}`.trim().toLowerCase())) {
+          return sendError(res, 422, `Unsupported mealPlan '${details.mealPlan}'.`, requestId);
+        }
+        try {
+          resolvedDetails = normalizeHotelServiceDetails(details, { performedBy: req.auth?.id || null });
+        } catch (hotelDetailsError) {
+          return sendError(res, 422, hotelDetailsError.message, requestId);
+        }
+      }
+
       const newService = await BookingServiceModel.create({
         bookingId: booking._id,
         tenantId,
@@ -1697,7 +1810,7 @@ export const AddBookingServices = async (req, res) => {
         remarks,
         internalNotes,
         priority: normalizedPriority,
-        details: serviceId ? { ...details, catalogServiceId: serviceId } : details
+        details: serviceId ? { ...resolvedDetails, catalogServiceId: serviceId } : resolvedDetails
       });
 
       if (Array.isArray(travelerIds) && travelerIds.length > 0) {
@@ -1786,6 +1899,8 @@ export const UpdateBookingService = async (req, res) => {
       return sendError(res, 403, "Elevated permission required to edit a completed service.", requestId);
     }
 
+    const existingServiceDetails = service.details && typeof service.details === "object" ? service.details : {};
+
     const allowedFields = [
       "serviceName", "supplierId", "supplierName", "costPrice", "sellingPrice",
       "quantity", "currencyId", "startDate", "endDate", "remarks", "internalNotes",
@@ -1820,6 +1935,24 @@ export const UpdateBookingService = async (req, res) => {
 
     if (service.currencyId && !bookingConfig.supportedCurrencies.includes(service.currencyId)) {
       return sendError(res, 422, `Unsupported currencyId '${service.currencyId}'.`, requestId);
+    }
+
+    if (service.serviceType === "hotel" && req.body.details !== undefined) {
+      const incomingDetails = req.body.details || {};
+      if (incomingDetails.view && !bookingConfig.hotelRoomViews.includes(`${incomingDetails.view}`.trim().toLowerCase())) {
+        return sendError(res, 422, `Unsupported hotel view '${incomingDetails.view}'.`, requestId);
+      }
+      if (incomingDetails.mealPlan && !bookingConfig.hotelMealPlans.includes(`${incomingDetails.mealPlan}`.trim().toLowerCase())) {
+        return sendError(res, 422, `Unsupported mealPlan '${incomingDetails.mealPlan}'.`, requestId);
+      }
+      try {
+        service.details = normalizeHotelServiceDetails(incomingDetails, {
+          performedBy: req.auth?.id || null,
+          existing: existingServiceDetails
+        });
+      } catch (hotelDetailsError) {
+        return sendError(res, 422, hotelDetailsError.message, requestId);
+      }
     }
 
     service.totalPrice = (Number(service.sellingPrice) || 0) * (Number(service.quantity) || 1);
@@ -2541,6 +2674,57 @@ export const ListBookingTimeline = async (req, res) => {
 };
 
 // --- Tasks ---
+/**
+ * GET /bookings/my-tasks — PRD "CRM Feature Map by Phase" Phase 1 module 29
+ * (Enhanced Staff & Role Management: "daily task checklist per staff").
+ * BookingTaskModel already models this (entityType/entityId cover Booking/
+ * Visa/Payment/Customer/Employee/Supplier tasks); this is the one
+ * cross-booking, staff-facing read view that was missing — every existing
+ * task row is real, this just resolves "everything assigned to me,"
+ * grouped by day, rather than requiring one bookingId at a time.
+ */
+export const GetMyTasks = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    const permissions = req.auth?.permissions || [];
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!permissions.includes("bookings.read") && !permissions.includes("booking.read")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
+
+    const userId = req.auth?.id || req.auth?.userId;
+    if (!userId) return sendError(res, 403, "Unable to resolve the requesting user.", requestId);
+
+    const filter = { tenantId: scope.tenantId, assignedTo: userId, status: { $ne: "archived" } };
+    if (req.query.includeCompleted !== "true") {
+      filter.workflowStatus = { $nin: ["completed", "cancelled"] };
+    }
+    if (req.query.date) {
+      const dateStr = req.query.date === "today" ? new Date().toISOString().slice(0, 10) : req.query.date;
+      const day = new Date(dateStr);
+      if (Number.isNaN(day.getTime())) return sendError(res, 400, `Invalid date "${req.query.date}".`, requestId);
+      const start = new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate()));
+      filter.dueDate = { $gte: start, $lt: new Date(start.getTime() + 86400000) };
+    }
+
+    const tasks = await BookingTaskModel.find(filter).sort({ dueDate: 1, priority: -1, createdAt: -1 }).lean();
+
+    const groups = new Map();
+    for (const task of tasks) {
+      const key = task.dueDate ? task.dueDate.toISOString().slice(0, 10) : "noDueDate";
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(task);
+    }
+    const grouped = [...groups.entries()].map(([date, items]) => ({ date, items }));
+
+    return sendSuccess(res, 200, "My tasks loaded.", { grouped, total: tasks.length }, requestId);
+  } catch (error) {
+    console.error("GetMyTasks error:", error);
+    return sendError(res, 500, "Unable to load my tasks.", requestId);
+  }
+};
+
 export const ListBookingTasks = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
@@ -2743,6 +2927,103 @@ export const UpdateBookingTask = async (req, res) => {
   } catch (error) {
     console.error("UpdateBookingTask error:", error);
     return sendError(res, 400, error.message || "Unable to update task.", requestId);
+  }
+};
+
+// ==========================================
+// PRD "CRM Feature Map by Phase" Phase 4 module 40 — Pilgrim Kit Management
+// ==========================================
+
+export const GetBookingKit = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    const permissions = req.auth?.permissions || [];
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!permissions.includes("bookings.read") && !permissions.includes("booking.read")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
+
+    const { bookingId } = req.params;
+    const booking = await BookingHeaderModel.findOne({ _id: bookingId, ...scope }).lean();
+    if (!booking) return sendError(res, 404, "Booking not found.", requestId);
+
+    const kit = await PilgrimKitModel.findOne({ bookingId: booking._id, tenantId: scope.tenantId }).lean();
+    return sendSuccess(res, 200, "Pilgrim kit loaded.", kit || { bookingId: booking._id, items: [] }, requestId);
+  } catch (error) {
+    console.error("GetBookingKit error:", error);
+    return sendError(res, 500, "Unable to load pilgrim kit.", requestId);
+  }
+};
+
+/** Adds one item to this booking's kit — find-or-creates the kit row itself, mirroring AddBookingTask's own "no separate create-kit step" convenience. */
+export const AddBookingKitItem = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    const permissions = req.auth?.permissions || [];
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!permissions.includes("bookings.update") && !permissions.includes("booking.update")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
+
+    const { bookingId } = req.params;
+    const { itemName, quantity = 1 } = req.body;
+    if (!itemName || !itemName.trim()) return sendError(res, 422, "itemName is required.", requestId);
+
+    const booking = await BookingHeaderModel.findOne({ _id: bookingId, ...scope }).lean();
+    if (!booking) return sendError(res, 404, "Booking not found.", requestId);
+
+    const kit = await PilgrimKitModel.findOneAndUpdate(
+      { bookingId: booking._id, tenantId: scope.tenantId },
+      {
+        $push: { items: { itemName: itemName.trim(), quantity } },
+        $set: { updatedBy: req.auth?.id || null },
+        $setOnInsert: { customerId: booking.customerId, createdBy: req.auth?.id || null }
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+
+    return sendSuccess(res, 201, "Kit item added successfully.", kit.toJSON(), requestId);
+  } catch (error) {
+    console.error("AddBookingKitItem error:", error);
+    return sendError(res, 500, "Unable to add kit item.", requestId);
+  }
+};
+
+/** PATCH /bookings/:bookingId/kit/items/:itemId — mark distributed (or update quantity). */
+export const UpdateBookingKitItem = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    const permissions = req.auth?.permissions || [];
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!permissions.includes("bookings.update") && !permissions.includes("booking.update")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
+
+    const { bookingId, itemId } = req.params;
+    const { distributed, quantity } = req.body;
+
+    const kit = await PilgrimKitModel.findOne({ bookingId, tenantId: scope.tenantId });
+    if (!kit) return sendError(res, 404, "Pilgrim kit not found.", requestId);
+
+    const item = kit.items.id(itemId);
+    if (!item) return sendError(res, 404, "Kit item not found.", requestId);
+
+    if (distributed !== undefined) {
+      item.distributed = Boolean(distributed);
+      item.distributedAt = distributed ? new Date() : null;
+      item.distributedBy = distributed ? (req.auth?.id || null) : null;
+    }
+    if (quantity !== undefined) item.quantity = quantity;
+    kit.updatedBy = req.auth?.id || null;
+    await kit.save();
+
+    return sendSuccess(res, 200, "Kit item updated successfully.", kit.toJSON(), requestId);
+  } catch (error) {
+    console.error("UpdateBookingKitItem error:", error);
+    return sendError(res, 500, "Unable to update kit item.", requestId);
   }
 };
 
@@ -2950,6 +3231,225 @@ export const GetBookingDashboard = async (req, res) => {
   } catch (error) {
     console.error("GetBookingDashboard error:", error);
     return sendError(res, 500, "Unable to load booking dashboard metrics.", requestId);
+  }
+};
+
+/**
+ * POST /api/v1/bookings/{bookingId}/vouchers — booking-module PRD Part B
+ * item #7. Generates the agency's own branded Client Voucher — distinct
+ * from HotelBookingModel.voucherNumber/voucherUrl (the GDS supplier's own
+ * confirmation voucher, populated separately by AmadeusAdapter/SabreAdapter).
+ * Each call mints a new voucher document (a booking may need re-issuing);
+ * this never overwrites a prior voucher, matching this codebase's general
+ * "never mutate a financial/legal document, only append" convention.
+ */
+export const GenerateBookingVoucher = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    const permissions = req.auth?.permissions || [];
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+
+    if (!permissions.includes("bookings.update") && !permissions.includes("booking.update")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
+
+    const { bookingId } = req.params;
+    const voucher = await BookingVoucherService.generateVoucher(bookingId, scope.tenantId, req.auth?.id || null);
+    return sendSuccess(res, 201, "Voucher generated.", voucher, requestId);
+  } catch (error) {
+    if (error.message === "Booking not found." || error.message === "Customer not found.") {
+      return sendError(res, 404, error.message, requestId);
+    }
+    if (error.message.startsWith("Cannot generate document")) {
+      return sendError(res, 422, error.message, requestId);
+    }
+    console.error("GenerateBookingVoucher error:", error);
+    return sendError(res, 500, "Unable to generate voucher.", requestId);
+  }
+};
+
+/**
+ * POST /api/v1/bookings/{bookingId}/invoice — booking-module PRD Part A
+ * item #4. Builds Invoice.items[] directly from this booking's active
+ * BookingServiceModel line items (instead of a human re-typing them) and
+ * stamps InvoiceModel.bookingId so the Account Statement / booking detail
+ * view can resolve straight through to it. Distinct from
+ * BookingFinanceLinkService's own auto-invoice-on-BookingCreated (a single
+ * lump-sum line for the booking's package price at creation time) — this is
+ * the itemized, human-triggered path, callable any time after services have
+ * been assigned.
+ */
+export const GenerateBookingInvoice = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    const permissions = req.auth?.permissions || [];
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    const tenantId = scope.tenantId;
+
+    if (!permissions.includes("bookings.update") && !permissions.includes("booking.update") && !permissions.includes("finance.invoice.create")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
+
+    const { bookingId } = req.params;
+    const booking = await BookingHeaderModel.findOne({ _id: bookingId, ...scope });
+    if (!booking) return sendError(res, 404, "Booking not found.", requestId);
+
+    const [travelers, activeServices] = await Promise.all([
+      BookingTravelerModel.find({ bookingId, tenantId, status: "active" }).lean(),
+      BookingServiceModel.find({ bookingId, tenantId, status: "active" }).lean()
+    ]);
+
+    const hotelServices = activeServices.filter((s) => s.serviceType === "hotel");
+
+    try {
+      validateBookingForDocumentGeneration(booking, { travelers, hotelServices });
+    } catch (validationError) {
+      return sendError(res, 422, validationError.message, requestId);
+    }
+
+    if (activeServices.length === 0) {
+      return sendError(res, 422, "Booking has no active services to invoice.", requestId);
+    }
+
+    const items = activeServices.map((s) => ({
+      description: s.serviceName,
+      quantity: Math.max(Number(s.quantity) || 1, 1),
+      unitPrice: Number(s.sellingPrice) || 0
+    }));
+
+    const issueDate = new Date();
+    const MS_PER_DAY = 24 * 60 * 60 * 1000;
+    const dueDate = req.body?.dueDate
+      ? new Date(req.body.dueDate)
+      : (booking.travelDate && booking.travelDate.getTime() > issueDate.getTime() ? booking.travelDate : new Date(issueDate.getTime() + 7 * MS_PER_DAY));
+
+    const invoice = await InvoiceService.createInvoice({
+      customerId: booking.customerId,
+      bookingId: booking._id,
+      currency: booking.currency || "USD",
+      issueDate,
+      dueDate,
+      items,
+      notes: `Invoice for booking ${booking.bookingNumber || booking.bookingReference}.`
+    }, tenantId, req.auth?.id || null);
+
+    await recordBookingTimeline({
+      bookingId: booking._id,
+      tenantId,
+      eventType: "BookingInvoiceGenerated",
+      title: "Invoice Generated",
+      description: `Generated invoice ${invoice.invoiceNumber} for booking`,
+      performedBy: req.auth?.id || null,
+      performedByName: req.auth?.username || "Staff"
+    });
+
+    return sendSuccess(res, 201, "Invoice generated.", invoice, requestId);
+  } catch (error) {
+    if (error.message === "Customer not found.") return sendError(res, 404, error.message, requestId);
+    if (/required/i.test(error.message)) return sendError(res, 400, error.message, requestId);
+    console.error("GenerateBookingInvoice error:", error);
+    return sendError(res, 500, "Unable to generate invoice.", requestId);
+  }
+};
+
+// Supplier document upload — memoryStorage, same pattern as
+// ExpenseController.js's own uploadReceiptFile (BookingDocumentParserService
+// needs a raw Buffer, not a disk path).
+export const uploadSupplierDocumentFile = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 15 * 1024 * 1024 }
+}).single("file");
+
+/**
+ * POST /api/v1/bookings/parse-supplier-document — booking-module PRD Part B
+ * item #8. Extraction only — never saves anything, keeping "AI extracts,
+ * employee reviews" as two separate steps (Document 3 §21). Returns
+ * `needsReview` warnings for inconsistent fields (Document 3 §24) but never
+ * blocks the response on them.
+ */
+export const ParseSupplierDocument = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    const permissions = req.auth?.permissions || [];
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+
+    if (!permissions.includes("bookings.create") && !permissions.includes("booking.create") &&
+        !permissions.includes("bookings.update") && !permissions.includes("booking.update")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
+
+    if (!req.file?.buffer?.length) return sendError(res, 422, "A supplier document file is required.", requestId);
+
+    const result = await BookingDocumentParserService.parseHotelDocument(req.file.buffer, req.file.mimetype, scope.tenantId);
+    return sendSuccess(res, 200, "Supplier document parsed.", result, requestId);
+  } catch (error) {
+    console.error("ParseSupplierDocument error:", error);
+    return sendError(res, 500, "Unable to parse supplier document.", requestId);
+  }
+};
+
+// Voice-Based Booking Creation PRD B3.3 — same multer memory-storage
+// pattern as uploadSupplierDocumentFile above (BookingVoiceParserService
+// needs a raw Buffer, not a disk path). Audio files run larger than
+// typical PDFs for a comparable recording length, hence the higher ceiling.
+export const uploadVoiceBookingFile = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 25 * 1024 * 1024 }
+}).single("audio");
+
+/**
+ * POST /api/v1/bookings/parse-voice-booking — Voice-Based Booking Creation
+ * PRD B3, Mode A (Record -> Upload -> Confirm). Same "extraction only,
+ * never saves anything" contract as ParseSupplierDocument above. Body also
+ * carries `bookingType` (hotel | car_rental | flight_search |
+ * generic_service — utils/voiceBookingExtractionRegistry.js).
+ */
+export const ParseVoiceBooking = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    const permissions = req.auth?.permissions || [];
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+
+    if (!permissions.includes("bookings.create") && !permissions.includes("booking.create") &&
+        !permissions.includes("bookings.update") && !permissions.includes("booking.update")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
+
+    if (!req.file?.buffer?.length) return sendError(res, 422, "An audio file is required.", requestId);
+    if (!req.body.bookingType) return sendError(res, 422, "bookingType is required.", requestId);
+    if (!SUPPORTED_VOICE_BOOKING_TYPES.includes(req.body.bookingType)) {
+      return sendError(res, 422, `Unsupported bookingType '${req.body.bookingType}'. Must be one of: ${SUPPORTED_VOICE_BOOKING_TYPES.join(", ")}.`, requestId);
+    }
+
+    const result = await BookingVoiceParserService.parseVoiceBooking(req.file.buffer, req.file.mimetype, scope.tenantId, req.body.bookingType);
+    return sendSuccess(res, 200, "Voice booking parsed.", result, requestId);
+  } catch (error) {
+    console.error("ParseVoiceBooking error:", error);
+    return sendError(res, 500, "Unable to parse voice booking.", requestId);
+  }
+};
+
+export const ListBookingVouchers = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    const permissions = req.auth?.permissions || [];
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+
+    if (!permissions.includes("bookings.read") && !permissions.includes("booking.read")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
+
+    const { bookingId } = req.params;
+    const vouchers = await BookingVoucherService.listVouchers(bookingId, scope.tenantId);
+    return sendSuccess(res, 200, "Vouchers loaded.", { items: vouchers }, requestId);
+  } catch (error) {
+    console.error("ListBookingVouchers error:", error);
+    return sendError(res, 500, "Unable to load vouchers.", requestId);
   }
 };
 

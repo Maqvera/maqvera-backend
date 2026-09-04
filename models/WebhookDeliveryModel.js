@@ -44,11 +44,23 @@ const WebhookDeliverySchema = new mongoose.Schema({
   signature: { type: String, required: true },
   signedTimestamp: { type: Number, required: true },
   // Config-driven (webhookDeliveryStatuses) — Pending, Delivered, Failed,
-  // Abandoned.
+  // Retrying, DeadLetterQueue, Abandoned.
   status: { type: String, required: true, index: true },
   attempts: { type: [WebhookDeliveryAttemptSchema], default: [] },
   nextRetryAt: { type: Date, default: null },
-  deliveredAt: { type: Date, default: null }
+  deliveredAt: { type: Date, default: null },
+  // Enterprise Webhook Standard (Improvement 14). How many entries of
+  // `utils/financeConfig.js#webhookLongRetryScheduleSeconds` have already
+  // been consumed — the real index into "1 Minute -> 5 Minutes -> ... ->
+  // 24 Hours." WebhookRetryScheduler polls for `status: "Retrying"` rows
+  // whose `nextRetryAt` has passed.
+  longRetryAttempt: { type: Number, default: 0 },
+  // Set once this delivery genuinely exhausts the full long-horizon
+  // schedule and is hand off to Improvement 6's real Dead Letter Queue —
+  // the same row is then visible through the EXISTING
+  // GET /api/v1/resilience/dead-letters?module=Webhook monitoring endpoint,
+  // never a second, parallel DLQ list.
+  dlqId: { type: mongoose.Schema.Types.ObjectId, ref: "dead_letter_queue", default: null }
 }, { timestamps: true });
 
 WebhookDeliverySchema.index({ tenantId: 1, webhookSubscriptionId: 1, createdAt: -1 });

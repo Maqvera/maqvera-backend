@@ -1,7 +1,13 @@
 import Joi from "joi";
-import { sendError } from "../utils/apiResponse.js";
 import { getBookingConfig } from "../utils/bookingConfig.js";
 import { getFinanceConfig } from "../utils/financeConfig.js";
+import { getPlatformConfig } from "../utils/platformConfig.js";
+import { getOrganisationConfig } from "../utils/organisationConfig.js";
+import { getNumberingConfig } from "../utils/numberingConfig.js";
+import { getPackagePricingConfig } from "../utils/packagePricingConfig.js";
+import { getHotelConfig } from "../utils/hotelConfig.js";
+import { getLeadConfig } from "../utils/leadConfig.js";
+import { AppError, sendStandardError, fieldDetailsFromJoiError } from "../utils/errorContract.js";
 
 const getBookingValidationValues = () => {
   const bookingConfig = getBookingConfig();
@@ -21,7 +27,9 @@ const getBookingValidationValues = () => {
     defaultBookingType: bookingConfig.defaultBookingType,
     defaultServiceWorkflowStatus: bookingConfig.defaultServiceWorkflowStatus,
     defaultServiceStatus: bookingConfig.defaultServiceStatus,
-    defaultServicePriority: bookingConfig.defaultServicePriority
+    defaultServicePriority: bookingConfig.defaultServicePriority,
+    hotelMealPlanValues: bookingConfig.hotelMealPlans,
+    hotelRoomViewValues: bookingConfig.hotelRoomViews
   };
 };
 
@@ -29,8 +37,16 @@ const validate = (schema, property = "body") => {
   return (req, res, next) => {
     const { error, value } = schema.validate(req[property], { abortEarly: false, stripUnknown: true });
     if (error) {
+      // Standard Error Contract (Enterprise Architecture Hardening Phase,
+      // Improvement 4) — "Validation errors MUST include field-level
+      // details." The top-level `message` stays the exact same joined
+      // string every existing caller of this central `validate()` has
+      // always received (nothing that reads only `message` sees any
+      // change); `data.details` is the real, new, additive field-level
+      // array the previous version never provided at all.
       const messages = error.details.map((d) => d.message).join("; ");
-      return sendError(res, 400, messages, req.requestId);
+      const appError = new AppError("VALIDATION_FAILED", { message: messages, details: fieldDetailsFromJoiError(error) });
+      return sendStandardError(res, appError, req.requestId);
     }
     req[property] = value;
     next();
@@ -63,6 +79,16 @@ export const authSchemas = {
     username: Joi.string().trim().min(2).max(100).required(),
     email,
     password,
+    // Per-Tenant Payment Gateway Integration (PRD Issue 12) — a real
+    // plan selection is now required at signup; the tenant itself is
+    // only created once payment for this plan actually completes.
+    // Inline ObjectId pattern (not the later-declared `objectIdRef` const
+    // below in this file) — `authSchemas` is a plain object evaluated
+    // immediately at module load, top to bottom, not a lazy Proxy like
+    // `paymentGatewaySchemas`; referencing `objectIdRef` here would throw
+    // a real "Cannot access before initialization" error at import time.
+    planId: Joi.string().trim().pattern(/^[0-9a-fA-F]{24}$/).required().messages({ "string.pattern.base": "planId must be a valid id." }),
+    billingCycle: Joi.string().trim().optional(),
   }),
 
   login: Joi.object({
@@ -250,8 +276,36 @@ const buildBookingSchemas = () => {
     defaultBookingType,
     defaultServiceWorkflowStatus,
     defaultServiceStatus,
-    defaultServicePriority
+    defaultServicePriority,
+    hotelMealPlanValues,
+    hotelRoomViewValues
   } = getBookingValidationValues();
+
+  // Structured hotel service details (PRD A8) — validated only when
+  // serviceType==="hotel" (see serviceItemFields.details below). `nights` is
+  // never accepted from the client — utils/hotelServiceDetails.js computes
+  // it server-side; overrideNights/overrideNightsReason is the only way to
+  // record a deliberate, audited deviation from that computed value.
+  const hotelServiceDetailsSchema = Joi.object({
+    hotelName: Joi.string().trim().min(1).max(200).required(),
+    hotelConfirmationNumber: Joi.string().trim().max(100).optional().allow(""),
+    city: Joi.string().trim().max(100).optional().allow(""),
+    season: Joi.string().trim().max(100).optional().allow(""),
+    roomType: Joi.string().trim().min(1).max(100).required(),
+    roomQuantity: Joi.number().integer().min(1).optional(),
+    view: Joi.string().trim().lowercase().valid(...hotelRoomViewValues).optional(),
+    adultCount: Joi.number().integer().min(1).required(),
+    childCount: Joi.number().integer().min(0).optional(),
+    infantCount: Joi.number().integer().min(0).optional(),
+    mealPlan: Joi.string().trim().lowercase().valid(...hotelMealPlanValues).optional(),
+    mealPrice: Joi.number().min(0).optional(),
+    checkIn: Joi.date().required(),
+    checkOut: Joi.date().required().greater(Joi.ref("checkIn")),
+    ratePerNight: Joi.number().min(0).optional(),
+    overrideNights: Joi.number().integer().min(1).optional(),
+    overrideNightsReason: Joi.string().trim().max(500).when("overrideNights", { is: Joi.exist(), then: Joi.required(), otherwise: Joi.optional() }),
+    catalogServiceId: Joi.string().trim().max(100).optional()
+  });
 
   // "Editable Fields" for PATCH /bookings/{id}/travelers/{travelerId}.
   const travelerPreferenceFields = {
@@ -295,7 +349,11 @@ const buildBookingSchemas = () => {
     workflowStatus: Joi.string().trim().lowercase().valid(...serviceWorkflowStatusValues).optional().default(defaultServiceWorkflowStatus),
     status: Joi.string().trim().lowercase().valid("active", "cancelled", "archived").optional().default(defaultServiceStatus),
     travelerIds: Joi.array().items(Joi.string()).optional(),
-    details: Joi.object().optional().default({})
+    details: Joi.alternatives().conditional("serviceType", {
+      is: "hotel",
+      then: hotelServiceDetailsSchema.required(),
+      otherwise: Joi.object().optional().default({})
+    })
   };
 
   const serviceItemSchema = Joi.object(serviceItemFields).or('serviceName', 'serviceId');
@@ -314,6 +372,7 @@ const buildBookingSchemas = () => {
       priority: Joi.string().trim().valid("normal", "medium", "high", "vip").optional(),
       paymentStatus: Joi.string().trim().valid(...paymentStatusValues).optional().default(defaultPaymentStatus),
       visaStatus: Joi.string().trim().valid(...visaStatusValues).optional().default(defaultVisaStatus),
+      convertedCurrency: Joi.string().trim().min(1).max(10).optional().allow(null, ""),
     }),
 
     // Section 31 "Editable Fields" — status/paymentStatus/visaStatus/totalAmount
@@ -841,6 +900,32 @@ export const paymentSchemas = new Proxy({}, {
   }
 });
 
+// Per-Tenant Payment Gateway Integration (Stripe Connect). Deliberately a
+// SEPARATE export from `paymentSchemas` directly above — that one is
+// Finance's own Accounts Receivable payment-recording module; this one
+// validates the new agency-connects-their-own-Stripe-account routes.
+// Reusing the `paymentSchemas` name would silently collide with an
+// already-live export.
+const PAYMENT_GATEWAY_SCHEMA_KEYS = new Set(["disconnectGateway", "createCheckout"]);
+
+const buildPaymentGatewaySchemas = () => ({
+  disconnectGateway: Joi.object({
+    provider: Joi.string().trim().valid("stripe", "hyperpay", "paypal").default("stripe")
+  }),
+  createCheckout: Joi.object({
+    bookingId: objectIdRef.required()
+  })
+});
+
+export const paymentGatewaySchemas = new Proxy({}, {
+  get(_target, prop) {
+    if (PAYMENT_GATEWAY_SCHEMA_KEYS.has(prop)) {
+      return buildPaymentGatewaySchemas()[prop];
+    }
+    return undefined;
+  }
+});
+
 // Accounts Payable / Vendors / Vendor Payments (Part 6). Config-driven
 // valid-value lists rebuild on every access via the Proxy below, same
 // pattern as the other Finance schemas.
@@ -889,18 +974,43 @@ export const payableSchemas = new Proxy({}, {
 const buildVendorSchemas = () => {
   const config = getFinanceConfig();
 
+  // Visa Module PRD §11 "Vendor details" — populated only for vendors that
+  // actually handle visa submissions (see VendorModel.visaVendorProfile's
+  // own doc comment); every field optional here too.
+  const visaVendorProfileSchema = Joi.object({
+    country: Joi.string().trim().max(100).optional().allow(null, ""),
+    processingTime: Joi.number().integer().min(0).optional().allow(null),
+    defaultCost: Joi.number().min(0).optional().allow(null),
+    currency: Joi.string().trim().uppercase().valid(...config.supportedCurrencies.map((c) => c.toUpperCase())).optional().allow(null)
+  }).optional();
+
   return {
     createVendor: Joi.object({
       name: Joi.string().trim().min(1).max(200).required(),
       contactEmail: Joi.string().trim().email({ tlds: false }).optional().allow(""),
       contactPhone: Joi.string().trim().max(50).optional().allow(""),
+      contactPerson: Joi.string().trim().max(200).optional().allow(""),
+      whatsapp: Joi.string().trim().max(50).optional().allow(""),
+      visaVendorProfile: visaVendorProfileSchema,
       currency: Joi.string().trim().uppercase().valid(...config.supportedCurrencies.map((c) => c.toUpperCase())).required(),
       paymentTermsDays: Joi.number().integer().min(0).optional()
+    }),
+
+    updateVendor: Joi.object({
+      name: Joi.string().trim().min(1).max(200).optional(),
+      contactEmail: Joi.string().trim().email({ tlds: false }).optional().allow(""),
+      contactPhone: Joi.string().trim().max(50).optional().allow(""),
+      contactPerson: Joi.string().trim().max(200).optional().allow(""),
+      whatsapp: Joi.string().trim().max(50).optional().allow(""),
+      visaVendorProfile: visaVendorProfileSchema,
+      currency: Joi.string().trim().uppercase().valid(...config.supportedCurrencies.map((c) => c.toUpperCase())).optional(),
+      paymentTermsDays: Joi.number().integer().min(0).optional(),
+      status: Joi.string().trim().valid("Active", "Inactive").optional()
     })
   };
 };
 
-const VENDOR_SCHEMA_KEYS = new Set(["createVendor"]);
+const VENDOR_SCHEMA_KEYS = new Set(["createVendor", "updateVendor"]);
 
 export const vendorSchemas = new Proxy({}, {
   get(_target, prop) {
@@ -1439,6 +1549,9 @@ const buildExpenseSchemas = () => {
       department: objectIdRef.optional().allow(null, ""),
       projectId: Joi.string().trim().optional().allow(null, ""),
       costCenter: Joi.string().trim().optional().allow(null, ""),
+      // "Profit Centre filtering" (Part 3/4) — same plain descriptive-
+      // string treatment as costCenter (no ProfitCenterModel exists).
+      profitCenter: Joi.string().trim().optional().allow(null, ""),
       // Purely descriptive organizational labels — never used for tenant/
       // access scoping. See Part 34's own reconciliation of the "Business
       // Unit"/"Branch" hierarchy onto this codebase's real architecture.
@@ -1458,6 +1571,10 @@ const buildExpenseSchemas = () => {
         percentage: Joi.number().greater(0).max(100).required()
       })).optional(),
       category: Joi.string().trim().valid(...config.expenseCategories).required(),
+      // "Configurable Expense Category Hierarchy... Level 1" (Part 44) —
+      // optional; validated against `category` (Level 2) in the service
+      // layer, not here (Joi only shapes valid Level-1 keys).
+      categoryGroup: Joi.string().trim().valid(...Object.keys(config.expenseCategoryHierarchy)).optional().allow(null, ""),
       expenseType: Joi.string().trim().valid(...config.expenseTypes).optional(),
       amount: Joi.number().greater(0).optional(),
       currency: Joi.string().trim().valid(...config.supportedCurrencies).required(),
@@ -1475,6 +1592,7 @@ const buildExpenseSchemas = () => {
 
     updateExpense: Joi.object({
       category: Joi.string().trim().valid(...config.expenseCategories).optional(),
+      categoryGroup: Joi.string().trim().valid(...Object.keys(config.expenseCategoryHierarchy)).optional().allow(null, ""),
       expenseType: Joi.string().trim().valid(...config.expenseTypes).optional(),
       amount: Joi.number().greater(0).optional(),
       currency: Joi.string().trim().valid(...config.supportedCurrencies).optional(),
@@ -1483,6 +1601,7 @@ const buildExpenseSchemas = () => {
       department: objectIdRef.optional().allow(null, ""),
       projectId: Joi.string().trim().optional().allow(null, ""),
       costCenter: Joi.string().trim().optional().allow(null, ""),
+      profitCenter: Joi.string().trim().optional().allow(null, ""),
       businessUnit: Joi.string().trim().max(200).optional().allow(null, ""),
       branch: Joi.string().trim().max(200).optional().allow(null, ""),
       tags: Joi.array().items(Joi.string().trim().max(50)).max(20).optional(),
@@ -1501,6 +1620,15 @@ const buildExpenseSchemas = () => {
 
     verifyReceipt: Joi.object({
       status: Joi.string().trim().valid("Verified", "Duplicate", "Rejected").required(),
+      notes: Joi.string().trim().max(1000).optional().allow(null, "")
+    }),
+
+    // "OCR Information... Manual Corrections" (Part 4/4).
+    correctOcr: Joi.object({
+      amount: Joi.number().greater(0).optional().allow(null),
+      vendor: Joi.string().trim().max(200).optional().allow(null, ""),
+      date: Joi.date().optional().allow(null),
+      receiptNumber: Joi.string().trim().max(50).optional().allow(null, ""),
       notes: Joi.string().trim().max(1000).optional().allow(null, "")
     }),
 
@@ -1533,11 +1661,44 @@ const buildExpenseSchemas = () => {
       period: Joi.string().trim().pattern(/^\d{4}(-\d{2})?$/).required().messages({ "string.pattern.base": 'period must be "YYYY" or "YYYY-MM".' }),
       currency: Joi.string().trim().valid(...config.supportedCurrencies).required(),
       allocatedAmount: Joi.number().min(0).required()
+    }),
+
+    // ---- Bulk Operations (Enterprise Expense Management Refactor Part 3/4) ----
+    // `expenseIds` cap mirrors `expenseBulkActionMaxItems`; the service
+    // layer re-checks the same bound (Joi only shapes the request shape).
+    bulkIds: Joi.object({
+      expenseIds: Joi.array().items(objectIdRef).min(1).max(config.expenseBulkActionMaxItems).required()
+    }),
+
+    bulkApprove: Joi.object({
+      expenseIds: Joi.array().items(objectIdRef).min(1).max(config.expenseBulkActionMaxItems).required(),
+      notes: Joi.string().trim().max(1000).optional().allow(null, "")
+    }),
+
+    bulkReject: Joi.object({
+      expenseIds: Joi.array().items(objectIdRef).min(1).max(config.expenseBulkActionMaxItems).required(),
+      reason: Joi.string().trim().max(1000).optional().allow(null, "")
+    }),
+
+    bulkTag: Joi.object({
+      expenseIds: Joi.array().items(objectIdRef).min(1).max(config.expenseBulkActionMaxItems).required(),
+      tags: Joi.array().items(Joi.string().trim().max(50)).min(1).max(20).required()
+    }),
+
+    bulkComment: Joi.object({
+      expenseIds: Joi.array().items(objectIdRef).min(1).max(config.expenseBulkActionMaxItems).required(),
+      text: Joi.string().trim().min(1).max(1000).required()
+    }),
+
+    bulkAssignReviewer: Joi.object({
+      expenseIds: Joi.array().items(objectIdRef).min(1).max(config.expenseBulkActionMaxItems).required(),
+      reviewerId: objectIdRef.required(),
+      notes: Joi.string().trim().max(1000).optional().allow(null, "")
     })
   };
 };
 
-const EXPENSE_SCHEMA_KEYS = new Set(["createExpense", "updateExpense", "verifyReceipt", "approve", "reject", "returnExpense", "cancel", "reimburse", "createBudget"]);
+const EXPENSE_SCHEMA_KEYS = new Set(["createExpense", "updateExpense", "verifyReceipt", "correctOcr", "approve", "reject", "returnExpense", "cancel", "reimburse", "createBudget", "bulkIds", "bulkApprove", "bulkReject", "bulkTag", "bulkComment", "bulkAssignReviewer"]);
 
 export const expenseSchemas = new Proxy({}, {
   get(_target, prop) {
@@ -1573,7 +1734,15 @@ const buildVendorPaymentSchemas = () => {
       paymentDate: Joi.date().required(),
       bankAccountId: objectIdRef.required(),
       vendorBankAccountId: objectIdRef.optional().allow(null, ""),
-      priority: Joi.string().trim().optional().allow(null, "")
+      priority: Joi.string().trim().optional().allow(null, ""),
+      // "Payment Classification" (File 6 Part 2) — all optional; the
+      // pre-Part-2 request shape (vendorId/invoiceIds/paymentDate/
+      // bankAccountId only) keeps working unchanged.
+      paymentType: Joi.string().trim().valid(...config.paymentMethods).optional().allow(null, ""),
+      department: objectIdRef.optional().allow(null, ""),
+      costCenter: Joi.string().trim().optional().allow(null, ""),
+      projectId: Joi.string().trim().optional().allow(null, ""),
+      source: Joi.string().trim().valid(...config.vendorPaymentSources).optional().allow(null, "")
     }),
 
     reject: Joi.object({
@@ -1737,11 +1906,31 @@ const buildCustomerCollectionSchemas = () => {
       currency: Joi.string().trim().valid(...config.supportedCurrencies).required(),
       sourceType: Joi.string().trim().valid(...config.customerDepositSourceTypes).required(),
       paymentMethod: Joi.string().trim().optional().allow(null, "")
+    }),
+
+    // "Payment Allocation Engine" (Part 18 continuation).
+    allocatePayment: Joi.object({
+      allocationStrategy: Joi.string().trim().valid(...config.paymentAllocationStrategies).optional(),
+      invoiceIds: Joi.array().items(objectIdRef).min(1).optional()
+    }),
+
+    // File 6 Part 5.
+    addComment: Joi.object({
+      text: Joi.string().trim().min(1).max(2000).required()
+    }),
+
+    addTimelineEntry: Joi.object({
+      description: Joi.string().trim().min(1).max(2000).required(),
+      event: Joi.string().trim().max(100).optional().allow(null, "")
+    }),
+
+    reopen: Joi.object({
+      reason: Joi.string().trim().max(1000).optional().allow(null, "")
     })
   };
 };
 
-const CUSTOMER_COLLECTION_SCHEMA_KEYS = new Set(["createCollectionRequest", "collectPayment", "captureAuthorizedPayment", "createInstallmentPlan", "rescheduleInstallment", "cancelInstallmentPlan", "sendReminder", "dispute", "writeOff", "cancel", "createDeposit"]);
+const CUSTOMER_COLLECTION_SCHEMA_KEYS = new Set(["createCollectionRequest", "collectPayment", "captureAuthorizedPayment", "createInstallmentPlan", "rescheduleInstallment", "cancelInstallmentPlan", "sendReminder", "dispute", "writeOff", "cancel", "createDeposit", "allocatePayment", "addComment", "addTimelineEntry", "reopen"]);
 
 export const customerCollectionSchemas = new Proxy({}, {
   get(_target, prop) {
@@ -1965,11 +2154,26 @@ const buildCurrencySchemas = () => {
 
     runRevaluation: Joi.object({
       revaluationDate: Joi.date().optional()
+    }),
+
+    // File 7 Part 3 — POST /api/v1/currency/convert. `merchantId`/
+    // `companyId` from the spec's own request example are accepted but
+    // never validated/used — no Merchant model, and Company is already
+    // Tenant (see this Part's own doc section).
+    convert: Joi.object({
+      merchantId: Joi.string().trim().optional().allow(null, ""),
+      companyId: Joi.string().trim().optional().allow(null, ""),
+      fromCurrency: Joi.string().trim().uppercase().length(3).required(),
+      toCurrency: Joi.string().trim().uppercase().length(3).required(),
+      amount: Joi.number().greater(0).required(),
+      conversionDate: Joi.date().optional(),
+      rateType: Joi.string().trim().valid(...config.exchangeRateTypes, "auto").optional(),
+      source: Joi.string().trim().valid(...config.conversionSources).optional()
     })
   };
 };
 
-const CURRENCY_SCHEMA_KEYS = new Set(["createCurrency", "suspend", "createExchangeRate", "rejectExchangeRate", "importRates", "runRevaluation"]);
+const CURRENCY_SCHEMA_KEYS = new Set(["createCurrency", "suspend", "createExchangeRate", "rejectExchangeRate", "importRates", "runRevaluation", "convert"]);
 
 export const currencySchemas = new Proxy({}, {
   get(_target, prop) {
@@ -2778,14 +2982,22 @@ const buildCommunicationSchemas = () => ({
     }).required(),
     templateId: Joi.string().trim().optional().allow(null, ""),
     templateData: Joi.object().optional(),
+    locale: Joi.string().trim().min(2).max(10).optional(),
     subject: Joi.string().trim().max(500).optional().allow(null, ""),
     content: Joi.string().trim().max(10000).optional().allow(null, ""),
     priority: Joi.string().trim().valid("Low", "Normal", "High", "Critical").optional(),
     scheduledAt: Joi.date().optional(),
-    idempotencyKey: Joi.string().trim().max(100).optional().allow(null, "")
+    idempotencyKey: Joi.string().trim().max(100).optional().allow(null, ""),
+    topic: Joi.string().trim().max(100).optional().allow(null, ""),
+    deepLink: Joi.object({
+      screen: Joi.string().trim().max(200).optional().allow(null, ""),
+      params: Joi.object().optional()
+    }).optional()
   }),
 
   createTemplate: Joi.object({
+    templateId: Joi.string().trim().optional().allow(null, ""),
+    locale: Joi.string().trim().min(2).max(10).optional(),
     name: Joi.string().trim().min(1).max(200).required(),
     channel: Joi.string().trim().valid("Email", "SMS", "WhatsApp", "Push", "InApp", "Webhook").required(),
     subjectTemplate: Joi.string().trim().max(500).optional().allow(""),
@@ -2794,11 +3006,29 @@ const buildCommunicationSchemas = () => ({
   }),
 
   updateTemplate: Joi.object({
+    locale: Joi.string().trim().min(2).max(10).optional(),
     name: Joi.string().trim().min(1).max(200).optional(),
     subjectTemplate: Joi.string().trim().max(500).optional().allow(""),
     bodyTemplate: Joi.string().trim().min(1).optional(),
     variables: Joi.array().items(Joi.string().trim()).optional(),
-    status: Joi.string().trim().valid("Draft", "Active", "Archived").optional()
+    // "Active" is deliberately excluded here — a template can only reach
+    // Active via approveTemplate() (see CommunicationTemplateService's own
+    // doc comment on why a direct status update can't set it).
+    status: Joi.string().trim().valid("Draft", "Archived").optional()
+  }),
+
+  templateLocaleAction: Joi.object({
+    locale: Joi.string().trim().min(2).max(10).optional()
+  }),
+
+  rejectTemplate: Joi.object({
+    locale: Joi.string().trim().min(2).max(10).optional(),
+    reason: Joi.string().trim().min(1).max(1000).required()
+  }),
+
+  rollbackTemplate: Joi.object({
+    locale: Joi.string().trim().min(2).max(10).optional(),
+    toVersion: Joi.number().integer().min(1).required()
   }),
 
   updateUserPreferences: Joi.object({
@@ -2808,7 +3038,14 @@ const buildCommunicationSchemas = () => ({
     pushOptIn: Joi.boolean().optional(),
     inAppOptIn: Joi.boolean().optional(),
     preferredChannel: Joi.string().trim().valid("Email", "SMS", "WhatsApp", "Push", "InApp").optional(),
-    doNotDisturb: Joi.boolean().optional()
+    doNotDisturb: Joi.boolean().optional(),
+    quietHours: Joi.object({
+      start: Joi.string().trim().pattern(/^([01]\d|2[0-3]):[0-5]\d$/).allow(null).optional(),
+      end: Joi.string().trim().pattern(/^([01]\d|2[0-3]):[0-5]\d$/).allow(null).optional(),
+      timezone: Joi.string().trim().max(64).optional()
+    }).optional(),
+    subscribedTopics: Joi.array().items(Joi.string().trim().max(100)).optional(),
+    unsubscribedTopics: Joi.array().items(Joi.string().trim().max(100)).optional()
   }),
 
   sendEmail: Joi.object({
@@ -2820,6 +3057,7 @@ const buildCommunicationSchemas = () => ({
     ).required(),
     variables: Joi.object().optional(),
     templateData: Joi.object().optional(),
+    locale: Joi.string().trim().min(2).max(10).optional(),
     subject: Joi.string().trim().max(500).optional().allow(null, ""),
     content: Joi.string().trim().max(50000).optional().allow(null, ""),
     body: Joi.string().trim().max(50000).optional().allow(null, ""),
@@ -2851,6 +3089,7 @@ const buildCommunicationSchemas = () => ({
     templateId: Joi.string().trim().optional().allow(null, ""),
     variables: Joi.object().optional(),
     templateData: Joi.object().optional(),
+    locale: Joi.string().trim().min(2).max(10).optional(),
     message: Joi.string().trim().max(2000).optional().allow(null, ""),
     content: Joi.string().trim().max(2000).optional().allow(null, ""),
     priority: Joi.string().trim().valid("Low", "Normal", "High", "Critical").optional(),
@@ -2892,12 +3131,60 @@ const buildCommunicationSchemas = () => ({
 
   updateCampaignStatus: Joi.object({
     action: Joi.string().trim().valid("pause", "resume", "cancel").required()
+  }),
+
+  sendWhatsApp: Joi.object({
+    phone: Joi.string().trim().required(),
+    templateId: Joi.string().trim().optional().allow(null, ""),
+    templateData: Joi.object().optional(),
+    locale: Joi.string().trim().min(2).max(10).optional(),
+    content: Joi.string().trim().max(4096).optional().allow(null, ""),
+    priority: Joi.string().trim().valid("Low", "Normal", "High", "Critical").optional(),
+    scheduledAt: Joi.date().optional(),
+    sourceModule: Joi.string().trim().valid("CRM", "Booking", "Travel", "Visa", "Finance", "HR", "Inventory", "Sales", "Procurement", "AI", "System", "PackagePricing").optional(),
+    idempotencyKey: Joi.string().trim().max(100).optional().allow(null, "")
+  }),
+
+  registerDevice: Joi.object({
+    platform: Joi.string().trim().valid("ios", "android", "web").required(),
+    token: Joi.string().trim().min(1).required(),
+    topics: Joi.array().items(Joi.string().trim().max(100)).optional()
+  }),
+
+  archiveMessage: Joi.object({
+    reason: Joi.string().trim().min(1).max(500).required()
+  }),
+
+  purgeMessage: Joi.object({
+    approvedBy: Joi.string().trim().min(1).required(),
+    reason: Joi.string().trim().max(500).optional().allow(null, "")
+  }),
+
+  applyLegalHold: Joi.object({
+    reason: Joi.string().trim().min(1).max(500).required()
+  }),
+
+  removeLegalHold: Joi.object({
+    holdId: Joi.string().trim().required(),
+    removalReason: Joi.string().trim().max(500).optional().allow(null, "")
+  }),
+
+  sendPush: Joi.object({
+    userId: Joi.string().trim().required(),
+    subject: Joi.string().trim().max(200).optional().allow(null, ""),
+    content: Joi.string().trim().max(1000).optional().allow(null, ""),
+    screen: Joi.string().trim().max(200).optional().allow(null, ""),
+    params: Joi.object().optional(),
+    priority: Joi.string().trim().valid("Low", "Normal", "High", "Critical").optional(),
+    sourceModule: Joi.string().trim().valid("CRM", "Booking", "Travel", "Visa", "Finance", "HR", "Inventory", "Sales", "Procurement", "AI", "System").optional(),
+    idempotencyKey: Joi.string().trim().max(100).optional().allow(null, "")
   })
 });
 
 const COMMUNICATION_SCHEMA_KEYS = new Set([
-  "requestCommunication", "createTemplate", "updateTemplate", "updateUserPreferences", "sendEmail",
-  "sendSms", "generateOtp", "verifyOtp", "createBulkCampaign", "updateCampaignStatus"
+  "requestCommunication", "createTemplate", "updateTemplate", "templateLocaleAction", "rejectTemplate", "rollbackTemplate", "updateUserPreferences", "sendEmail",
+  "sendSms", "generateOtp", "verifyOtp", "createBulkCampaign", "updateCampaignStatus", "sendWhatsApp",
+  "registerDevice", "sendPush", "archiveMessage", "purgeMessage", "applyLegalHold", "removeLegalHold"
 ]);
 
 export const communicationSchemas = new Proxy({}, {
@@ -2908,6 +3195,77 @@ export const communicationSchemas = new Proxy({}, {
     return undefined;
   }
 });
+
+// Reporting Platform Part 8 fix — report template registry (ReportTemplateModel).
+export const reportTemplateSchemas = {
+  createReportTemplate: Joi.object({
+    templateKey: Joi.string().trim().min(1).max(200).required(),
+    reportType: Joi.string().trim().min(1).max(200).required(),
+    locale: Joi.string().trim().min(2).max(10).optional(),
+    htmlBody: Joi.string().trim().min(1).required(),
+    brandingConfig: Joi.object({
+      logo: Joi.string().trim().max(2000).optional().allow(null, ""),
+      colors: Joi.object().optional().allow(null),
+      fonts: Joi.object().optional().allow(null)
+    }).optional()
+  }),
+
+  updateReportTemplate: Joi.object({
+    locale: Joi.string().trim().min(2).max(10).optional(),
+    htmlBody: Joi.string().trim().min(1).optional(),
+    brandingConfig: Joi.object({
+      logo: Joi.string().trim().max(2000).optional().allow(null, ""),
+      colors: Joi.object().optional().allow(null),
+      fonts: Joi.object().optional().allow(null)
+    }).optional()
+  }),
+
+  templateLocaleAction: Joi.object({
+    locale: Joi.string().trim().min(2).max(10).optional()
+  })
+};
+
+// Reporting Platform Part 5 fix — KPI definition registry (KPIDefinitionModel).
+export const kpiDefinitionSchemas = {
+  registerKPIDefinition: Joi.object({
+    kpiKey: Joi.string().trim().min(1).max(200).required(),
+    name: Joi.string().trim().min(1).max(200).required(),
+    ownerModule: Joi.string().trim().min(1).max(100).required(),
+    category: Joi.string().trim().max(100).optional().allow(null, ""),
+    codeRef: Joi.string().trim().min(1).max(300).required(),
+    description: Joi.string().trim().max(1000).optional().allow(null, ""),
+    unit: Joi.string().trim().max(50).optional().allow(null, ""),
+    target: Joi.number().optional().allow(null),
+    thresholds: Joi.object({
+      warning: Joi.number().optional().allow(null),
+      critical: Joi.number().optional().allow(null)
+    }).optional()
+  }),
+
+  deprecateKPIDefinition: Joi.object({
+    ownerModule: Joi.string().trim().min(1).max(100).required()
+  })
+};
+
+// Reporting Platform Part 2 fix — report catalog registry (ReportCatalogModel).
+export const reportCatalogSchemas = {
+  registerReportCatalogEntry: Joi.object({
+    reportKey: Joi.string().trim().min(1).max(200).required(),
+    name: Joi.string().trim().min(1).max(200).required(),
+    module: Joi.string().trim().min(1).max(100).required(),
+    category: Joi.string().trim().max(100).optional().allow(null, ""),
+    tags: Joi.array().items(Joi.string().trim().max(50)).optional(),
+    owner: Joi.string().trim().max(200).optional().allow(null, ""),
+    description: Joi.string().trim().max(1000).optional().allow(null, ""),
+    lifecycleState: Joi.string().trim().max(50).optional(),
+    relatedKpiKeys: Joi.array().items(Joi.string().trim().max(200)).optional()
+  }),
+
+  transitionReportCatalogLifecycle: Joi.object({
+    lifecycleState: Joi.string().trim().min(1).max(50).required(),
+    adminOverride: Joi.boolean().optional()
+  })
+};
 
 
 
@@ -3152,6 +3510,957 @@ export const customerSchemas = {
   customerMerge: Joi.object({
     primaryCustomerId: Joi.string().trim().min(1).max(100).required(),
     duplicateCustomerId: Joi.string().trim().min(1).max(100).required()
+  })
+};
+
+// Enterprise Subscription Platform — same env-driven Proxy pattern as
+// currencySchemas/customerCollectionSchemas above, so plan-tier/billing-cycle
+// validity stays config-driven rather than hardcoded here.
+const buildPlatformSchemas = () => {
+  const config = getPlatformConfig();
+  return {
+    createPlan: Joi.object({
+      planCode: Joi.string().trim().min(1).max(30).required(),
+      name: Joi.string().trim().min(1).max(150).required(),
+      tier: Joi.string().trim().valid(...config.planTiers).required(),
+      description: Joi.string().trim().max(1000).optional().allow(null, ""),
+      pricing: Joi.object({
+        currency: Joi.string().trim().optional(),
+        monthly: Joi.number().min(0).optional().allow(null),
+        quarterly: Joi.number().min(0).optional().allow(null),
+        yearly: Joi.number().min(0).optional().allow(null)
+      }).optional(),
+      limits: Joi.object({
+        maxUsers: Joi.number().integer().min(0).optional().allow(null),
+        maxStorageGB: Joi.number().min(0).optional().allow(null),
+        maxApiCallsPerDay: Joi.number().integer().min(0).optional().allow(null),
+        maxProjects: Joi.number().integer().min(0).optional().allow(null),
+        maxEmployees: Joi.number().integer().min(0).optional().allow(null),
+        aiCreditsPerMonth: Joi.number().integer().min(0).optional().allow(null)
+      }).optional(),
+      features: Joi.object().pattern(Joi.string(), Joi.boolean()).optional(),
+      trialDays: Joi.number().integer().min(0).optional().allow(null),
+      gracePeriodDays: Joi.number().integer().min(0).optional().allow(null),
+      supportLevel: Joi.string().trim().valid(...config.supportLevels).optional().allow(null, ""),
+      backupFrequency: Joi.string().trim().valid(...config.backupFrequencies).optional().allow(null, ""),
+      isSellable: Joi.boolean().optional(),
+      isCustom: Joi.boolean().optional(),
+      sortOrder: Joi.number().integer().optional()
+    }),
+
+    updatePlan: Joi.object({
+      name: Joi.string().trim().min(1).max(150).optional(),
+      description: Joi.string().trim().max(1000).optional().allow(null, ""),
+      pricing: Joi.object({
+        currency: Joi.string().trim().optional(),
+        monthly: Joi.number().min(0).optional().allow(null),
+        quarterly: Joi.number().min(0).optional().allow(null),
+        yearly: Joi.number().min(0).optional().allow(null)
+      }).optional(),
+      limits: Joi.object().optional(),
+      features: Joi.object().pattern(Joi.string(), Joi.boolean()).optional(),
+      trialDays: Joi.number().integer().min(0).optional().allow(null),
+      gracePeriodDays: Joi.number().integer().min(0).optional().allow(null),
+      supportLevel: Joi.string().trim().valid(...config.supportLevels).optional().allow(null, ""),
+      backupFrequency: Joi.string().trim().valid(...config.backupFrequencies).optional().allow(null, ""),
+      isSellable: Joi.boolean().optional(),
+      sortOrder: Joi.number().integer().optional()
+    }),
+
+    startTrial: Joi.object({
+      planId: objectIdRef.required()
+    }),
+
+    createSubscription: Joi.object({
+      planId: objectIdRef.required(),
+      billingCycle: Joi.string().trim().valid(...config.billingCycles).required()
+    }),
+
+    cancelSubscription: Joi.object({
+      reason: Joi.string().trim().max(1000).optional().allow(null, "")
+    }),
+
+    setupBillingAccount: Joi.object({
+      billingContactName: Joi.string().trim().min(1).max(150).required(),
+      billingContactEmail: Joi.string().trim().email().required(),
+      billingContactPhone: Joi.string().trim().max(30).optional().allow(null, ""),
+      taxNumber: Joi.string().trim().max(50).optional().allow(null, ""),
+      billingAddress: Joi.object({
+        line1: Joi.string().trim().max(255).optional().allow(null, ""),
+        city: Joi.string().trim().max(100).optional().allow(null, ""),
+        country: Joi.string().trim().max(100).optional().allow(null, ""),
+        postalCode: Joi.string().trim().max(20).optional().allow(null, "")
+      }).optional(),
+      paymentMethod: Joi.string().trim().valid(...config.billingPaymentMethods).optional(),
+      manualPaymentDetails: Joi.object({
+        accountTitle: Joi.string().trim().optional().allow(null, ""),
+        accountNumber: Joi.string().trim().optional().allow(null, ""),
+        bankOrProviderName: Joi.string().trim().optional().allow(null, "")
+      }).optional()
+    }),
+
+    payInvoiceManually: Joi.object({
+      reference: Joi.string().trim().max(200).optional().allow(null, "")
+    }),
+
+    adminSuspend: Joi.object({
+      reason: Joi.string().trim().min(1).max(1000).required()
+    }),
+
+    // Enterprise Merchant & Billing Platform (Improvement 3).
+    createMerchant: Joi.object({
+      organisationName: Joi.string().trim().min(1).max(200).required(),
+      legalName: Joi.string().trim().max(200).optional().allow(null, ""),
+      taxNumber: Joi.string().trim().max(50).optional().allow(null, ""),
+      registrationNumber: Joi.string().trim().max(50).optional().allow(null, ""),
+      country: Joi.string().trim().max(100).optional().allow(null, ""),
+      primaryContact: Joi.object({
+        name: Joi.string().trim().optional().allow(null, ""),
+        email: Joi.string().trim().email().optional().allow(null, ""),
+        phone: Joi.string().trim().optional().allow(null, "")
+      }).optional(),
+      billingEmail: Joi.string().trim().email().required()
+    }),
+
+    merchantSuspend: Joi.object({
+      reason: Joi.string().trim().min(1).max(1000).required()
+    }),
+
+    addPaymentMethod: Joi.object({
+      paymentMethod: Joi.string().trim().valid(...config.billingPaymentMethods).required(),
+      stripePaymentMethodId: Joi.string().trim().optional().allow(null, ""),
+      manualPaymentDetails: Joi.object({
+        accountTitle: Joi.string().trim().optional().allow(null, ""),
+        accountNumber: Joi.string().trim().optional().allow(null, ""),
+        bankOrProviderName: Joi.string().trim().optional().allow(null, "")
+      }).optional()
+    }),
+
+    walletOperation: Joi.object({
+      merchantId: objectIdRef.required(),
+      balanceType: Joi.string().trim().valid(...config.walletBalanceTypes).optional(),
+      amount: Joi.number().greater(0).optional(),
+      currency: Joi.string().trim().optional()
+    }),
+
+    merchantRefund: Joi.object({
+      merchantId: objectIdRef.required(),
+      amount: Joi.number().greater(0).required(),
+      currency: Joi.string().trim().required(),
+      reason: Joi.string().trim().min(1).max(1000).required(),
+      referenceId: Joi.string().trim().optional().allow(null, "")
+    })
+  };
+};
+
+const PLATFORM_SCHEMA_KEYS = new Set(["createPlan", "updatePlan", "startTrial", "createSubscription", "cancelSubscription", "setupBillingAccount", "payInvoiceManually", "adminSuspend", "createMerchant", "merchantSuspend", "addPaymentMethod", "walletOperation", "merchantRefund"]);
+
+export const platformSchemas = new Proxy({}, {
+  get(_target, prop) {
+    if (PLATFORM_SCHEMA_KEYS.has(prop)) {
+      return buildPlatformSchemas()[prop];
+    }
+    return undefined;
+  }
+});
+
+// Enterprise Organisation Structure Platform (Improvement 4). Same
+// config-driven-Proxy pattern as buildPlatformSchemas above — status
+// enums come from utils/organisationConfig.js so an env override takes
+// effect without a schema-caching bug.
+const buildOrganisationSchemas = () => {
+  const config = getOrganisationConfig();
+  const addressSchema = Joi.object({
+    line1: Joi.string().trim().max(255).optional().allow(null, ""),
+    city: Joi.string().trim().max(100).optional().allow(null, ""),
+    country: Joi.string().trim().max(100).optional().allow(null, ""),
+    postalCode: Joi.string().trim().max(20).optional().allow(null, "")
+  });
+
+  return {
+    createOrganisation: Joi.object({
+      name: Joi.string().trim().min(1).max(200).required(),
+      description: Joi.string().trim().max(1000).optional().allow(null, ""),
+      industry: Joi.string().trim().max(100).optional().allow(null, "")
+    }),
+    updateOrganisation: Joi.object({
+      name: Joi.string().trim().min(1).max(200).optional(),
+      description: Joi.string().trim().max(1000).optional().allow(null, ""),
+      industry: Joi.string().trim().max(100).optional().allow(null, ""),
+      status: Joi.string().trim().valid(...config.organisationStatuses).optional()
+    }),
+
+    createLegalEntity: Joi.object({
+      organisationId: objectIdRef.required(),
+      name: Joi.string().trim().min(1).max(200).required(),
+      registrationNumber: Joi.string().trim().max(50).optional().allow(null, ""),
+      taxNumber: Joi.string().trim().max(50).optional().allow(null, ""),
+      country: Joi.string().trim().max(100).optional().allow(null, ""),
+      reportingCurrency: Joi.string().trim().max(10).optional().allow(null, "")
+    }),
+    updateLegalEntity: Joi.object({
+      name: Joi.string().trim().min(1).max(200).optional(),
+      registrationNumber: Joi.string().trim().max(50).optional().allow(null, ""),
+      taxNumber: Joi.string().trim().max(50).optional().allow(null, ""),
+      country: Joi.string().trim().max(100).optional().allow(null, ""),
+      reportingCurrency: Joi.string().trim().max(10).optional().allow(null, ""),
+      status: Joi.string().trim().valid(...config.legalEntityStatuses).optional()
+    }),
+
+    createBusinessUnit: Joi.object({
+      legalEntityId: objectIdRef.required(),
+      name: Joi.string().trim().min(1).max(200).required(),
+      description: Joi.string().trim().max(1000).optional().allow(null, "")
+    }),
+    updateBusinessUnit: Joi.object({
+      name: Joi.string().trim().min(1).max(200).optional(),
+      description: Joi.string().trim().max(1000).optional().allow(null, ""),
+      status: Joi.string().trim().valid(...config.businessUnitStatuses).optional()
+    }),
+
+    createCompany: Joi.object({
+      legalEntityId: objectIdRef.required(),
+      businessUnitId: objectIdRef.optional().allow(null, ""),
+      name: Joi.string().trim().min(1).max(200).required(),
+      registrationNumber: Joi.string().trim().max(50).optional().allow(null, ""),
+      taxNumber: Joi.string().trim().max(50).optional().allow(null, ""),
+      country: Joi.string().trim().max(100).optional().allow(null, ""),
+      currency: Joi.string().trim().max(10).optional().allow(null, "")
+    }),
+    updateCompany: Joi.object({
+      name: Joi.string().trim().min(1).max(200).optional(),
+      registrationNumber: Joi.string().trim().max(50).optional().allow(null, ""),
+      taxNumber: Joi.string().trim().max(50).optional().allow(null, ""),
+      country: Joi.string().trim().max(100).optional().allow(null, ""),
+      currency: Joi.string().trim().max(10).optional().allow(null, ""),
+      status: Joi.string().trim().valid(...config.companyStatuses).optional()
+    }),
+
+    createBranch: Joi.object({
+      companyId: objectIdRef.required(),
+      name: Joi.string().trim().min(1).max(200).required(),
+      address: addressSchema.optional()
+    }),
+    updateBranch: Joi.object({
+      name: Joi.string().trim().min(1).max(200).optional(),
+      address: addressSchema.optional()
+    }),
+    closeBranch: Joi.object({
+      reason: Joi.string().trim().max(1000).optional().allow(null, "")
+    }),
+
+    createDepartment: Joi.object({
+      companyId: objectIdRef.optional().allow(null, ""),
+      branchId: objectIdRef.optional().allow(null, ""),
+      name: Joi.string().trim().min(1).max(200).required(),
+      description: Joi.string().trim().max(1000).optional().allow(null, "")
+    }),
+    updateDepartment: Joi.object({
+      companyId: objectIdRef.optional().allow(null, ""),
+      branchId: objectIdRef.optional().allow(null, ""),
+      name: Joi.string().trim().min(1).max(200).optional(),
+      description: Joi.string().trim().max(1000).optional().allow(null, ""),
+      status: Joi.string().trim().valid("active", "inactive", "suspended", "deleted").optional()
+    }),
+
+    createTeam: Joi.object({
+      departmentId: objectIdRef.required(),
+      name: Joi.string().trim().min(1).max(200).required(),
+      description: Joi.string().trim().max(1000).optional().allow(null, "")
+    }),
+    updateTeam: Joi.object({
+      name: Joi.string().trim().min(1).max(200).optional(),
+      description: Joi.string().trim().max(1000).optional().allow(null, ""),
+      status: Joi.string().trim().valid(...config.teamStatuses).optional()
+    })
+  };
+};
+
+const ORGANISATION_SCHEMA_KEYS = new Set([
+  "createOrganisation", "updateOrganisation",
+  "createLegalEntity", "updateLegalEntity",
+  "createBusinessUnit", "updateBusinessUnit",
+  "createCompany", "updateCompany",
+  "createBranch", "updateBranch", "closeBranch",
+  "createDepartment", "updateDepartment",
+  "createTeam", "updateTeam"
+]);
+
+export const organisationSchemas = new Proxy({}, {
+  get(_target, prop) {
+    if (ORGANISATION_SCHEMA_KEYS.has(prop)) {
+      return buildOrganisationSchemas()[prop];
+    }
+    return undefined;
+  }
+});
+
+// Enterprise Identity & Global Resource ID Platform (Improvement 5).
+// resourceType is deliberately NOT restricted to
+// config.resourceTypeCatalog — see utils/numberingConfig.js's own doc
+// comment on why it stays a free string (the spec's own "Configurable
+// Formats" requirement covers resource types this codebase doesn't know
+// about yet, not just the seeded catalog).
+const buildNumberingSchemas = () => {
+  const config = getNumberingConfig();
+
+  return {
+    createScheme: Joi.object({
+      resourceType: Joi.string().trim().min(1).max(100).required(),
+      companyId: objectIdRef.optional().allow(null, ""),
+      branchId: objectIdRef.optional().allow(null, ""),
+      prefix: Joi.string().trim().min(1).max(20).required(),
+      separator: Joi.string().trim().max(3).allow("").optional(),
+      includeYear: Joi.boolean().optional(),
+      includeCompany: Joi.boolean().optional(),
+      includeBranch: Joi.boolean().optional(),
+      sequenceLength: Joi.number().integer().min(1).max(12).optional(),
+      fiscalYearStartMonth: Joi.number().integer().min(1).max(12).optional(),
+      allowGaps: Joi.boolean().optional(),
+      isDefault: Joi.boolean().optional()
+    }),
+    updateScheme: Joi.object({
+      prefix: Joi.string().trim().min(1).max(20).optional(),
+      separator: Joi.string().trim().max(3).allow("").optional(),
+      includeYear: Joi.boolean().optional(),
+      includeCompany: Joi.boolean().optional(),
+      includeBranch: Joi.boolean().optional(),
+      sequenceLength: Joi.number().integer().min(1).max(12).optional(),
+      fiscalYearStartMonth: Joi.number().integer().min(1).max(12).optional(),
+      allowGaps: Joi.boolean().optional(),
+      isDefault: Joi.boolean().optional(),
+      status: Joi.string().trim().valid(...config.schemeStatuses).optional()
+    }),
+    resetSequence: Joi.object({
+      key: Joi.string().trim().min(1).max(20).required(),
+      newValue: Joi.number().integer().min(0).required()
+    }),
+
+    generateNumber: Joi.object({
+      resourceType: Joi.string().trim().min(1).max(100).required(),
+      companyId: objectIdRef.optional().allow(null, ""),
+      branchId: objectIdRef.optional().allow(null, ""),
+      legalEntityId: objectIdRef.optional().allow(null, ""),
+      resourceUuid: Joi.string().trim().max(100).optional().allow(null, "")
+    }),
+    registerResource: Joi.object({
+      resourceUuid: Joi.string().trim().min(1).max(100).required()
+    }),
+    rollbackSequence: Joi.object({
+      reason: Joi.string().trim().max(1000).optional().allow(null, "")
+    })
+  };
+};
+
+const NUMBERING_SCHEMA_KEYS = new Set(["createScheme", "updateScheme", "resetSequence", "generateNumber", "registerResource", "rollbackSequence"]);
+
+export const numberingSchemas = new Proxy({}, {
+  get(_target, prop) {
+    if (NUMBERING_SCHEMA_KEYS.has(prop)) {
+      return buildNumberingSchemas()[prop];
+    }
+    return undefined;
+  }
+});
+
+// Booking-module PRD Part C item #14 — "required-field validation... Company
+// Name" (Document 4 §24). Deliberately not a Proxy/config-driven schema like
+// bookingSchemas/numberingSchemas above — nothing here reads from a
+// get*Config() function, so a plain static object matches customerSchemas'
+// own convention instead.
+export const tenantProfileSchemas = {
+  createOrUpdateProfile: Joi.object({
+    companyName: Joi.string().trim().min(1).max(200).required().messages({
+      'any.required': 'companyName is required',
+      'string.empty': 'companyName is required'
+    }),
+    registrationNumber: Joi.string().trim().max(100).optional().allow(null, ''),
+    // Distinct from registrationNumber (Commercial Registration) — see
+    // TenantProfileModel.js's own doc comment.
+    licenseNumber: Joi.string().trim().max(100).optional().allow(null, ''),
+    vatNumber: Joi.string().trim().max(100).optional().allow(null, ''),
+    companyNameArabic: Joi.string().trim().max(200).optional().allow(null, ''),
+    address: Joi.string().trim().max(500).optional().allow(null, ''),
+    city: Joi.string().trim().max(100).optional().allow(null, ''),
+    country: Joi.string().trim().max(100).optional().allow(null, ''),
+    phone: Joi.string().trim().max(50).optional().allow(null, ''),
+    email: Joi.string().trim().email().optional().allow(null, ''),
+    defaultBankAccountId: objectIdRef.optional().allow(null, ''),
+    primaryColor: Joi.string().trim().max(20).optional().allow(null, ''),
+    secondaryColor: Joi.string().trim().max(20).optional().allow(null, ''),
+    customDomain: Joi.string().trim().lowercase().max(255).optional().allow(null, ''),
+    publicSlug: Joi.string().trim().lowercase().min(1).max(63).pattern(/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/).optional().allow(null, ''),
+    documentSettings: Joi.object({
+      invoiceDisplayName: Joi.string().trim().max(200).optional().allow(null, ''),
+      termsAndConditions: Joi.string().trim().max(5000).optional().allow(null, ''),
+      cancellationPolicy: Joi.string().trim().max(5000).optional().allow(null, ''),
+      operationalContacts: Joi.string().trim().max(2000).optional().allow(null, ''),
+      tagline: Joi.string().trim().max(200).optional().allow(null, ''),
+      greetingText: Joi.string().trim().max(2000).optional().allow(null, '')
+    }).optional()
+  }),
+  updateSettings: Joi.object({
+    notificationPreferences: Joi.object({
+      email: Joi.boolean().optional(),
+      sms: Joi.boolean().optional(),
+      whatsapp: Joi.boolean().optional()
+    }).optional(),
+    backupEnabled: Joi.boolean().optional(),
+    backupFrequency: Joi.string().trim().valid('Daily', 'Weekly', 'Monthly').optional()
+  })
+};
+
+// Public B2C Booking Site (PRD "CRM Feature Map by Phase" Phase 2 module
+// 15) — routes/PublicBookingRoutes.js's request bodies. Plain object, not
+// the config-driven Proxy pattern used elsewhere in this file: nothing
+// here needs an env-configurable enum, it's the same fixed shape either way.
+export const publicBookingSchemas = {
+  createBooking: Joi.object({
+    tenantSlug: Joi.string().trim().lowercase().min(1).max(63).required(),
+    packageTemplateId: objectIdRef.required(),
+    travelStartDate: Joi.date().required(),
+    travelers: Joi.object({
+      adults: Joi.number().integer().min(1).optional(),
+      children: Joi.number().integer().min(0).optional(),
+      infants: Joi.number().integer().min(0).optional()
+    }).optional(),
+    roomTypeId: objectIdRef.optional().allow(null, ""),
+    customer: Joi.object({
+      firstName: Joi.string().trim().min(1).max(100).required(),
+      lastName: Joi.string().trim().min(1).max(100).required(),
+      email: Joi.string().trim().email({ tlds: false }).required(),
+      phone: Joi.string().trim().min(5).max(30).required()
+    }).required()
+  }),
+
+  createLead: Joi.object({
+    tenantSlug: Joi.string().trim().lowercase().min(1).max(63).required(),
+    firstName: Joi.string().trim().min(1).max(100).required(),
+    lastName: Joi.string().trim().max(100).optional().allow(null, ""),
+    email: Joi.string().trim().email({ tlds: false }).optional().allow(null, ""),
+    phone: Joi.string().trim().min(5).max(30).optional().allow(null, ""),
+    notes: Joi.string().trim().max(2000).optional().allow(null, "")
+  })
+};
+
+// Package Pricing Engine — Global-Package-Pricing-Engine-PRD-v2.1. Same
+// config-driven Proxy pattern as pricingSchemas/numberingSchemas above; every
+// `.valid(...)` list is pulled from getPackagePricingConfig() rather than a
+// literal array, so a new rateBasis/chargeBasis/scope value only needs a
+// config change, never a schema edit.
+const buildPackagePricingSchemas = () => {
+  const config = getPackagePricingConfig();
+  const hotelConfig = getHotelConfig();
+  const rateStatus = Joi.string().trim().valid(...config.rateStatuses).optional();
+  const rateSource = Joi.string().trim().valid(...config.rateSourceTypes).optional();
+
+  return {
+    createRoomType: Joi.object({
+      name: Joi.string().trim().min(1).max(100).required(),
+      defaultOccupancy: Joi.number().integer().min(1).required(),
+      sortOrder: Joi.number().integer().optional()
+    }),
+
+    createTransportVehicle: Joi.object({
+      name: Joi.string().trim().min(1).max(100).required(),
+      minCapacity: Joi.number().integer().min(1).required(),
+      maxCapacity: Joi.number().integer().min(1).required(),
+      luggageCapacity: Joi.number().min(0).optional().allow(null),
+      category: Joi.string().trim().max(100).optional().allow(null, "")
+    }),
+
+    // PRD §8 "Hotel Database" — hotel master data, distinct from
+    // createHotelRate's hotel-x-room-type-x-date rate rows.
+    createHotelCatalog: Joi.object({
+      name: Joi.string().trim().min(1).max(200).required(),
+      city: Joi.string().trim().min(1).max(150).required(),
+      country: Joi.string().trim().max(150).optional().allow(null, ""),
+      starRating: Joi.number().integer().min(1).max(5).optional(),
+      address: Joi.string().trim().max(500).optional().allow(null, ""),
+      supplier: Joi.string().trim().max(200).optional().allow(null, ""),
+      amenities: Joi.array().items(Joi.string().trim().max(150)).optional(),
+      contacts: Joi.object({
+        phone: Joi.string().trim().max(50).optional().allow(null, ""),
+        email: Joi.string().trim().email().optional().allow(null, ""),
+        managerName: Joi.string().trim().max(150).optional().allow(null, "")
+      }).optional(),
+      latitude: Joi.number().min(-90).max(90).optional().allow(null),
+      longitude: Joi.number().min(-180).max(180).optional().allow(null),
+      distanceFromLandmark: Joi.object({
+        label: Joi.string().trim().max(150).optional().allow(null, ""),
+        km: Joi.number().min(0).optional().allow(null)
+      }).optional().allow(null),
+      distanceFromAirport: Joi.number().min(0).optional().allow(null),
+      checkInTime: Joi.string().trim().max(20).optional().allow(null, ""),
+      checkOutTime: Joi.string().trim().max(20).optional().allow(null, ""),
+      description: Joi.string().trim().max(5000).optional().allow(null, ""),
+      images: Joi.array().items(Joi.string().trim().max(2000)).optional(),
+      logoUrl: Joi.string().trim().max(2000).optional().allow(null, ""),
+      shuttleAvailable: Joi.boolean().optional(),
+      mealPlansOffered: Joi.array().items(Joi.string().trim().valid(...hotelConfig.mealPlans)).optional(),
+      cancellationPolicy: Joi.string().trim().max(2000).optional().allow(null, ""),
+      supplierHotelCode: Joi.string().trim().max(100).optional().allow(null, "")
+    }),
+
+    createHotelRate: Joi.object({
+      hotelCatalogId: objectIdRef.required(),
+      roomTypeId: objectIdRef.required(),
+      mealPlan: Joi.string().trim().max(100).optional().allow(null, ""),
+      currency: Joi.string().trim().length(3).uppercase().required(),
+      pricePerNight: Joi.number().min(0).required(),
+      occupancy: Joi.number().integer().min(1).required(),
+      rateBasis: Joi.string().trim().valid(...config.hotelRateBasisTypes).required(),
+      date: Joi.date().optional().allow(null),
+      validFrom: Joi.date().optional().allow(null),
+      validTo: Joi.date().optional().allow(null),
+      daysOfWeek: Joi.array().items(Joi.number().integer().min(0).max(6)).optional(),
+      season: Joi.string().trim().max(100).optional().allow(null, ""),
+      supplier: Joi.string().trim().max(200).optional().allow(null, ""),
+      extraBedRate: Joi.number().min(0).optional().allow(null),
+      extraBedBasis: Joi.string().trim().valid(...config.extraBedBasisTypes).optional().allow(null, ""),
+      maxExtraBeds: Joi.number().integer().min(0).optional(),
+      status: rateStatus,
+      source: rateSource
+    }),
+
+    createTransportRate: Joi.object({
+      origin: Joi.string().trim().min(1).max(200).required(),
+      destination: Joi.string().trim().min(1).max(200).required(),
+      vehicleId: objectIdRef.required(),
+      currency: Joi.string().trim().length(3).uppercase().required(),
+      rate: Joi.number().min(0).required(),
+      direction: Joi.string().trim().valid(...config.transportDirectionTypes).optional(),
+      validFrom: Joi.date().optional().allow(null),
+      validTo: Joi.date().optional().allow(null),
+      supplier: Joi.string().trim().max(200).optional().allow(null, ""),
+      status: rateStatus,
+      source: rateSource
+    }),
+
+    createFlightRate: Joi.object({
+      route: Joi.string().trim().min(1).max(200).required(),
+      airline: Joi.string().trim().max(200).optional().allow(null, ""),
+      cabin: Joi.string().trim().max(100).optional().allow(null, ""),
+      currency: Joi.string().trim().length(3).uppercase().required(),
+      costPerPerson: Joi.number().min(0).required(),
+      direction: Joi.string().trim().valid(...config.transportDirectionTypes).optional(),
+      validFrom: Joi.date().optional().allow(null),
+      validTo: Joi.date().optional().allow(null),
+      status: rateStatus,
+      source: rateSource
+    }),
+
+    createVisaRate: Joi.object({
+      country: Joi.string().trim().min(1).max(100).required(),
+      visaType: Joi.string().trim().min(1).max(100).required(),
+      nationality: Joi.string().trim().max(100).optional().allow(null, ""),
+      currency: Joi.string().trim().length(3).uppercase().required(),
+      adultCost: Joi.number().min(0).required(),
+      childCost: Joi.number().min(0).optional().allow(null),
+      infantCost: Joi.number().min(0).optional().allow(null),
+      processingTime: Joi.string().trim().max(100).optional().allow(null, ""),
+      validFrom: Joi.date().optional().allow(null),
+      validTo: Joi.date().optional().allow(null),
+      status: rateStatus,
+      source: rateSource
+    }),
+
+    createServiceRate: Joi.object({
+      name: Joi.string().trim().min(1).max(150).required(),
+      chargeBasis: Joi.string().trim().valid(...config.serviceChargeBasisTypes).required(),
+      currency: Joi.string().trim().length(3).uppercase().required(),
+      amount: Joi.number().min(0).required(),
+      validFrom: Joi.date().optional().allow(null),
+      validTo: Joi.date().optional().allow(null),
+      status: rateStatus,
+      source: rateSource
+    }),
+
+    createMarkupRule: Joi.object({
+      name: Joi.string().trim().max(150).optional().allow(null, ""),
+      scope: Joi.string().trim().valid(...config.markupScopeTypes).required(),
+      type: Joi.string().trim().valid(...config.markupTypes).required(),
+      value: Joi.number().min(0).required(),
+      priceListType: Joi.string().trim().valid(...config.priceListTypes).required()
+    }),
+
+    createSupplier: Joi.object({
+      name: Joi.string().trim().min(1).max(200).required(),
+      category: Joi.string().trim().valid(...config.supplierCategories).required(),
+      contactName: Joi.string().trim().max(150).optional().allow(null, ""),
+      phone: Joi.string().trim().max(50).optional().allow(null, ""),
+      email: Joi.string().trim().email().optional().allow(null, ""),
+      currency: Joi.string().trim().length(3).uppercase().optional().allow(null, ""),
+      notes: Joi.string().trim().max(2000).optional().allow(null, "")
+    }),
+
+    createCommissionRule: Joi.object({
+      name: Joi.string().trim().max(150).optional().allow(null, ""),
+      scope: Joi.string().trim().valid(...config.commissionScopeTypes).required(),
+      type: Joi.string().trim().valid(...config.markupTypes).required(),
+      value: Joi.number().min(0).required(),
+      agentUserId: Joi.string().trim().optional().allow(null, ""),
+      destinationCountry: Joi.string().trim().max(150).optional().allow(null, ""),
+      hotelCatalogId: objectIdRef.optional().allow(null, "")
+    }),
+
+    // Generic partial-update body shared by every rate/master PATCH route —
+    // each service method only reads the fields relevant to its own model,
+    // so this stays permissive rather than duplicating every model's full
+    // create schema with everything optional.
+    updateRecord: Joi.object({
+      reason: Joi.string().trim().max(1000).optional().allow(null, "")
+    }).unknown(true),
+
+    createQuotation: Joi.object({
+      roomTypeId: objectIdRef.required(),
+      paymentTerms: Joi.string().trim().max(2000).optional().allow(null, ""),
+      validUntil: Joi.date().optional().allow(null),
+      termsAndConditions: Joi.string().trim().max(5000).optional().allow(null, "")
+    }),
+
+    linkBooking: Joi.object({
+      bookingId: objectIdRef.required()
+    }),
+
+    bulkCreateRates: Joi.object({
+      items: Joi.array().items(Joi.object().unknown(true)).min(1).required()
+    }),
+
+    bulkUpdateRateStatus: Joi.object({
+      ids: Joi.array().items(objectIdRef).min(1).required(),
+      status: Joi.string().trim().valid(...config.rateStatuses).required(),
+      reason: Joi.string().trim().max(500).optional().allow(null, "")
+    }),
+
+    cloneRate: Joi.object().unknown(true),
+
+    saveAsTemplate: Joi.object({
+      name: Joi.string().trim().min(1).max(200).required()
+    }),
+
+    updatePackageTemplate: Joi.object({
+      name: Joi.string().trim().min(1).max(200).optional(),
+      description: Joi.string().trim().max(2000).optional().allow(null, ""),
+      active: Joi.boolean().optional(),
+      publicVisible: Joi.boolean().optional(),
+      packageType: Joi.string().trim().max(100).optional().allow(null, ""),
+      images: Joi.array().items(Joi.string().trim().uri()).max(20).optional(),
+      displayPriceFrom: Joi.number().min(0).optional().allow(null),
+      displayCurrency: Joi.string().trim().length(3).uppercase().optional().allow(null, "")
+    }),
+
+    cloneFromTemplate: Joi.object({
+      travelStartDate: Joi.date().required(),
+      name: Joi.string().trim().max(200).optional().allow(null, ""),
+      customerId: objectIdRef.optional().allow(null, ""),
+      agentUserId: Joi.string().trim().optional().allow(null, ""),
+      travelers: Joi.object({
+        adults: Joi.number().integer().min(1).optional(),
+        children: Joi.number().integer().min(0).optional(),
+        infants: Joi.number().integer().min(0).optional()
+      }).optional()
+    }),
+
+    comparePackages: Joi.object({
+      packageIds: Joi.array().items(objectIdRef).min(2).required()
+    }),
+
+    convertToBooking: Joi.object({
+      roomTypeId: objectIdRef.required(),
+      rooms: Joi.number().integer().min(1).optional(),
+      bookingId: objectIdRef.optional().allow(null, ""),
+      bookingType: Joi.string().trim().optional().allow(null, "")
+    }),
+
+    generateFlyer: Joi.object({
+      template: Joi.string().trim().valid(...config.flyerTemplates).optional(),
+      format: Joi.string().trim().valid(...config.flyerFormats).optional(),
+      dimensionPreset: Joi.string().trim().valid(...Object.keys(config.flyerDimensionPresets)).optional(),
+      roomTypeIds: Joi.array().items(objectIdRef).optional(),
+      language: Joi.string().trim().lowercase().optional(),
+      displayCurrency: Joi.string().trim().length(3).uppercase().optional().allow(null, "")
+    }),
+
+    sendWhatsAppMessage: Joi.object({
+      phone: Joi.string().trim().max(30).optional().allow(null, ""),
+      roomTypeIds: Joi.array().items(objectIdRef).optional()
+    }),
+
+    sendQuotation: Joi.object({
+      channel: Joi.string().trim().valid("email", "whatsapp", "both").optional(),
+      email: Joi.string().trim().email({ tlds: false }).optional().allow(null, ""),
+      phone: Joi.string().trim().max(30).optional().allow(null, ""),
+      message: Joi.string().trim().max(2000).optional().allow(null, "")
+    }),
+
+    convertQuotationToBooking: Joi.object({
+      rooms: Joi.number().integer().min(1).optional(),
+      bookingId: objectIdRef.optional().allow(null, ""),
+      bookingType: Joi.string().trim().optional().allow(null, "")
+    }),
+
+    updatePackage: Joi.object({
+      name: Joi.string().trim().max(200).optional().allow(null, ""),
+      customerId: objectIdRef.optional().allow(null, ""),
+      agentUserId: Joi.string().trim().optional().allow(null, ""),
+      travelStartDate: Joi.date().optional(),
+      travelEndDate: Joi.date().optional(),
+      travelers: Joi.object({
+        adults: Joi.number().integer().min(1).optional(),
+        children: Joi.number().integer().min(0).optional(),
+        infants: Joi.number().integer().min(0).optional()
+      }).optional(),
+      segments: Joi.array().items(Joi.object({
+        city: Joi.string().trim().min(1).max(150).required(),
+        country: Joi.string().trim().max(150).optional().allow(null, ""),
+        hotelCatalogId: objectIdRef.required(),
+        checkIn: Joi.date().required(),
+        checkOut: Joi.date().required(),
+        mealPlan: Joi.string().trim().max(100).optional().allow(null, ""),
+        rooms: Joi.number().integer().min(1).optional(),
+        extraBeds: Joi.number().integer().min(0).optional(),
+        sortOrder: Joi.number().integer().optional()
+      })).optional(),
+      transportLegs: Joi.array().items(Joi.object({
+        origin: Joi.string().trim().min(1).max(200).required(),
+        destination: Joi.string().trim().min(1).max(200).required(),
+        direction: Joi.string().trim().valid(...config.transportDirectionTypes).optional().allow(null),
+        vehicleId: objectIdRef.optional().allow(null),
+        sortOrder: Joi.number().integer().optional()
+      })).optional(),
+      flightSelections: Joi.array().items(Joi.object({ flightRateId: objectIdRef.required() })).optional(),
+      visaSelections: Joi.array().items(Joi.object({ visaRateId: objectIdRef.required() })).optional(),
+      serviceSelections: Joi.array().items(Joi.object({
+        serviceRateId: objectIdRef.required(),
+        quantity: Joi.number().min(0).optional()
+      })).optional(),
+      vehicleSelectionRule: Joi.string().trim().valid(...config.vehicleSelectionRules).optional(),
+      priceListType: Joi.string().trim().valid(...config.priceListTypes).optional(),
+      sellingCurrency: Joi.string().trim().length(3).uppercase().optional(),
+      markupRuleIds: Joi.array().items(objectIdRef).optional(),
+      commissionRuleIds: Joi.array().items(objectIdRef).optional(),
+      roundingRule: Joi.string().trim().valid(...config.roundingRuleTypes).optional(),
+      discount: Joi.object({
+        type: Joi.string().trim().valid(...config.discountTypes).required(),
+        value: Joi.number().min(0).required(),
+        scope: Joi.string().trim().valid(...config.discountScopeTypes).optional().allow(null, ""),
+        reason: Joi.string().trim().max(500).optional().allow(null, "")
+      }).optional().allow(null),
+      reason: Joi.string().trim().max(1000).optional().allow(null, "")
+    }),
+
+    createPackage: Joi.object({
+      name: Joi.string().trim().max(200).optional().allow(null, ""),
+      customerId: objectIdRef.optional().allow(null, ""),
+      agentUserId: Joi.string().trim().optional().allow(null, ""),
+      travelStartDate: Joi.date().required(),
+      travelEndDate: Joi.date().required(),
+      travelers: Joi.object({
+        adults: Joi.number().integer().min(1).required(),
+        children: Joi.number().integer().min(0).optional(),
+        infants: Joi.number().integer().min(0).optional()
+      }).required(),
+      segments: Joi.array().items(Joi.object({
+        city: Joi.string().trim().min(1).max(150).required(),
+        country: Joi.string().trim().max(150).optional().allow(null, ""),
+        hotelCatalogId: objectIdRef.required(),
+        checkIn: Joi.date().required(),
+        checkOut: Joi.date().required(),
+        mealPlan: Joi.string().trim().max(100).optional().allow(null, ""),
+        rooms: Joi.number().integer().min(1).optional(),
+        extraBeds: Joi.number().integer().min(0).optional(),
+        sortOrder: Joi.number().integer().optional()
+      })).optional(),
+      transportLegs: Joi.array().items(Joi.object({
+        origin: Joi.string().trim().min(1).max(200).required(),
+        destination: Joi.string().trim().min(1).max(200).required(),
+        direction: Joi.string().trim().valid(...config.transportDirectionTypes).optional().allow(null),
+        vehicleId: objectIdRef.optional().allow(null),
+        sortOrder: Joi.number().integer().optional()
+      })).optional(),
+      flightSelections: Joi.array().items(Joi.object({ flightRateId: objectIdRef.required() })).optional(),
+      visaSelections: Joi.array().items(Joi.object({ visaRateId: objectIdRef.required() })).optional(),
+      serviceSelections: Joi.array().items(Joi.object({
+        serviceRateId: objectIdRef.required(),
+        quantity: Joi.number().min(0).optional()
+      })).optional(),
+      vehicleSelectionRule: Joi.string().trim().valid(...config.vehicleSelectionRules).optional(),
+      priceListType: Joi.string().trim().valid(...config.priceListTypes).optional(),
+      sellingCurrency: Joi.string().trim().length(3).uppercase().required(),
+      markupRuleIds: Joi.array().items(objectIdRef).optional(),
+      commissionRuleIds: Joi.array().items(objectIdRef).optional(),
+      roundingRule: Joi.string().trim().valid(...config.roundingRuleTypes).optional(),
+      discount: Joi.object({
+        type: Joi.string().trim().valid(...config.discountTypes).required(),
+        value: Joi.number().min(0).required(),
+        scope: Joi.string().trim().valid(...config.discountScopeTypes).optional().allow(null, ""),
+        reason: Joi.string().trim().max(500).optional().allow(null, "")
+      }).optional().allow(null)
+    }),
+
+    calculatePackage: Joi.object({
+      recalculate: Joi.boolean().optional()
+    })
+  };
+};
+
+const PACKAGE_PRICING_SCHEMA_KEYS = new Set([
+  "createRoomType", "createTransportVehicle", "createHotelCatalog", "createHotelRate", "createTransportRate", "createFlightRate", "createVisaRate",
+  "createServiceRate", "createMarkupRule", "createSupplier", "createCommissionRule", "updateRecord", "createPackage",
+  "updatePackage", "linkBooking", "convertToBooking", "createQuotation", "sendQuotation", "convertQuotationToBooking", "generateFlyer", "sendWhatsAppMessage", "calculatePackage", "comparePackages",
+  "saveAsTemplate", "updatePackageTemplate", "cloneFromTemplate", "bulkCreateRates", "bulkUpdateRateStatus", "cloneRate"
+]);
+
+export const packagePricingSchemas = new Proxy({}, {
+  get(_target, prop) {
+    if (PACKAGE_PRICING_SCHEMA_KEYS.has(prop)) {
+      return buildPackagePricingSchemas()[prop];
+    }
+    return undefined;
+  }
+});
+
+// Lead & Marketing Management — PRD "CRM Feature Map by Phase" Phase 2
+// module 17. Same env-driven-config-backed Proxy pattern as
+// packagePricingSchemas above, rebuilt from getLeadConfig() on every
+// access so a LEAD_STATUSES_JSON/LEAD_SOURCES_JSON env change takes effect
+// without a restart-sensitive schema cache.
+const buildLeadSchemas = () => {
+  const config = getLeadConfig();
+  return {
+    createLead: Joi.object({
+      firstName: Joi.string().trim().min(1).max(200).required(),
+      lastName: Joi.string().trim().max(200).optional().allow(null, ''),
+      email: Joi.string().trim().email({ tlds: false }).optional().allow(null, ''),
+      phone: Joi.string().trim().max(30).optional().allow(null, ''),
+      source: Joi.string().trim().valid(...config.leadSources).optional(),
+      status: Joi.string().trim().valid(...config.leadStatuses).optional(),
+      assignedToUserId: Joi.string().trim().optional().allow(null, ''),
+      followUpDate: Joi.date().optional().allow(null),
+      interestedInPackageId: objectIdRef.optional().allow(null, ''),
+      notes: Joi.string().trim().max(5000).optional().allow(null, ''),
+      tags: Joi.array().items(Joi.string().trim()).optional()
+    }),
+    updateLead: Joi.object({
+      firstName: Joi.string().trim().min(1).max(200).optional(),
+      lastName: Joi.string().trim().max(200).optional().allow(null, ''),
+      email: Joi.string().trim().email({ tlds: false }).optional().allow(null, ''),
+      phone: Joi.string().trim().max(30).optional().allow(null, ''),
+      source: Joi.string().trim().valid(...config.leadSources).optional(),
+      status: Joi.string().trim().valid(...config.leadStatuses).optional(),
+      assignedToUserId: Joi.string().trim().optional().allow(null, ''),
+      followUpDate: Joi.date().optional().allow(null),
+      interestedInPackageId: objectIdRef.optional().allow(null, ''),
+      notes: Joi.string().trim().max(5000).optional().allow(null, ''),
+      tags: Joi.array().items(Joi.string().trim()).optional()
+    }),
+    convertLead: Joi.object({
+      firstName: Joi.string().trim().min(1).max(200).optional(),
+      lastName: Joi.string().trim().min(1).max(200).optional(),
+      email: Joi.string().trim().email({ tlds: false }).optional(),
+      phone: Joi.string().trim().max(30).optional(),
+      customerFields: Joi.object().unknown(true).optional()
+    })
+  };
+};
+
+const LEAD_SCHEMA_KEYS = new Set(["createLead", "updateLead", "convertLead"]);
+
+// Developer Portal — PRD "CRM Feature Map by Phase" Phase 4 module 33.
+export const apiKeySchemas = {
+  createApiKey: Joi.object({
+    name: Joi.string().trim().min(1).max(200).required(),
+    permissions: Joi.array().items(Joi.string().trim()).optional(),
+    expiresAt: Joi.date().optional().allow(null)
+  })
+};
+
+// B2B Agent Portal — PRD "CRM Feature Map by Phase" Phase 2 module 14.
+export const agentSchemas = {
+  createAgent: Joi.object({
+    name: Joi.string().trim().min(1).max(200).required(),
+    email: Joi.string().trim().email({ tlds: false }).required(),
+    phone: Joi.string().trim().max(30).optional().allow(null, ''),
+    password: Joi.string().min(1).required(),
+    parentAgentId: objectIdRef.optional().allow(null, ''),
+    creditLimit: Joi.number().min(0).optional()
+  }),
+  agentLogin: Joi.object({
+    email: Joi.string().trim().email({ tlds: false }).required(),
+    password: Joi.string().min(1).required()
+  })
+};
+
+// Embassy/consulate contact directory (PRD "CRM Feature Map by Phase"
+// Phase 4 module 40 — Emergency Support).
+export const embassyDirectorySchemas = {
+  createEmbassyContact: Joi.object({
+    embassyId: Joi.string().trim().min(1).max(100).required(),
+    name: Joi.string().trim().min(1).max(200).required(),
+    processingCenterType: Joi.string().trim().valid("Embassy", "Consulate", "VAC", "Authorized_Partner", "Government_Portal").required(),
+    countryId: Joi.string().trim().min(1).max(100).required(),
+    city: Joi.string().trim().max(100).optional().allow(null, ''),
+    phone: Joi.string().trim().max(30).optional().allow(null, ''),
+    email: Joi.string().trim().email({ tlds: false }).optional().allow(null, ''),
+    address: Joi.string().trim().max(500).optional().allow(null, ''),
+    emergencyContactPhone: Joi.string().trim().max(30).optional().allow(null, '')
+  }),
+  updateEmbassyContact: Joi.object({
+    name: Joi.string().trim().min(1).max(200).optional(),
+    processingCenterType: Joi.string().trim().valid("Embassy", "Consulate", "VAC", "Authorized_Partner", "Government_Portal").optional(),
+    city: Joi.string().trim().max(100).optional().allow(null, ''),
+    phone: Joi.string().trim().max(30).optional().allow(null, ''),
+    email: Joi.string().trim().email({ tlds: false }).optional().allow(null, ''),
+    address: Joi.string().trim().max(500).optional().allow(null, ''),
+    emergencyContactPhone: Joi.string().trim().max(30).optional().allow(null, ''),
+    isActive: Joi.boolean().optional()
+  })
+};
+
+// Review & Rating System (PRD "CRM Feature Map by Phase" Phase 4 module 40).
+export const reviewSchemas = {
+  createReview: Joi.object({
+    bookingId: objectIdRef.required(),
+    packageRating: Joi.number().integer().min(1).max(5).optional().allow(null),
+    hotelRating: Joi.number().integer().min(1).max(5).optional().allow(null),
+    guideRating: Joi.number().integer().min(1).max(5).optional().allow(null),
+    driverRating: Joi.number().integer().min(1).max(5).optional().allow(null),
+    comment: Joi.string().trim().max(5000).optional().allow(null, '')
+  }),
+  moderateReview: Joi.object({
+    status: Joi.string().trim().valid("published", "hidden").required()
+  })
+};
+
+export const leadSchemas = new Proxy({}, {
+  get(_target, prop) {
+    if (LEAD_SCHEMA_KEYS.has(prop)) {
+      return buildLeadSchemas()[prop];
+    }
+    return undefined;
+  }
+});
+
+// Marketing Campaign System (PRD "CRM Feature Map by Phase" Phase 2 module
+// 20) — routes/MarketingCampaignRoutes.js. Plain object, same as
+// publicBookingSchemas above: nothing here is env-configurable.
+export const marketingCampaignSchemas = {
+  createCampaign: Joi.object({
+    name: Joi.string().trim().min(1).max(200).required(),
+    channel: Joi.string().trim().valid("Email", "SMS", "WhatsApp").required(),
+    templateId: Joi.string().trim().min(1).max(200).required(),
+    segmentFilter: Joi.object({
+      customerType: Joi.string().trim().optional().allow(null, ""),
+      category: Joi.string().trim().optional().allow(null, ""),
+      status: Joi.string().trim().optional().allow(null, ""),
+      assignedTo: Joi.string().trim().optional().allow(null, ""),
+      countryId: Joi.string().trim().optional().allow(null, ""),
+      cityId: Joi.string().trim().optional().allow(null, ""),
+      createdAfter: Joi.date().optional().allow(null, ""),
+      createdBefore: Joi.date().optional().allow(null, "")
+    }).optional(),
+    scheduledAt: Joi.date().optional().allow(null, "")
   })
 };
 

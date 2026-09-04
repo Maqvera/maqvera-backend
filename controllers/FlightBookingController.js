@@ -9,6 +9,7 @@ import { publishEvent } from "../utils/eventBus.js";
 import { createRequestId } from "../utils/authTokens.js";
 import { getTicketingPolicyConfig } from "../utils/gdsConfig.js";
 import CacheManager from "../utils/cacheManager.js";
+import CurrencyService from "../services/CurrencyService.js";
 
 /**
  * 1. POST /api/v1/flight-bookings
@@ -34,9 +35,12 @@ export const CreateFlightBooking = async (req, res) => {
       travelers = [],
       contact = {},
       totalPrice = 145000,
-      currency = "PKR",
-      segments = []
+      segments = [],
+      convertedCurrency = null
     } = req.body;
+    // Golden Rule 2 (never hardcode a currency) — resolves to the tenant's
+    // own configured base currency instead of a literal "PKR".
+    const currency = (req.body.currency || await CurrencyService.getBaseCurrency(tenantId)).toUpperCase();
 
     if (!offerId) {
       return sendError(res, 400, "offerId is required.", requestId);
@@ -135,6 +139,32 @@ export const CreateFlightBooking = async (req, res) => {
 
     const ticketingDeadline = gdsResult.ticketingDeadline ? new Date(gdsResult.ticketingDeadline) : new Date(Date.now() + 24 * 60 * 60 * 1000);
 
+    // Multi-currency balance entry — server-side authoritative recompute,
+    // same pattern as BookingController.CreateBooking (§4 of the
+    // multi-currency requirements doc). CurrencyService.convert() is the
+    // single source of truth for rates.
+    const resolvedCurrency = revalidation.currency || currency;
+    const resolvedTotalPrice = gdsResult.totalPrice || totalPrice;
+    let conversionFields = {
+      convertedAmount: null, convertedCurrency: null,
+      conversionRate: null, conversionRateId: null, conversionAsOf: null
+    };
+    if (convertedCurrency && resolvedTotalPrice > 0) {
+      try {
+        const conversion = await CurrencyService.convert(resolvedTotalPrice, resolvedCurrency, convertedCurrency, tenantId);
+        conversionFields = {
+          convertedAmount: conversion.convertedAmount,
+          convertedCurrency: convertedCurrency.toUpperCase(),
+          conversionRate: conversion.rate,
+          conversionRateId: conversion.rateId || null,
+          conversionAsOf: new Date()
+        };
+      } catch (conversionError) {
+        console.error("Flight booking currency conversion error:", conversionError);
+        return sendError(res, 422, conversionError.message || `Unable to convert ${resolvedCurrency} to ${convertedCurrency}.`, requestId);
+      }
+    }
+
     // Step 3: Create FlightBooking Model Document
     const flightBooking = await FlightBookingModel.create({
       tenantId,
@@ -156,8 +186,9 @@ export const CreateFlightBooking = async (req, res) => {
       airlineCode: segments[0]?.airlineCode || null,
       airlineName: segments[0]?.airline || null,
       status: "Reserved",
-      totalPrice: gdsResult.totalPrice || totalPrice,
-      currency: revalidation.currency || currency,
+      totalPrice: resolvedTotalPrice,
+      currency: resolvedCurrency,
+      ...conversionFields,
       ticketingDeadline,
       travelers: travelers.map((t) => ({
         firstName: t.firstName,
@@ -885,7 +916,7 @@ export const RefundTicket = async (req, res) => {
     // "Finance module owns payment refund" — this endpoint only calculates
     // eligibility and notifies Finance via the domain event; it never moves
     // money itself.
-    const fareRules = await GdsIntegrationService.getFareRules({ offerId: booking.offerId, provider: booking.provider });
+    const fareRules = await GdsIntegrationService.getFareRules({ offerId: booking.offerId, provider: booking.provider, currency: booking.currency });
     const { defaultCancellationPenaltyPct } = getTicketingPolicyConfig();
     const parsedPenalty = Number(String(fareRules.rules?.cancellationFeeBeforeDeparture || "").replace(/[^0-9.]/g, ""));
     const penaltyFee = Number.isFinite(parsedPenalty) && parsedPenalty > 0

@@ -1,4 +1,5 @@
-import PDFDocument from "pdfkit";
+import path from "path";
+import { renderHtmlToPdfBuffer, TEMPLATES_DIR } from "./HtmlPdfRenderer.js";
 
 // "Receipt Templates: Retail, Corporate, Government, POS, Subscription,
 // Travel, Visa, Custom." Real, if modest, template-awareness — the header
@@ -15,49 +16,33 @@ const TEMPLATE_TITLES = {
   Custom: "RECEIPT"
 };
 
+const TEMPLATE_PATH = path.join(TEMPLATES_DIR, "receipts", "default_receipt.html");
+
 /**
- * Real PDF generation (the `pdfkit` npm package — pure JS, no external
- * service or credentials needed). Produces an actual PDF byte stream, not
- * a placeholder — the generated buffer is what's actually stored (see
- * utils/receiptPdfStorage.js) and served back to the caller.
+ * HTML-template + headless-Chromium PDF generation (services/HtmlPdfRenderer.js)
+ * — PRD "HTML-Template PDF Architecture Migration". Same public contract as
+ * the pdfkit-era version this replaced — the generated buffer is what's
+ * actually stored (see utils/documentPdfStorage.js) and served back to the
+ * caller.
+ *
+ * `qrPngBuffer` is a real in-memory Buffer (ReceiptQrService), not a URL —
+ * converted to a data: URI here so the template's <img> never needs
+ * Chromium to fetch anything for it (unlike `company.logoUrl`, which is a
+ * real remote/local URL Chromium fetches directly).
  */
 class ReceiptPdfService {
-  static async generatePdfBuffer({ receiptNumber, template, issueDate, amount, currency, paymentNumber, partyName, allocations = [], qrPngBuffer }) {
-    return new Promise((resolve, reject) => {
-      const doc = new PDFDocument({ margin: 50, size: "A4" });
-      const chunks = [];
-      doc.on("data", (chunk) => chunks.push(chunk));
-      doc.on("end", () => resolve(Buffer.concat(chunks)));
-      doc.on("error", reject);
-
-      const title = TEMPLATE_TITLES[template] || TEMPLATE_TITLES.Default;
-
-      doc.fontSize(20).text(title, { align: "center" });
-      doc.moveDown();
-      doc.fontSize(10).text(`Receipt Number: ${receiptNumber}`);
-      doc.text(`Issue Date: ${new Date(issueDate).toISOString().split("T")[0]}`);
-      doc.text(`Payment Number: ${paymentNumber}`);
-      if (partyName) doc.text(`Issued To: ${partyName}`);
-      doc.moveDown();
-
-      doc.fontSize(14).text(`Amount: ${amount.toLocaleString()} ${currency}`, { align: "left" });
-      doc.moveDown();
-
-      if (allocations.length > 0) {
-        doc.fontSize(11).text("Applied To:", { underline: true });
-        doc.fontSize(10);
-        allocations.forEach((allocation) => {
-          doc.text(`${allocation.targetType} (${allocation.targetId}) — ${allocation.amount.toLocaleString()} ${currency}`);
-        });
-        doc.moveDown();
-      }
-
-      if (qrPngBuffer) {
-        doc.text("Scan to verify:", { align: "left" });
-        doc.image(qrPngBuffer, { width: 120 });
-      }
-
-      doc.end();
+  static async generatePdfBuffer({ receiptNumber, template, issueDate, amount, currency, paymentNumber, partyName, allocations = [], qrPngBuffer, company }) {
+    return renderHtmlToPdfBuffer(TEMPLATE_PATH, {
+      title: TEMPLATE_TITLES[template] || TEMPLATE_TITLES.Default,
+      receiptNumber,
+      issueDate,
+      amount,
+      currency,
+      paymentNumber,
+      partyName,
+      allocations,
+      qrDataUri: qrPngBuffer ? `data:image/png;base64,${qrPngBuffer.toString("base64")}` : null,
+      company
     });
   }
 }

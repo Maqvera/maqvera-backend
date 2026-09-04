@@ -10,7 +10,7 @@ const hasPermission = (req, ...keys) => {
 
 const statusFromError = (error) => {
   const message = error.message || "";
-  if (message.includes("already exists")) return 409;
+  if (message.includes("already exists") || message.includes("Duplicate payment")) return 409;
   if (message.includes("not found")) return 404;
   if (message.includes("required") || message.includes("cannot") || message.includes("Cannot") || message.includes("Invalid") || message.includes("exceeds") || message.includes("must be") || message.includes("mismatch") || message.includes("Insufficient") || message.includes("failed checksum") || message.includes("valid format") || message.includes("already approved")) return 400;
   return 500;

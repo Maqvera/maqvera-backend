@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>{{{sharedCss}}}</style>
+</head>
+<body>
+  <div class="meta-block">
+    {{#if company.logoUrl}}<img src="{{company.logoUrl}}" style="max-height:60px;" alt="{{company.name}}">{{/if}}
+    <h1 class="doc-title">{{company.name}}</h1>
+    {{#if company.address}}<div>{{company.address}}</div>{{/if}}
+    {{#if company.phone}}<div>Phone: {{company.phone}}</div>{{/if}}
+    {{#if company.email}}<div>Email: {{company.email}}</div>{{/if}}
+  </div>
+
+  <h2 class="doc-title">QUOTATION {{quotationNumber}}</h2>
+
+  <div class="meta-block">
+    {{#if customer.name}}<div>Prepared for: {{customer.name}}</div>{{/if}}
+    <div>Generated: {{formatDateTime generatedAt}}</div>
+    {{#if validUntil}}<div>Price valid until: {{formatDateTime validUntil}}</div>{{/if}}
+  </div>
+
+  <div class="section-title">Package</div>
+  <div class="meta-block">
+    {{#if package.name}}<div>Package: {{package.name}}</div>{{/if}}
+    <div>Travel Dates: {{formatDate package.travelStartDate}} - {{formatDate package.travelEndDate}}</div>
+    <div>Travelers: {{package.travelers.adults}} Adult(s){{#if package.travelers.children}}, {{package.travelers.children}} Child(ren){{/if}}{{#if package.travelers.infants}}, {{package.travelers.infants}} Infant(s){{/if}}</div>
+  </div>
+
+  <div class="section-title">Itinerary</div>
+  <table class="doc-table">
+    <thead><tr><th>#</th><th>City</th><th>Hotel</th><th>Check-in</th><th>Check-out</th></tr></thead>
+    <tbody>
+      {{#each package.segments}}
+      <tr>
+        <td>{{inc @index}}</td>
+        <td>{{this.city}}</td>
+        <td>{{this.hotelName}}</td>
+        <td>{{formatDate this.checkIn}}</td>
+        <td>{{formatDate this.checkOut}}</td>
+      </tr>
+      {{/each}}
+    </tbody>
+  </table>
+
+  <div class="section-title">Selected Room</div>
+  <table class="doc-table">
+    <thead><tr><th>Room Type</th><th>Occupancy</th><th>Price / Person</th><th>Room Total</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>{{roomType.roomTypeName}}</td>
+        <td>{{roomType.occupancy}}</td>
+        <td>{{formatNumber roomType.finalPricePerPerson}} {{package.sellingCurrency}}</td>
+        <td>{{formatNumber roomType.roomTotal}} {{package.sellingCurrency}}</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="section-title">Includes</div>
+  <ul>
+    {{#each includedComponents}}<li>{{this}}</li>{{/each}}
+  </ul>
+
+  {{#if paymentTerms}}
+  <div class="section-title">Payment Terms</div>
+  <div>{{paymentTerms}}</div>
+  {{/if}}
+
+  {{#if termsAndConditions}}
+  <div class="section-title">Terms &amp; Conditions</div>
+  {{{numberedList termsAndConditions}}}
+  {{/if}}
+</body>
+</html>

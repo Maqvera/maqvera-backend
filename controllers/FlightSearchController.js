@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import GdsIntegrationService from "../services/GdsIntegrationService.js";
+import CurrencyService from "../services/CurrencyService.js";
 import AuditLogModel from "../models/AuditLogmodel.js";
 import { sendError, sendSuccess } from "../utils/apiResponse.js";
 import { createRequestId } from "../utils/authTokens.js";
@@ -42,9 +43,11 @@ export const SearchFlights = async (req, res) => {
       cabin = "Economy",
       preferredAirlines = [],
       directOnly = false,
-      currency = "PKR",
       preferredProvider
     } = req.body;
+    // Golden Rule 2 (never hardcode a currency) — resolves to the tenant's
+    // own configured base currency instead of a literal "PKR".
+    const currency = (req.body.currency || await CurrencyService.getBaseCurrency(tenantId)).toUpperCase();
 
     if (!origin || !destination || !departureDate) {
       return sendError(res, 400, "origin, destination, and departureDate are required.", requestId);
@@ -222,12 +225,15 @@ export const GetCalendarSearch = async (req, res) => {
 export const GetFareRules = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
+    const tenantId = req.auth?.tenantId;
+    if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     const { offerId, provider = "Amadeus" } = req.body;
     if (!offerId) {
       return sendError(res, 400, "offerId is required.", requestId);
     }
+    const currency = (req.body.currency || await CurrencyService.getBaseCurrency(tenantId)).toUpperCase();
 
-    const rulesResult = await GdsIntegrationService.getFareRules({ offerId, provider });
+    const rulesResult = await GdsIntegrationService.getFareRules({ offerId, provider, currency });
 
     return sendSuccess(res, 200, "Fare rules retrieved successfully.", rulesResult, requestId);
   } catch (err) {
@@ -285,8 +291,11 @@ export const GetSeatMap = async (req, res) => {
 export const GetAirlinePricing = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
+    const tenantId = req.auth?.tenantId;
+    if (!tenantId) return sendError(res, 403, "Tenant context is required.", requestId);
     const { offerId, provider = "Amadeus" } = req.body;
-    const pricingResult = await GdsIntegrationService.getAirlinePricing({ offerId, provider });
+    const currency = (req.body.currency || await CurrencyService.getBaseCurrency(tenantId)).toUpperCase();
+    const pricingResult = await GdsIntegrationService.getAirlinePricing({ offerId, provider, currency });
 
     return sendSuccess(res, 200, "Airline pricing breakdown retrieved successfully.", pricingResult, requestId);
   } catch (err) {

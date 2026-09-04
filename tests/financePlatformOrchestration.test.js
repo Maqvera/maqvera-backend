@@ -121,4 +121,5 @@ test("Enterprise Finance Platform Master Architecture (Part 20)", async (t) => {
   await GovernanceEvidenceModel.deleteMany({ tenantId });
   await TreasuryCashPositionModel.deleteMany({ tenantId });
   await FinancePlatformSummaryModel.deleteMany({ tenantId });
+  await mongoose.disconnect();
 });

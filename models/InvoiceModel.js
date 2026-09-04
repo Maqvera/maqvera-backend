@@ -62,6 +62,24 @@ const InvoiceSchema = new mongoose.Schema({
     required: true,
     index: true
   },
+  // Set only for invoices generated from a booking (PRD A4) — lets an
+  // Account Statement / booking-detail row resolve straight through to the
+  // invoice it produced. Null for manually-entered, non-booking AR invoices.
+  bookingId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "booking_header",
+    default: null,
+    index: true
+  },
+  // Set only for invoices generated from a Visa Case application
+  // (VisaFinanceLinkService, Visa Module PRD §13) — same purpose/pattern as
+  // bookingId above, for the Visa side.
+  visaCaseId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "visa_case",
+    default: null,
+    index: true
+  },
   customerName: {
     type: String,
     required: true
@@ -97,6 +115,11 @@ const InvoiceSchema = new mongoose.Schema({
   subtotal: { type: Number, required: true },
   taxTotal: { type: Number, required: true },
   discountTotal: { type: Number, required: true },
+  // Config-driven (utils/financeConfig.js municipalityFeeRate), defaulting
+  // to 0 — see InvoiceService.js's own doc comment on why this is a
+  // separate line from taxTotal/VAT, not folded into it.
+  municipalityFeeRate: { type: Number, default: 0 },
+  municipalityFeeAmount: { type: Number, default: 0 },
   grandTotal: { type: Number, required: true },
   // "Invoice Versioning... Historical versions preserved." Snapshotted on
   // every PATCH to a Draft invoice, before the new values are applied.
@@ -123,6 +146,11 @@ const InvoiceSchema = new mongoose.Schema({
     storageProvider: { type: String, default: null },
     generatedAt: { type: Date, default: null }
   },
+  // Per-document QR access token — generated once, immutable for the life
+  // of the invoice (same stability guarantee as invoiceNumber), so a QR
+  // printed on a PDF weeks ago still resolves. See services/
+  // InvoiceDocumentQrService.js.
+  qrAccessToken: { type: String, default: null, unique: true, sparse: true },
   attachments: [{
     url: { type: String, required: true },
     filename: { type: String, default: null },

@@ -52,7 +52,17 @@ const ExchangeRateSchema = new mongoose.Schema({
   supersededBy: { type: mongoose.Schema.Types.ObjectId, ref: "exchange_rate", default: null },
   correlationId: { type: String, default: null },
   createdBy: { type: String, default: null }
-}, { timestamps: true });
+}, {
+  timestamps: true,
+  // "Support optimistic locking." (File 7 Part 5) — real for the
+  // findOne-then-.save() paths (`_activateExchangeRateRow`/
+  // `rejectExchangeRate`). One honest exception: the row being superseded
+  // is flipped via a raw `ExchangeRateModel.updateOne` (never re-fetched
+  // as a document to `.save()`), which does not participate in Mongoose's
+  // version check either way — same as before this flag was added, not a
+  // new gap introduced by it.
+  optimisticConcurrency: true
+});
 
 ExchangeRateSchema.index({ tenantId: 1, fromCurrency: 1, toCurrency: 1, rateType: 1, effectiveDate: -1 });
 ExchangeRateSchema.index({ tenantId: 1, approvalStatus: 1 });

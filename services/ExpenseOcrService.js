@@ -1,11 +1,4 @@
-import { createWorker } from "tesseract.js";
-// See services/ai/AIKnowledgeExtractionService.js's own doc comment for
-// why the inner lib file is imported directly rather than the package
-// root — pdf-parse's root index.js runs a debug self-test at module-load
-// time that ESM's CJS interop triggers, causing a spurious ENOENT.
-import pdfParse from "pdf-parse/lib/pdf-parse.js";
-
-const IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/bmp", "image/tiff"]);
+import AIDocumentOcrService from "./ai/AIDocumentOcrService.js";
 
 // ---------------------------------------------------------------------------
 // Pure text-parsing helpers — no OCR/DB access, unit-testable directly (see
@@ -55,6 +48,19 @@ export const extractVendorFromText = (text) => {
   return lines.length > 0 ? lines[0].slice(0, 200) : null;
 };
 
+// "OCR Information... Receipt Number" (Enterprise Expense Management
+// Refactor Part 4/4). Same heuristic discipline as the other extractors
+// above — a labeled "Receipt/Invoice/Order/Ref #" line, not a formal
+// grammar (receipt numbering formats vary too widely to parse exhaustively).
+const RECEIPT_NUMBER_REGEX = /(?:receipt|invoice|order|ref(?:erence)?)\s*(?:#|no\.?|number)?[:\s]*([A-Z0-9][A-Z0-9\-\/]{2,24})/i;
+
+/** Prefers a labeled "Receipt #"/"Invoice No"/"Order #"/"Ref" value. */
+export const extractReceiptNumberFromText = (text) => {
+  if (!text) return null;
+  const match = text.match(RECEIPT_NUMBER_REGEX);
+  return match ? match[1].trim() : null;
+};
+
 // ---------------------------------------------------------------------------
 // Service — real OCR (tesseract.js for images), real text extraction
 // (pdf-parse for text-based PDFs, already installed for AI Knowledge
@@ -63,23 +69,6 @@ export const extractVendorFromText = (text) => {
 // ---------------------------------------------------------------------------
 
 class ExpenseOcrService {
-  static async _extractText(buffer, mimeType) {
-    if (mimeType === "application/pdf") {
-      const result = await pdfParse(buffer);
-      return { text: result.text || "", confidence: null };
-    }
-    if (IMAGE_MIME_TYPES.has(mimeType)) {
-      const worker = await createWorker("eng");
-      try {
-        const { data } = await worker.recognize(buffer);
-        return { text: data.text || "", confidence: data.confidence ?? null };
-      } finally {
-        await worker.terminate();
-      }
-    }
-    return null;
-  }
-
   /**
    * "OCR Extraction" — real text extraction plus the pure field-parsing
    * helpers above. Never throws to the caller: a genuine OCR/parsing
@@ -89,9 +78,9 @@ class ExpenseOcrService {
    */
   static async processAttachment(buffer, mimeType) {
     try {
-      const extraction = await ExpenseOcrService._extractText(buffer, mimeType);
+      const extraction = await AIDocumentOcrService.extractRawText(buffer, mimeType);
       if (!extraction) {
-        return { status: "Skipped", extractedText: null, extractedAmount: null, extractedDate: null, extractedVendor: null, confidence: null, processedAt: new Date() };
+        return { status: "Skipped", extractedText: null, extractedAmount: null, extractedDate: null, extractedVendor: null, extractedReceiptNumber: null, confidence: null, processedAt: new Date() };
       }
       const { text, confidence } = extraction;
       return {
@@ -100,11 +89,12 @@ class ExpenseOcrService {
         extractedAmount: extractAmountFromText(text),
         extractedDate: extractDateFromText(text),
         extractedVendor: extractVendorFromText(text),
+        extractedReceiptNumber: extractReceiptNumberFromText(text),
         confidence,
         processedAt: new Date()
       };
     } catch (error) {
-      return { status: "Failed", extractedText: null, extractedAmount: null, extractedDate: null, extractedVendor: null, confidence: null, processedAt: new Date(), error: error.message };
+      return { status: "Failed", extractedText: null, extractedAmount: null, extractedDate: null, extractedVendor: null, extractedReceiptNumber: null, confidence: null, processedAt: new Date(), error: error.message };
     }
   }
 }

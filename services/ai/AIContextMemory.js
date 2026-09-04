@@ -12,10 +12,23 @@ import { getAIConfig } from "../../utils/aiConfig.js";
 // Every field this module writes maps to a real tool parameter or a real
 // tool result this codebase actually has (see APPLIERS below) — it does
 // not fabricate fields for capabilities (payment status, PNR, transport
-// draft, meal-plan filtering, passenger nationality/special-assistance)
-// that no tool in AIToolRegistry.js currently accepts or returns. Those
-// stay present-but-null in the schema (models/AIConversationModel.js) for
-// forward-compatibility, never silently populated with a guess.
+// draft) that no tool in AIToolRegistry.js currently accepts or returns.
+// Those stay present-but-null in the schema (models/AIConversationModel.js)
+// for forward-compatibility, never silently populated with a guess.
+//
+// Gap 1.3 (traced + built) — passengers.children/infants (flight_search now
+// forwards these to the real Amadeus Flight Offers Search API — see
+// AmadeusAdapter.searchFlights) and hotel.mealPreference (get_hotel_room_offers
+// now filters real returned offers by their own mealPlan) are real as of
+// this change. passengers.nationality is real at BOOKING time
+// (propose_flight_booking's traveler array — AmadeusAdapter._toAmadeusTraveler
+// already forwarded it) but was never captured into remembered context
+// until now — see the propose_flight_booking applier. `flight.pricingToken`
+// and passengers.passportAvailable/specialAssistance/wheelchairRequest/
+// mealRequest remain genuinely unsupported — no tool/endpoint anywhere in
+// this codebase produces a distinct "pricing token" (Amadeus's own pricing
+// API re-prices the same offer object, it doesn't mint a token) or accepts
+// a flight-side special-assistance/meal request.
 
 const emptyContext = () => ({
   currentTopic: null, currentIntent: null, language: null,
@@ -43,6 +56,9 @@ const APPLIERS = {
     ctx.flight.cabin = args.cabin || ctx.flight.cabin;
     ctx.flight.searchedAt = new Date();
     if (args.adults) { ctx.passengers.adults = args.adults; }
+    // Gap 1.3 — real as of this change, see the top-of-file docblock.
+    if (args.children != null) ctx.passengers.children = args.children;
+    if (args.infants != null) ctx.passengers.infants = args.infants;
   },
   flight_inspiration: (ctx, args) => {
     ctx.flight.origin = args.origin || ctx.flight.origin;
@@ -55,6 +71,11 @@ const APPLIERS = {
     ctx.flight.selectedOfferId = args.offerId || ctx.flight.selectedOfferId;
     ctx.flight.selectedProvider = args.provider || ctx.flight.selectedProvider || "Amadeus";
     ctx.booking.flightApprovalRequestId = result?.approvalRequestId || ctx.booking.flightApprovalRequestId;
+    // Gap 1.3 — real as of this change. `passengers.nationality` is a
+    // single remembered value (same simplification this schema already
+    // applies to `passengers.adults`), taken from the first traveler.
+    const firstNationality = Array.isArray(args.travelers) ? args.travelers.find((t) => t?.nationality)?.nationality : null;
+    if (firstNationality) ctx.passengers.nationality = firstNationality;
   },
   hotel_search: (ctx, args) => {
     ctx.hotel.city = args.city || ctx.hotel.city;
@@ -77,6 +98,9 @@ const APPLIERS = {
     ctx.hotel.rooms = args.rooms ?? ctx.hotel.rooms;
     ctx.hotel.guests = args.adults ?? ctx.hotel.guests;
     ctx.hotel.searchedAt = new Date();
+    // Gap 1.3 — real as of this change (the tool now genuinely filters by
+    // this), see the top-of-file docblock.
+    if (args.mealPreference) ctx.hotel.mealPreference = args.mealPreference;
   },
   verify_hotel_offer_pricing: (ctx, args) => {
     ctx.hotel.selectedOfferId = args.hotelOfferId || ctx.hotel.selectedOfferId;

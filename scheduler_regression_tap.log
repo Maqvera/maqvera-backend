@@ -1,0 +1,94 @@
+TAP version 13
+# ◇ injected env (73) from .env // tip: ⌁ auth for agents [www.vestauth.com]
+# ◇ injected env (0) from .env // tip: ⌁ auth for agents [www.vestauth.com]
+# ◇ injected env (0) from .env // tip: ◈ encrypted .env [www.dotenvx.com]
+# ◇ injected env (0) from .env // tip: ◈ encrypted .env [www.dotenvx.com]
+# ◇ injected env (0) from .env // tip: ⌘ suppress logs { quiet: true }
+# ◇ injected env (0) from .env // tip: ⌘ override existing { override: true }
+# ◇ injected env (0) from .env // tip: ◈ encrypted .env [www.dotenvx.com]
+# ◇ injected env (0) from .env // tip: ⌘ custom filepath { path: '/custom/path/.env' }
+# ◇ injected env (0) from .env // tip: ⌘ override existing { override: true }
+# ◇ injected env (0) from .env // tip: ⌘ custom filepath { path: '/custom/path/.env' }
+# ◇ injected env (0) from .env // tip: ⌁ auth for agents [www.vestauth.com]
+# ◇ injected env (0) from .env // tip: ⌘ suppress logs { quiet: true }
+# ◇ injected env (0) from .env // tip: ⌘ enable debugging { debug: true }
+# ◇ injected env (0) from .env // tip: ⌁ auth for agents [www.vestauth.com]
+# ◇ injected env (0) from .env // tip: ⌘ multiple files { path: ['.env.local', '.env'] }
+# ◇ injected env (0) from .env // tip: ⌘ multiple files { path: ['.env.local', '.env'] }
+# ◇ injected env (0) from .env // tip: ⌘ suppress logs { quiet: true }
+# ◇ injected env (0) from .env // tip: ⌘ override existing { override: true }
+# ◇ injected env (0) from .env // tip: ⌘ override existing { override: true }
+# ◇ injected env (0) from .env // tip: ⌘ enable debugging { debug: true }
+# ◇ injected env (0) from .env // tip: ⌁ auth for agents [www.vestauth.com]
+# ◇ injected env (0) from .env // tip: ◈ secrets for agents [www.dotenvx.com]
+# ◇ injected env (0) from .env // tip: ⌘ multiple files { path: ['.env.local', '.env'] }
+# ◇ injected env (0) from .env // tip: ⌁ auth for agents [www.vestauth.com]
+# ◇ injected env (0) from .env // tip: ⌘ suppress logs { quiet: true }
+# ◇ injected env (0) from .env // tip: ⌘ enable debugging { debug: true }
+# Subtest: getAIConversationRetentionConfig reuses getAIConfig().conversationRetentionDays as its single source of truth
+ok 1 - getAIConversationRetentionConfig reuses getAIConfig().conversationRetentionDays as its single source of truth
+  ---
+  duration_ms: 2.6896
+  type: 'test'
+  ...
+# Subtest: sweepStaleConversations archives an active conversation past the retention window and leaves a recent one alone
+ok 2 - sweepStaleConversations archives an active conversation past the retention window and leaves a recent one alone
+  ---
+  duration_ms: 11991.2009
+  type: 'test'
+  ...
+# ◇ injected env (73) from .env // tip: ⌘ enable debugging { debug: true }
+# ◇ injected env (0) from .env // tip: ⌘ enable debugging { debug: true }
+# ◇ injected env (0) from .env // tip: ⌘ enable debugging { debug: true }
+# ◇ injected env (0) from .env // tip: ⌘ suppress logs { quiet: true }
+# ◇ injected env (0) from .env // tip: ◈ secrets for agents [www.dotenvx.com]
+# ◇ injected env (0) from .env // tip: ⌘ custom filepath { path: '/custom/path/.env' }
+# ◇ injected env (0) from .env // tip: ◈ secrets for agents [www.dotenvx.com]
+# ◇ injected env (0) from .env // tip: ⌁ auth for agents [www.vestauth.com]
+# ◇ injected env (0) from .env // tip: ⌘ override existing { override: true }
+# ◇ injected env (0) from .env // tip: ⌁ auth for agents [www.vestauth.com]
+# ◇ injected env (0) from .env // tip: ⌘ suppress logs { quiet: true }
+# [33mwarn[39m: Tenant test-enforce-1787995914785 suspended: Subscription grace period ended with no payment received. {"automatic":true,"reason":"Subscription grace period ended with no payment received.","service":"maqvera-api","tenantId":"test-enforce-1787995914785","timestamp":"2026-08-29 14:31:59"}
+# Subtest: TenantSubscriptionService.enforceGracePeriodSuspensions: suspends a real grace-expired tenant, shared by both scheduler jobs
+ok 3 - TenantSubscriptionService.enforceGracePeriodSuspensions: suspends a real grace-expired tenant, shared by both scheduler jobs
+  ---
+  duration_ms: 14254.2336
+  type: 'test'
+  ...
+# Subtest: TenantSubscriptionService.runDailyLifecycleSweep: return shape stays backward compatible (existing keys unchanged) and adds real processed/failed counters
+ok 4 - TenantSubscriptionService.runDailyLifecycleSweep: return shape stays backward compatible (existing keys unchanged) and adds real processed/failed counters
+  ---
+  duration_ms: 1002.1792
+  type: 'test'
+  ...
+# Subtest: SchedulerRunTracker: a real run record + audit entry + versioned domain events for the full start -> complete lifecycle
+ok 5 - SchedulerRunTracker: a real run record + audit entry + versioned domain events for the full start -> complete lifecycle
+  ---
+  duration_ms: 2215.8659
+  type: 'test'
+  ...
+# [33mwarn[39m: [Scheduler Alert] TestFailJob-1787995924230 run failed: Job 0e63ce18-43af-411a-bd93-d7bd1631068a (TestFailJob-1787995924230) failed after 405ms: Simulated database timeout. {"service":"maqvera-api","timestamp":"2026-08-29 14:32:05"}
+# ◇ injected env (0) from .env // tip: ⌘ enable debugging { debug: true }
+# ◇ injected env (0) from .env // tip: ⌁ auth for agents [www.vestauth.com]
+# ◇ injected env (0) from .env // tip: ◈ secrets for agents [www.dotenvx.com]
+# Subtest: SchedulerRunTracker: the start -> fail lifecycle records a real Failed run + audit entry
+ok 6 - SchedulerRunTracker: the start -> fail lifecycle records a real Failed run + audit entry
+  ---
+  duration_ms: 1495.7482
+  type: 'test'
+  ...
+# Subtest: Scheduler monitoring dashboard: getSchedulerDashboard returns real live counts and a real computed next-run time
+ok 7 - Scheduler monitoring dashboard: getSchedulerDashboard returns real live counts and a real computed next-run time
+  ---
+  duration_ms: 41825.4848
+  type: 'test'
+  ...
+1..7
+# tests 7
+# suites 0
+# pass 7
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 136155.741

@@ -1,6 +1,8 @@
 import AuditComplianceService from "./AuditComplianceService.js";
 import { getFinanceConfig } from "../utils/financeConfig.js";
 import logger from "../utils/logger.js";
+import { withDistributedLock } from "../utils/distributedLock.js";
+import { getSchedulerLockConfig } from "../utils/schedulerLockConfig.js";
 
 // Enterprise Audit & Compliance — Finance Module Part 27. "Data
 // Retention... 7 Years, 10 Years, Unlimited, Legal Hold." Real,
@@ -41,7 +43,8 @@ class AuditRetentionScheduler {
     if (expr !== config.auditRetentionCron) logger.error(`Invalid AUDIT_RETENTION_CRON_SCHEDULE: "${config.auditRetentionCron}". Falling back to "0 3 * * *".`);
 
     retentionJob = cronLib.schedule(expr, () => {
-      runRetentionCheck().catch((err) => logger.error("Cron audit retention error", { error: err.message }));
+      withDistributedLock("scheduler:AuditRetentionScheduler", getSchedulerLockConfig().defaultLockTtlMs, runRetentionCheck)
+        .catch((err) => logger.error("Cron audit retention error", { error: err.message }));
     }, { scheduled: true, timezone: process.env.TZ || undefined });
 
     logger.info(`AuditRetentionScheduler started — schedule: "${expr}".`);

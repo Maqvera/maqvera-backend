@@ -16,6 +16,7 @@ import { storeDocumentPdf } from "../utils/documentPdfStorage.js";
 import { publishEvent } from "../utils/eventBus.js";
 import { getFinanceConfig } from "../utils/financeConfig.js";
 import { resolveTaxRate } from "./InvoiceService.js";
+import { resolveTenantBranding } from "../utils/tenantBranding.js";
 
 const roundCurrency = (value) => Math.round((Number(value) || 0) * 100) / 100;
 
@@ -84,12 +85,14 @@ class DebitNoteService {
   }
 
   static async _generatePdf(debitNoteDoc) {
+    const company = await resolveTenantBranding(debitNoteDoc.tenantId);
     const buffer = await DebitNotePdfService.generatePdfBuffer({
       debitNumber: debitNoteDoc.debitNumber, status: debitNoteDoc.status, issuedAt: debitNoteDoc.issuedAt,
       partyType: debitNoteDoc.partyType, invoiceNumber: debitNoteDoc.invoiceNumber,
       customerName: debitNoteDoc.customerName, vendorName: debitNoteDoc.vendorName, reason: debitNoteDoc.reason,
       currency: debitNoteDoc.currency, items: debitNoteDoc.items, debitAmount: debitNoteDoc.debitAmount,
-      taxAdjustmentTotal: debitNoteDoc.taxAdjustmentTotal, grandTotal: debitNoteDoc.grandTotal
+      taxAdjustmentTotal: debitNoteDoc.taxAdjustmentTotal, grandTotal: debitNoteDoc.grandTotal,
+      company
     });
     const stored = await storeDocumentPdf({ tenantId: debitNoteDoc.tenantId, folder: "debit-notes", filename: `${debitNoteDoc.debitNumber}.pdf`, buffer });
     return { url: stored.url, storageKey: stored.storageKey, storageProvider: stored.storageProvider, generatedAt: new Date() };

@@ -6,15 +6,23 @@ import { getFinanceConfig } from "../utils/financeConfig.js";
 
 const roundCurrency = (value) => Math.round((Number(value) || 0) * 100) / 100;
 
+/** "Credit Expiry Rules" — pure: a credit is usable only while Active AND not past its own expiresAt (null = never expires). */
+export const isCreditUsable = (credit, referenceDate = new Date()) => credit.status === "Active" && (!credit.expiresAt || new Date(credit.expiresAt) >= referenceDate);
+
 class CustomerCreditService {
   /**
    * "Credit balance created automatically" — called by
    * AccountsReceivableService.allocatePayment on overpayment, or directly
-   * for a manual credit grant.
+   * for a manual credit grant. `expiresAt` is caller-overridable; falls
+   * back to the tenant's own `customerCreditDefaultExpiryDays` (0 = never).
    */
-  static async createCredit({ customerId, amount, currency, source, sourceReferenceId = null }, tenantId, userId) {
+  static async createCredit({ customerId, amount, currency, source, sourceReferenceId = null, expiresAt = undefined }, tenantId, userId) {
+    const config = getFinanceConfig();
     const roundedAmount = roundCurrency(amount);
     if (roundedAmount <= 0) throw new Error("Credit amount must be greater than zero.");
+
+    const resolvedExpiresAt = expiresAt !== undefined ? (expiresAt ? new Date(expiresAt) : null)
+      : (config.customerCreditDefaultExpiryDays > 0 ? new Date(Date.now() + config.customerCreditDefaultExpiryDays * 86400000) : null);
 
     const credit = await CustomerCreditModel.create({
       tenantId,
@@ -25,6 +33,7 @@ class CustomerCreditService {
       source,
       sourceReferenceId,
       status: "Active",
+      expiresAt: resolvedExpiresAt,
       createdBy: userId || null
     });
 
@@ -43,17 +52,69 @@ class CustomerCreditService {
     return credit.toJSON();
   }
 
-  static async getAvailableCredit(customerId, tenantId) {
+  // `currency` is optional (unlike VendorCreditService's own
+  // currency-required getAvailableCredit) — every pre-existing caller here
+  // wants the customer's whole cross-currency balance; `allocateAdvance`
+  // (File 6 Part 5) passes it to match the exact currency it's about to
+  // call `consumeAvailableCredits` for, since that consumption path is
+  // (correctly) currency-scoped and a cross-currency total would
+  // overstate what's actually consumable against one collection.
+  static async getAvailableCredit(customerId, tenantId, currency = null) {
     const customerObjectId = typeof customerId === "string" ? new mongoose.Types.ObjectId(customerId) : customerId;
+    const match = { tenantId, customerId: customerObjectId, status: "Active", $or: [{ expiresAt: null }, { expiresAt: { $gte: new Date() } }] };
+    if (currency) match.currency = currency;
     const [result] = await CustomerCreditModel.aggregate([
-      { $match: { tenantId, customerId: customerObjectId, status: "Active" } },
+      { $match: match },
       { $group: { _id: null, total: { $sum: "$remainingAmount" } } }
     ]);
     return roundCurrency(result?.total || 0);
   }
 
   static async listCreditsForCustomer(customerId, tenantId) {
-    return CustomerCreditModel.find({ tenantId, customerId, status: "Active" }).sort({ createdAt: 1 }).lean();
+    return CustomerCreditModel.find({ tenantId, customerId, status: "Active", $or: [{ expiresAt: null }, { expiresAt: { $gte: new Date() } }] }).sort({ createdAt: 1 }).lean();
+  }
+
+  /**
+   * GET /api/v1/customer-credits — "Customer Credit Balance Management."
+   * Tenant-wide list (the pre-existing `listCreditsForCustomer` above stays
+   * as the narrower, Active-only, single-customer helper other services
+   * already call). Lazily flips a past-`expiresAt`-but-still-`Active`
+   * credit to `Expired` as it's read (see `expiresAt`'s own schema doc
+   * comment for why this is lazy, not scheduler-driven) so the returned
+   * `status` is always accurate at read time even though nothing proactively
+   * swept it.
+   */
+  static async listCredits(query, tenantId) {
+    const config = getFinanceConfig();
+    const { customerId, status, currency } = query;
+    const filter = { tenantId };
+    if (customerId) filter.customerId = customerId;
+    if (status) filter.status = status;
+    if (currency) filter.currency = currency;
+
+    const page = Math.max(parseInt(query.page, 10) || 1, 1);
+    const pageSize = Math.min(Math.max(parseInt(query.pageSize, 10) || config.defaultPageSize, 1), config.maxPageSize);
+
+    const [items, total] = await Promise.all([
+      CustomerCreditModel.find(filter).sort({ createdAt: -1 }).skip((page - 1) * pageSize).limit(pageSize).lean(),
+      CustomerCreditModel.countDocuments(filter)
+    ]);
+
+    const now = new Date();
+    const staleActiveIds = items.filter((c) => c.status === "Active" && c.expiresAt && new Date(c.expiresAt) < now).map((c) => c._id);
+    if (staleActiveIds.length > 0) {
+      await CustomerCreditModel.updateMany({ _id: { $in: staleActiveIds }, tenantId }, { $set: { status: "Expired" } });
+      items.forEach((c) => { if (staleActiveIds.some((id) => id.equals(c._id))) c.status = "Expired"; });
+      for (const creditId of staleActiveIds) publishEvent("CustomerCreditExpired", { tenantId, creditId: creditId.toString(), performedBy: "system" });
+    }
+
+    return {
+      items: items.map((c) => ({
+        creditId: c._id, customer: c.customerId, availableCredit: c.remainingAmount, usedCredit: roundCurrency(c.amount - c.remainingAmount),
+        remainingCredit: c.remainingAmount, currency: c.currency, status: c.status, source: c.source, expiryDate: c.expiresAt, createdAt: c.createdAt
+      })),
+      pagination: { total, page, pageSize, totalPages: Math.ceil(total / pageSize) }
+    };
   }
 
   /**
@@ -111,7 +172,7 @@ class CustomerCreditService {
     const consumedCreditIds = [];
     if (remaining <= 0) return { consumedAmount: 0, consumedCreditIds };
 
-    const credits = await CustomerCreditModel.find({ tenantId, customerId, currency, status: "Active" }).sort({ createdAt: 1 });
+    const credits = await CustomerCreditModel.find({ tenantId, customerId, currency, status: "Active", $or: [{ expiresAt: null }, { expiresAt: { $gte: new Date() } }] }).sort({ createdAt: 1 });
     for (const credit of credits) {
       if (remaining <= 0) break;
       const take = roundCurrency(Math.min(credit.remainingAmount, remaining));

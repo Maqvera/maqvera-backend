@@ -3,9 +3,8 @@ import AuditLogModel from "../models/AuditLogmodel.js";
 import { publishEvent } from "../utils/eventBus.js";
 
 // Minimal Vendor CRUD — see models/VendorModel.js for why this exists ahead
-// of a full Procurement module. Read + create only; no update/deactivate
-// endpoint yet since nothing in Part 6's contract requires editing a
-// vendor's own profile.
+// of a full Procurement module. updateVendor added for the Visa Module PRD
+// §11 ("Vendor details") — the first real need to edit a vendor's own profile.
 class VendorService {
   static async listVendors(query, tenantId) {
     const { status, search } = query;
@@ -32,7 +31,7 @@ class VendorService {
   }
 
   static async createVendor(data, tenantId, userId) {
-    const { name, contactEmail = null, contactPhone = null, currency, paymentTermsDays } = data;
+    const { name, contactEmail = null, contactPhone = null, contactPerson = null, whatsapp = null, visaVendorProfile = null, currency, paymentTermsDays } = data;
     if (!name || !currency) throw new Error("name and currency are required.");
 
     const vendor = await VendorModel.create({
@@ -40,6 +39,12 @@ class VendorService {
       name,
       contactEmail,
       contactPhone,
+      contactPerson,
+      whatsapp,
+      // Visa Module PRD §11 — only populated when the caller actually
+      // supplies it; every other vendor type (hotel/car suppliers) leaves
+      // this null, matching the sub-object's own doc comment on VendorModel.
+      visaVendorProfile: visaVendorProfile || undefined,
       currency,
       paymentTermsDays: paymentTermsDays !== undefined ? paymentTermsDays : 30,
       status: "Active",
@@ -58,6 +63,42 @@ class VendorService {
     });
 
     publishEvent("VendorCreated", { tenantId, vendorId: vendor._id.toString(), name, performedBy: userId || null });
+
+    return vendor.toJSON();
+  }
+
+  /**
+   * Update Vendor — first real editable-profile need this model has had
+   * (Visa Module PRD §11). Editable fields only; tenantId/status transitions
+   * are handled elsewhere (status via deactivate flows, not implemented yet
+   * since nothing currently requires it).
+   */
+  static async updateVendor(vendorId, updateData, tenantId, userId) {
+    const vendor = await VendorModel.findOne({ _id: vendorId, tenantId });
+    if (!vendor) throw new Error("Vendor not found.");
+
+    const editableFields = ["name", "contactEmail", "contactPhone", "contactPerson", "whatsapp", "currency", "paymentTermsDays", "status"];
+    editableFields.forEach((key) => {
+      if (updateData[key] !== undefined) vendor[key] = updateData[key];
+    });
+    if (updateData.visaVendorProfile !== undefined) {
+      vendor.visaVendorProfile = { ...(vendor.visaVendorProfile?.toObject?.() || vendor.visaVendorProfile || {}), ...updateData.visaVendorProfile };
+    }
+    vendor.updatedBy = userId || null;
+
+    await vendor.save();
+
+    await AuditLogModel.create({
+      action: "finance.vendor.update",
+      module: "Finance",
+      resource: "Vendor",
+      resourceId: vendor._id.toString(),
+      userId: userId || null,
+      tenantId,
+      details: updateData
+    });
+
+    publishEvent("VendorUpdated", { tenantId, vendorId: vendor._id.toString(), performedBy: userId || null });
 
     return vendor.toJSON();
   }

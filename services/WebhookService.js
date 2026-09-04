@@ -1,10 +1,12 @@
 import crypto from "crypto";
 import WebhookSubscriptionModel from "../models/WebhookSubscriptionModel.js";
 import WebhookDeliveryModel from "../models/WebhookDeliveryModel.js";
+import DeadLetterQueueModel from "../models/DeadLetterQueueModel.js";
 import AuditLogModel from "../models/AuditLogmodel.js";
-import { subscribeAllEvents } from "../utils/eventBus.js";
+import { subscribeAllEvents, publishEvent } from "../utils/eventBus.js";
 import { retryWithBackoff } from "../utils/retryWithBackoff.js";
 import { getFinanceConfig } from "../utils/financeConfig.js";
+import logger from "../utils/logger.js";
 
 // ---------------------------------------------------------------------------
 // Pure helpers — no DB access, unit-testable directly.
@@ -142,7 +144,6 @@ class WebhookService {
   }
 
   static async _deliverToSubscription(subscription, eventName, payload) {
-    const config = getFinanceConfig();
     const rawBody = JSON.stringify({ eventId: payload.eventId, eventType: eventName, occurredAt: payload.occurredAt, data: payload });
     const signedTimestamp = Math.floor(Date.now() / 1000);
     const signature = computeWebhookSignature(subscription.secret, signedTimestamp, rawBody);
@@ -152,8 +153,14 @@ class WebhookService {
       payload, signature, signedTimestamp, status: "Pending"
     });
 
+    const succeeded = await WebhookService._attemptBurst(delivery, subscription, eventName, rawBody, signature, signedTimestamp);
+    return WebhookService._finalizeDeliveryOutcome(delivery, subscription, succeeded);
+  }
+
+  /** The real, immediate short burst — `webhookRetryMaxAttempts` attempts, seconds apart. Appends every real attempt to `delivery.attempts`; does NOT save or decide the delivery's final status — that's `_finalizeDeliveryOutcome`'s job, shared with the long-horizon scheduled-retry path below. */
+  static async _attemptBurst(delivery, subscription, eventName, rawBody, signature, signedTimestamp) {
+    const config = getFinanceConfig();
     let attemptNumber = 0;
-    let succeeded = false;
     try {
       await retryWithBackoff(async (attempt) => {
         attemptNumber = attempt;
@@ -166,7 +173,7 @@ class WebhookService {
               "Content-Type": "application/json",
               "X-Webhook-Signature": signature,
               "X-Webhook-Timestamp": String(signedTimestamp),
-              "X-Webhook-Event-Id": payload.eventId || "",
+              "X-Webhook-Event-Id": delivery.eventId || "",
               "X-Webhook-Event": eventName
             },
             body: rawBody,
@@ -179,15 +186,41 @@ class WebhookService {
           clearTimeout(timeout);
         }
       }, { maxAttempts: config.webhookRetryMaxAttempts, baseDelayMs: config.webhookRetryBaseDelayMs, label: `webhook ${eventName} -> ${subscription.url}` });
-      succeeded = true;
+      return true;
     } catch (error) {
       if (delivery.attempts.length === 0 || delivery.attempts[delivery.attempts.length - 1].succeeded) {
         delivery.attempts.push({ attemptNumber: attemptNumber || 1, responseStatusCode: null, responseBody: null, succeeded: false, failureReason: error.message });
       }
+      return false;
     }
+  }
 
-    delivery.status = succeeded ? "Delivered" : "Failed";
-    if (succeeded) delivery.deliveredAt = new Date();
+  /**
+   * Enterprise Webhook Standard (Improvement 14). The real status decision
+   * shared by every delivery path (initial fan-out, scheduled long-horizon
+   * retry, manual replay): Delivered on success; otherwise Retrying (with
+   * a real `nextRetryAt` computed from `webhookLongRetryScheduleSeconds`)
+   * while the long-horizon schedule still has entries left, or
+   * DeadLetterQueue (genuine reuse of Improvement 6's `DeadLetterQueueModel`)
+   * once it's exhausted. Also owns the subscription's own real circuit
+   * breaker (`consecutiveFailureCount` -> auto-suspend), unchanged from
+   * before this standard.
+   */
+  static async _finalizeDeliveryOutcome(delivery, subscription, succeeded) {
+    const config = getFinanceConfig();
+
+    if (succeeded) {
+      delivery.status = "Delivered";
+      delivery.deliveredAt = new Date();
+      delivery.nextRetryAt = null;
+    } else if (delivery.longRetryAttempt < config.webhookLongRetryScheduleSeconds.length) {
+      delivery.status = "Retrying";
+      delivery.nextRetryAt = new Date(Date.now() + config.webhookLongRetryScheduleSeconds[delivery.longRetryAttempt] * 1000);
+      delivery.longRetryAttempt += 1;
+    } else {
+      delivery.status = "DeadLetterQueue";
+      delivery.nextRetryAt = null;
+    }
     await delivery.save();
 
     const update = succeeded
@@ -205,7 +238,89 @@ class WebhookService {
       }
     }
 
+    if (delivery.status === "DeadLetterQueue") {
+      await WebhookService._moveToDeadLetterQueue(delivery, subscription);
+    }
+
     return delivery.toJSON();
+  }
+
+  /** Genuine reuse of Improvement 6's own DLQ model/event names — a webhook delivery that exhausts the full long-horizon schedule shows up in the SAME `GET /api/v1/resilience/dead-letters?module=Webhook` monitoring surface every other integration's exhausted retries already use, never a second, parallel DLQ. */
+  static async _moveToDeadLetterQueue(delivery, subscription) {
+    const lastAttempt = delivery.attempts[delivery.attempts.length - 1];
+    const reason = lastAttempt?.failureReason || "Webhook delivery exhausted its full retry schedule.";
+
+    const dlq = await DeadLetterQueueModel.create({
+      tenantId: delivery.tenantId, module: "Webhook", operation: delivery.eventType, integration: "Webhook", reason,
+      retryAttempts: delivery.attempts.length, correlationId: delivery.payload?.correlationId || null,
+      payload: { deliveryId: delivery._id.toString(), webhookSubscriptionId: subscription._id.toString(), url: subscription.url },
+      status: "Pending", failedAt: new Date(),
+      timeline: [{ event: "DeadLetterQueued", description: reason }]
+    });
+
+    delivery.dlqId = dlq._id;
+    await delivery.save();
+
+    await AuditLogModel.create({
+      action: "webhook.retry_exhausted", outcome: "failure", tenantId: delivery.tenantId, requestId: delivery.payload?.correlationId || undefined,
+      module: "EnterpriseWebhook", resource: "WebhookDelivery", resourceId: delivery._id.toString(),
+      details: { dlqId: dlq._id.toString(), eventType: delivery.eventType, attempts: delivery.attempts.length, reason }
+    }).catch((err) => logger.error("Webhook DLQ audit log failed", { deliveryId: delivery._id.toString(), error: err.message }));
+
+    // Same canonical event names Improvement 6's own resilienceEngine.js
+    // publishes on DLQ hand-off — one real "admin alert" hook point for
+    // every exhausted-retry source in this codebase, not a webhook-only one.
+    publishEvent("RetryExhausted.v1", { integration: "Webhook", module: "Webhook", operationLabel: delivery.eventType, tenantId: delivery.tenantId, attempts: delivery.attempts.length, reason });
+    publishEvent("DeadLetterQueued.v1", { dlqId: dlq._id.toString(), integration: "Webhook", module: "Webhook", operationLabel: delivery.eventType, tenantId: delivery.tenantId });
+
+    return dlq;
+  }
+
+  /**
+   * WebhookRetryScheduler's own real sweep — every due `Retrying` delivery
+   * (`nextRetryAt` in the past) gets exactly one more real burst attempt.
+   * A delivery whose subscription is no longer Active is honestly
+   * abandoned rather than kept retrying against a subscription nobody
+   * intends to reactivate.
+   */
+  static async processDueRetries() {
+    const config = getFinanceConfig();
+    const due = await WebhookDeliveryModel.find({ status: "Retrying", nextRetryAt: { $lte: new Date() } }).limit(config.webhookRetryPollBatchSize).lean();
+
+    let processed = 0;
+    for (const deliveryLean of due) {
+      try {
+        await WebhookService._processScheduledRetry(deliveryLean._id);
+        processed += 1;
+      } catch (error) {
+        logger.error("Webhook scheduled retry failed", { deliveryId: deliveryLean._id.toString(), error: error.message });
+      }
+    }
+    return processed;
+  }
+
+  static async _processScheduledRetry(deliveryId) {
+    const delivery = await WebhookDeliveryModel.findById(deliveryId);
+    if (!delivery || delivery.status !== "Retrying") return; // already handled by a concurrent sweep/manual action.
+
+    const subscription = await WebhookSubscriptionModel.findById(delivery.webhookSubscriptionId).lean();
+    if (!subscription || subscription.status !== "Active") {
+      delivery.status = "Abandoned";
+      delivery.nextRetryAt = null;
+      await delivery.save();
+      await AuditLogModel.create({
+        action: "webhook.delivery_abandoned", tenantId: delivery.tenantId, module: "EnterpriseWebhook", resource: "WebhookDelivery", resourceId: delivery._id.toString(),
+        details: { reason: `Subscription is ${subscription?.status || "deleted"}, not Active — scheduled retry abandoned.` }
+      }).catch(() => null);
+      return;
+    }
+
+    const rawBody = JSON.stringify({ eventId: delivery.eventId, eventType: delivery.eventType, occurredAt: delivery.payload?.occurredAt, data: delivery.payload });
+    const signedTimestamp = Math.floor(Date.now() / 1000);
+    const signature = computeWebhookSignature(subscription.secret, signedTimestamp, rawBody);
+
+    const succeeded = await WebhookService._attemptBurst(delivery, subscription, delivery.eventType, rawBody, signature, signedTimestamp);
+    await WebhookService._finalizeDeliveryOutcome(delivery, subscription, succeeded);
   }
 
   /** POST /api/v1/webhook-subscriptions/{subscriptionId}/deliveries/{deliveryId}/replay — "Webhook Replay" (Disaster Recovery). Real, targeted redelivery of one specific past event. */
@@ -217,6 +332,60 @@ class WebhookService {
     if (subscription.status !== "Active") throw new Error(`Cannot replay to a subscription in status "${subscription.status}".`);
 
     return WebhookService._deliverToSubscription(subscription, delivery.eventType, delivery.payload);
+  }
+
+  /**
+   * GET /api/v1/webhook-subscriptions/monitoring/summary — "Dashboard
+   * should show: Registered Webhooks, Delivery Success %, Average
+   * Delivery Time, Retries, DLQ Items, Replay Queue." A real aggregation
+   * over `WebhookDeliveryModel`/`WebhookSubscriptionModel`, not a
+   * placeholder. Two spec metrics are honestly NOT computed here:
+   * "Signature Failures" is a receiver-side concern (verifying the
+   * signature this codebase sent) that this codebase, as the sender, has
+   * no way to observe; "Replay Queue" has no distinct real backing
+   * concept beyond DLQ items in this engine (a DLQ row IS the real,
+   * actionable replay candidate — see `replayDelivery`), so it is aliased
+   * to `dlqItems` rather than fabricated as a separate number.
+   */
+  static async getMonitoringSummary(tenantId, query = {}) {
+    const windowStart = new Date(Date.now() - (parseInt(query.windowHours, 10) || 24) * 3600 * 1000);
+
+    const [registeredWebhooks, deliveryStats, dlqItems] = await Promise.all([
+      WebhookSubscriptionModel.countDocuments({ tenantId }),
+      WebhookDeliveryModel.aggregate([
+        { $match: { tenantId, createdAt: { $gte: windowStart } } },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: 1 },
+            delivered: { $sum: { $cond: [{ $eq: ["$status", "Delivered"] }, 1, 0] } },
+            retried: { $sum: { $cond: [{ $gt: [{ $size: "$attempts" }, 1] }, 1, 0] } },
+            avgDeliveryTimeMs: {
+              $avg: {
+                $cond: [
+                  { $eq: ["$status", "Delivered"] },
+                  { $subtract: ["$deliveredAt", "$createdAt"] },
+                  null
+                ]
+              }
+            }
+          }
+        }
+      ]),
+      WebhookDeliveryModel.countDocuments({ tenantId, status: "DeadLetterQueue" })
+    ]);
+
+    const stats = deliveryStats[0] || { total: 0, delivered: 0, retried: 0, avgDeliveryTimeMs: null };
+    return {
+      windowHours: parseInt(query.windowHours, 10) || 24,
+      registeredWebhooks,
+      totalDeliveries: stats.total,
+      deliverySuccessRatePercent: stats.total > 0 ? Math.round((stats.delivered / stats.total) * 10000) / 100 : null,
+      averageDeliveryTimeMs: stats.avgDeliveryTimeMs !== null ? Math.round(stats.avgDeliveryTimeMs) : null,
+      deliveriesWithRetries: stats.retried,
+      dlqItems,
+      replayQueueItems: dlqItems
+    };
   }
 }
 

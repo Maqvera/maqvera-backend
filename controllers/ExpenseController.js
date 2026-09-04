@@ -135,6 +135,22 @@ export const verifyExpenseReceipt = async (req, res) => {
   }
 };
 
+export const correctReceiptOcr = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "finance.expense.approve")) return sendError(res, 403, "Permission denied.", requestId);
+    const userId = req.auth?.userId || req.auth?.id || null;
+
+    const expense = await ExpenseService.correctReceiptOcr(req.params.expenseId, req.params.attachmentId, req.body, scope.tenantId, userId, auditContextFrom(req, requestId));
+    return sendSuccess(res, 200, "OCR correction recorded successfully.", expense, requestId);
+  } catch (error) {
+    console.error("correctReceiptOcr error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to record OCR correction.", requestId);
+  }
+};
+
 export const submitExpense = async (req, res) => {
   const requestId = req.requestId || createRequestId();
   try {
@@ -244,6 +260,153 @@ export const closeExpense = async (req, res) => {
   } catch (error) {
     console.error("closeExpense error:", error);
     return sendError(res, statusFromError(error), error.message || "Failed to close expense.", requestId);
+  }
+};
+
+// ---- Bulk Operations & Export (Enterprise Expense Management Refactor Part 3/4) ----
+
+export const exportExpenses = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "finance.expense.read", "finance.read")) return sendError(res, 403, "Permission denied.", requestId);
+
+    const { filename, csv } = await ExpenseService.exportExpenses(req.query, scope.tenantId);
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    return res.status(200).send(csv);
+  } catch (error) {
+    console.error("exportExpenses error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to export expenses.", requestId);
+  }
+};
+
+export const bulkApproveExpenses = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "finance.expense.approve")) return sendError(res, 403, "Permission denied.", requestId);
+    const userId = req.auth?.userId || req.auth?.id || null;
+
+    const result = await ExpenseService.bulkApproveExpenses(req.body.expenseIds, { notes: req.body.notes }, scope.tenantId, userId, auditContextFrom(req, requestId));
+    return sendSuccess(res, 200, "Bulk approve completed.", result, requestId);
+  } catch (error) {
+    console.error("bulkApproveExpenses error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to bulk-approve expenses.", requestId);
+  }
+};
+
+export const bulkRejectExpenses = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "finance.expense.approve")) return sendError(res, 403, "Permission denied.", requestId);
+    const userId = req.auth?.userId || req.auth?.id || null;
+
+    const result = await ExpenseService.bulkRejectExpenses(req.body.expenseIds, { reason: req.body.reason }, scope.tenantId, userId, auditContextFrom(req, requestId));
+    return sendSuccess(res, 200, "Bulk reject completed.", result, requestId);
+  } catch (error) {
+    console.error("bulkRejectExpenses error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to bulk-reject expenses.", requestId);
+  }
+};
+
+export const bulkTagExpenses = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "finance.expense.create")) return sendError(res, 403, "Permission denied.", requestId);
+    const userId = req.auth?.userId || req.auth?.id || null;
+
+    const result = await ExpenseService.bulkTagExpenses(req.body.expenseIds, req.body.tags, scope.tenantId, userId, auditContextFrom(req, requestId));
+    return sendSuccess(res, 200, "Bulk tag completed.", result, requestId);
+  } catch (error) {
+    console.error("bulkTagExpenses error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to bulk-tag expenses.", requestId);
+  }
+};
+
+export const bulkArchiveExpenses = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "finance.expense.manage")) return sendError(res, 403, "Permission denied.", requestId);
+    const userId = req.auth?.userId || req.auth?.id || null;
+
+    const result = await ExpenseService.bulkArchiveExpenses(req.body.expenseIds, scope.tenantId, userId, auditContextFrom(req, requestId));
+    return sendSuccess(res, 200, "Bulk archive completed.", result, requestId);
+  } catch (error) {
+    console.error("bulkArchiveExpenses error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to bulk-archive expenses.", requestId);
+  }
+};
+
+export const bulkCommentExpenses = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "finance.expense.create")) return sendError(res, 403, "Permission denied.", requestId);
+    const userId = req.auth?.userId || req.auth?.id || null;
+
+    const result = await ExpenseService.bulkCommentExpenses(req.body.expenseIds, req.body.text, scope.tenantId, userId, auditContextFrom(req, requestId));
+    return sendSuccess(res, 200, "Bulk comment completed.", result, requestId);
+  } catch (error) {
+    console.error("bulkCommentExpenses error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to bulk-comment on expenses.", requestId);
+  }
+};
+
+export const bulkAssignReviewerExpenses = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "finance.expense.manage")) return sendError(res, 403, "Permission denied.", requestId);
+    const userId = req.auth?.userId || req.auth?.id || null;
+
+    const result = await ExpenseService.bulkAssignReviewer(req.body.expenseIds, { reviewerId: req.body.reviewerId, notes: req.body.notes }, scope.tenantId, userId, auditContextFrom(req, requestId));
+    return sendSuccess(res, 200, "Bulk reviewer assignment completed.", result, requestId);
+  } catch (error) {
+    console.error("bulkAssignReviewerExpenses error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to bulk-assign reviewer.", requestId);
+  }
+};
+
+export const bulkRecalculateExpenseBudgets = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "finance.expense.manage")) return sendError(res, 403, "Permission denied.", requestId);
+    const userId = req.auth?.userId || req.auth?.id || null;
+
+    const result = await ExpenseService.bulkRecalculateBudget(req.body.expenseIds, scope.tenantId, userId, auditContextFrom(req, requestId));
+    return sendSuccess(res, 200, "Bulk budget recalculation completed.", result, requestId);
+  } catch (error) {
+    console.error("bulkRecalculateExpenseBudgets error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to bulk-recalculate budgets.", requestId);
+  }
+};
+
+export const bulkRevalidateExpensePolicies = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "finance.expense.manage")) return sendError(res, 403, "Permission denied.", requestId);
+    const userId = req.auth?.userId || req.auth?.id || null;
+
+    const result = await ExpenseService.bulkRevalidatePolicy(req.body.expenseIds, scope.tenantId, userId, auditContextFrom(req, requestId));
+    return sendSuccess(res, 200, "Bulk policy revalidation completed.", result, requestId);
+  } catch (error) {
+    console.error("bulkRevalidateExpensePolicies error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to bulk-revalidate policy.", requestId);
   }
 };
 

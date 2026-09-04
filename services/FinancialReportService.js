@@ -313,7 +313,7 @@ class FinancialReportService {
     });
 
     await AuditLogModel.create({ action: "finance.report.generate", module: "Finance", resource: "FinancialReport", resourceId: report._id.toString(), userId: userId || null, tenantId, details: { reportType, period } });
-    publishEvent("ReportGenerated", { tenantId, reportId: report._id.toString(), reportType, period, performedBy: userId || null });
+    publishEvent("ReportGenerated", { tenantId, reportId: report._id.toString(), reportType, period, performedBy: userId || null, module: "Finance" });
 
     return report.toJSON();
   }

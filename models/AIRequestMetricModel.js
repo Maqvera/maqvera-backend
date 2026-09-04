@@ -109,7 +109,13 @@ const AIRequestMetricSchema = new mongoose.Schema(
     ragUsed: { type: Boolean, default: false },
     ragHit: { type: Boolean, default: null },
     ragChunkCount: { type: Number, default: 0 },
-    ragCitationCount: { type: Number, default: 0 }
+    ragCitationCount: { type: Number, default: 0 },
+    // Gap 1.4 "RAG similarity search has no dedicated vector index" — how
+    // many of this tenant's chunks the in-app cosine-similarity ranker
+    // scanned to produce ragChunkCount's returned/cited passages. Distinct
+    // from ragChunkCount (the RETURNED count) — this is the real scan-cost
+    // signal a future vector-DB-migration decision should be based on.
+    ragChunksScanned: { type: Number, default: 0 }
   },
   { timestamps: true }
 );

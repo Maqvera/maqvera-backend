@@ -91,6 +91,16 @@ const SmsCampaignSchema = new mongoose.Schema({
     type: Date,
     default: null
   },
+  // Part 10 fix — updated on every checkpoint save while a campaign is
+  // actively processing. A campaign stuck at status "Processing" with a
+  // stale lastProcessedAt means the process that was running it crashed
+  // mid-batch; smsCampaignRecoveryScheduler.js uses this to detect and
+  // resume it, rather than the campaign sitting abandoned forever.
+  lastProcessedAt: {
+    type: Date,
+    default: null,
+    index: true
+  },
   createdBy: {
     type: String,
     default: null

@@ -37,7 +37,11 @@ const SearchIndexSchema = new mongoose.Schema({
       "Expense",
       "BankAccount",
       "AuditEvent",
-      "FinancialReport"
+      "FinancialReport",
+      "ReportSchedule",
+      "CommunicationMessage",
+      "CommunicationTemplate",
+      "CommunicationAudit"
     ],
     required: true,
     index: true

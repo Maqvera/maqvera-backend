@@ -208,11 +208,11 @@ class AIObservabilityService {
   static async getRAGMetrics({ tenantId, from, to }) {
     const config = getAIObservabilityConfig();
     const range = this._range(from, to, config.defaultLookbackMs);
-    if (mongoose.connection?.readyState !== 1) return { tenantId, retrievals: 0, hitRatePct: null, missRatePct: null, averageRetrievedChunks: null, averageCitationsPerRetrieval: null };
+    if (mongoose.connection?.readyState !== 1) return { tenantId, retrievals: 0, hitRatePct: null, missRatePct: null, averageRetrievedChunks: null, averageCitationsPerRetrieval: null, averageChunksScanned: null };
 
     const [row] = await AIRequestMetricModel.aggregate([
       { $match: { tenantId, createdAt: range, ragUsed: true } },
-      { $group: { _id: null, total: { $sum: 1 }, hits: { $sum: { $cond: ["$ragHit", 1, 0] } }, avgChunks: { $avg: "$ragChunkCount" }, avgCitations: { $avg: "$ragCitationCount" } } }
+      { $group: { _id: null, total: { $sum: 1 }, hits: { $sum: { $cond: ["$ragHit", 1, 0] } }, avgChunks: { $avg: "$ragChunkCount" }, avgCitations: { $avg: "$ragCitationCount" }, avgScanned: { $avg: "$ragChunksScanned" } } }
     ]);
     const total = row?.total || 0;
 
@@ -222,7 +222,11 @@ class AIObservabilityService {
       hitRatePct: total > 0 ? Number(((row.hits / total) * 100).toFixed(1)) : null,
       missRatePct: total > 0 ? Number((((total - row.hits) / total) * 100).toFixed(1)) : null,
       averageRetrievedChunks: row?.avgChunks != null ? Number(row.avgChunks.toFixed(1)) : null,
-      averageCitationsPerRetrieval: row?.avgCitations != null ? Number(row.avgCitations.toFixed(1)) : null
+      averageCitationsPerRetrieval: row?.avgCitations != null ? Number(row.avgCitations.toFixed(1)) : null,
+      // Gap 1.4 — the real scan-cost signal (distinct from averageRetrievedChunks,
+      // which is the RETURNED count) a future vector-DB-migration decision
+      // should be based on, not a guess.
+      averageChunksScanned: row?.avgScanned != null ? Number(row.avgScanned.toFixed(1)) : null
     };
   }
 

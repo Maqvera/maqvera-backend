@@ -7,7 +7,8 @@ import {
   GetDashboardTrends,
   GetDashboardMap,
   GetDashboardWorkload,
-  GetDashboardAlerts
+  GetDashboardAlerts,
+  ExportDashboard
 } from "../controllers/TravelDashboardController.js";
 
 const router = express.Router();
@@ -29,5 +30,6 @@ router.get("/trends", limiter, GetDashboardTrends);
 router.get("/map", limiter, GetDashboardMap);
 router.get("/workload", limiter, GetDashboardWorkload);
 router.get("/alerts", limiter, GetDashboardAlerts);
+router.get("/export", limiter, ExportDashboard);
 
 export default router;

@@ -4,6 +4,7 @@ import {
   resolveTaxRate,
   computeLineTotals,
   computeInvoiceTotals,
+  applyMunicipalityFee,
   isInvoiceEditable,
   isInvoiceApprovable,
   isInvoiceIssuable,
@@ -69,6 +70,22 @@ test("computeInvoiceTotals sums multiple computed line items", () => {
   assert.equal(totals.taxTotal, 75);
   assert.equal(totals.discountTotal, 0);
   assert.equal(totals.grandTotal, 675);
+});
+
+test("applyMunicipalityFee defaults to a 0% no-op, leaving grandTotal unchanged", () => {
+  const totals = computeInvoiceTotals([computeLineTotals({ description: "A", quantity: 1, unitPrice: 100, taxCode: "ZERO" }, TAX_CODES)]);
+  const withFee = applyMunicipalityFee(totals);
+  assert.equal(withFee.municipalityFeeRate, 0);
+  assert.equal(withFee.municipalityFeeAmount, 0);
+  assert.equal(withFee.grandTotal, totals.grandTotal);
+});
+
+test("applyMunicipalityFee adds a rate-based fee on subtotal to grandTotal", () => {
+  const totals = computeInvoiceTotals([computeLineTotals({ description: "A", quantity: 1, unitPrice: 1000, taxCode: "ZERO" }, TAX_CODES)]);
+  const withFee = applyMunicipalityFee(totals, 2);
+  assert.equal(withFee.municipalityFeeRate, 2);
+  assert.equal(withFee.municipalityFeeAmount, 20);
+  assert.equal(withFee.grandTotal, totals.grandTotal + 20);
 });
 
 test("invoice status predicates follow the Draft -> Approve -> Issue gating", () => {

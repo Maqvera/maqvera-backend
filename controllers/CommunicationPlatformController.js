@@ -3,6 +3,9 @@ import CommunicationTemplateService from "../services/CommunicationTemplateServi
 import CommunicationPreferenceService from "../services/CommunicationPreferenceService.js";
 import EmailPlatformService from "../services/EmailPlatformService.js";
 import SmsPlatformService from "../services/SmsPlatformService.js";
+import WhatsAppPlatformService from "../services/WhatsAppPlatformService.js";
+import WhatsAppConversationService from "../services/WhatsAppConversationService.js";
+import CommunicationAnalyticsEngine from "../services/CommunicationAnalyticsEngine.js";
 import { sendError, sendSuccess } from "../utils/apiResponse.js";
 import { getAccessScope } from "../utils/accessScope.js";
 import { createRequestId } from "../utils/authTokens.js";
@@ -127,6 +130,95 @@ export const cancelMessage = async (req, res) => {
   }
 };
 
+// 5b. Retention & Legal Hold (Part 15) — permission-gating who may call
+// these (e.g. `communication.message.archive`) is this route's own
+// middleware/RBAC configuration, not this controller's concern.
+export const archiveMessage = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const { tenantId, userId } = getScope(req);
+    if (!tenantId) return sendError(res, 403, "Tenant context required.", requestId);
+
+    const result = await CommunicationPlatformService.archiveMessage({
+      tenantId, messageId: req.params.messageId, reason: req.body?.reason, userId
+    });
+    return sendSuccess(res, 200, "Communication message archived.", result, requestId);
+  } catch (err) {
+    return sendError(res, statusFromError(err), err.message, requestId);
+  }
+};
+
+export const restoreMessage = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const { tenantId, userId } = getScope(req);
+    if (!tenantId) return sendError(res, 403, "Tenant context required.", requestId);
+
+    const result = await CommunicationPlatformService.restoreMessage({ tenantId, messageId: req.params.messageId, userId });
+    return sendSuccess(res, 200, "Communication message restored.", result, requestId);
+  } catch (err) {
+    return sendError(res, statusFromError(err), err.message, requestId);
+  }
+};
+
+export const purgeMessage = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const { tenantId, userId } = getScope(req);
+    if (!tenantId) return sendError(res, 403, "Tenant context required.", requestId);
+
+    const result = await CommunicationPlatformService.purgeMessage({
+      tenantId, messageId: req.params.messageId, approvedBy: req.body?.approvedBy, userId, reason: req.body?.reason
+    });
+    return sendSuccess(res, 200, "Communication message permanently purged.", result, requestId);
+  } catch (err) {
+    return sendError(res, statusFromError(err), err.message, requestId);
+  }
+};
+
+export const applyMessageLegalHold = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const { tenantId, userId } = getScope(req);
+    if (!tenantId) return sendError(res, 403, "Tenant context required.", requestId);
+
+    const result = await CommunicationPlatformService.applyMessageLegalHold({
+      tenantId, messageId: req.params.messageId, reason: req.body?.reason, userId
+    });
+    return sendSuccess(res, 201, "Legal hold applied to communication message.", result, requestId);
+  } catch (err) {
+    return sendError(res, statusFromError(err), err.message, requestId);
+  }
+};
+
+export const removeMessageLegalHold = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const { tenantId, userId } = getScope(req);
+    if (!tenantId) return sendError(res, 403, "Tenant context required.", requestId);
+
+    const result = await CommunicationPlatformService.removeMessageLegalHold({
+      tenantId, messageId: req.params.messageId, holdId: req.body?.holdId, userId, removalReason: req.body?.removalReason
+    });
+    return sendSuccess(res, 200, "Legal hold removed from communication message.", result, requestId);
+  } catch (err) {
+    return sendError(res, statusFromError(err), err.message, requestId);
+  }
+};
+
+export const getMessageLegalHoldStatus = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const { tenantId } = getScope(req);
+    if (!tenantId) return sendError(res, 403, "Tenant context required.", requestId);
+
+    const result = await CommunicationPlatformService.getMessageLegalHoldStatus({ tenantId, messageId: req.params.messageId });
+    return sendSuccess(res, 200, "Legal hold status retrieved.", result, requestId);
+  } catch (err) {
+    return sendError(res, statusFromError(err), err.message, requestId);
+  }
+};
+
 // 6. Communication Analytics Summary
 export const getCommunicationAnalytics = async (req, res) => {
   const requestId = req.requestId || createRequestId();
@@ -136,6 +228,19 @@ export const getCommunicationAnalytics = async (req, res) => {
 
     const analytics = await CommunicationPlatformService.getCommunicationAnalytics({ tenantId });
     return sendSuccess(res, 200, "Communication platform analytics retrieved.", analytics, requestId);
+  } catch (err) {
+    return sendError(res, statusFromError(err), err.message, requestId);
+  }
+};
+
+export const refreshCommunicationAnalytics = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const { tenantId } = getScope(req);
+    if (!tenantId) return sendError(res, 403, "Tenant context required.", requestId);
+
+    const analytics = await CommunicationAnalyticsEngine.refreshDashboard({ tenantId });
+    return sendSuccess(res, 200, "Communication platform analytics refreshed.", analytics, requestId);
   } catch (err) {
     return sendError(res, statusFromError(err), err.message, requestId);
   }
@@ -166,11 +271,12 @@ export const listTemplates = async (req, res) => {
     const { tenantId } = getScope(req);
     if (!tenantId) return sendError(res, 403, "Tenant context required.", requestId);
 
-    const { channel, status, page, limit } = req.query;
+    const { channel, status, locale, page, limit } = req.query;
     const result = await CommunicationTemplateService.listTemplates({
       tenantId,
       channel,
       status,
+      locale,
       page,
       limit
     });
@@ -189,7 +295,8 @@ export const getTemplateById = async (req, res) => {
 
     const template = await CommunicationTemplateService.getTemplateById({
       tenantId,
-      templateId: req.params.templateId
+      templateId: req.params.templateId,
+      locale: req.query.locale || "en"
     });
 
     return sendSuccess(res, 200, "Communication template retrieved successfully.", template, requestId);
@@ -204,14 +311,133 @@ export const updateTemplate = async (req, res) => {
     const { tenantId, userId } = getScope(req);
     if (!tenantId) return sendError(res, 403, "Tenant context required.", requestId);
 
+    const { locale, ...updates } = req.body;
     const template = await CommunicationTemplateService.updateTemplate({
       tenantId,
       templateId: req.params.templateId,
-      updates: req.body,
+      locale: locale || "en",
+      updates,
       userId
     });
 
     return sendSuccess(res, 200, "Communication template updated successfully.", template, requestId);
+  } catch (err) {
+    return sendError(res, statusFromError(err), err.message, requestId);
+  }
+};
+
+// Part 8 fix — approval gate. Permission-gating who may call approve/reject
+// (e.g. `communication.template.approve`) is left to this route's own
+// middleware/RBAC configuration, matching this codebase's convention that
+// permission checks are the caller's responsibility, not this service's.
+export const submitTemplateForReview = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const { tenantId, userId } = getScope(req);
+    if (!tenantId) return sendError(res, 403, "Tenant context required.", requestId);
+
+    const template = await CommunicationTemplateService.submitForReview({
+      tenantId,
+      templateId: req.params.templateId,
+      locale: req.body?.locale || "en",
+      userId
+    });
+
+    return sendSuccess(res, 200, "Communication template submitted for review.", template, requestId);
+  } catch (err) {
+    return sendError(res, statusFromError(err), err.message, requestId);
+  }
+};
+
+export const approveTemplate = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const { tenantId, userId } = getScope(req);
+    if (!tenantId) return sendError(res, 403, "Tenant context required.", requestId);
+
+    const template = await CommunicationTemplateService.approveTemplate({
+      tenantId,
+      templateId: req.params.templateId,
+      locale: req.body?.locale || "en",
+      userId
+    });
+
+    return sendSuccess(res, 200, "Communication template approved and is now live.", template, requestId);
+  } catch (err) {
+    return sendError(res, statusFromError(err), err.message, requestId);
+  }
+};
+
+export const rejectTemplate = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const { tenantId, userId } = getScope(req);
+    if (!tenantId) return sendError(res, 403, "Tenant context required.", requestId);
+
+    const template = await CommunicationTemplateService.rejectTemplate({
+      tenantId,
+      templateId: req.params.templateId,
+      locale: req.body?.locale || "en",
+      userId,
+      reason: req.body?.reason
+    });
+
+    return sendSuccess(res, 200, "Communication template rejected.", template, requestId);
+  } catch (err) {
+    return sendError(res, statusFromError(err), err.message, requestId);
+  }
+};
+
+export const listTemplateLocales = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const { tenantId } = getScope(req);
+    if (!tenantId) return sendError(res, 403, "Tenant context required.", requestId);
+
+    const locales = await CommunicationTemplateService.listTemplateLocales({
+      tenantId,
+      templateId: req.params.templateId
+    });
+
+    return sendSuccess(res, 200, "Communication template locale variants retrieved.", locales, requestId);
+  } catch (err) {
+    return sendError(res, statusFromError(err), err.message, requestId);
+  }
+};
+
+export const listTemplateVersions = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const { tenantId } = getScope(req);
+    if (!tenantId) return sendError(res, 403, "Tenant context required.", requestId);
+
+    const versions = await CommunicationTemplateService.listTemplateVersions({
+      tenantId,
+      templateId: req.params.templateId,
+      locale: req.query.locale || "en"
+    });
+
+    return sendSuccess(res, 200, "Communication template version history retrieved.", versions, requestId);
+  } catch (err) {
+    return sendError(res, statusFromError(err), err.message, requestId);
+  }
+};
+
+export const rollbackTemplate = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const { tenantId, userId } = getScope(req);
+    if (!tenantId) return sendError(res, 403, "Tenant context required.", requestId);
+
+    const template = await CommunicationTemplateService.rollbackTemplate({
+      tenantId,
+      templateId: req.params.templateId,
+      locale: req.body?.locale || "en",
+      toVersion: req.body?.toVersion,
+      userId
+    });
+
+    return sendSuccess(res, 200, `Communication template rolled back to version ${req.body?.toVersion}.`, template, requestId);
   } catch (err) {
     return sendError(res, statusFromError(err), err.message, requestId);
   }
@@ -246,10 +472,32 @@ export const updateUserPreferences = async (req, res) => {
     const preferences = await CommunicationPreferenceService.updateUserPreferences({
       tenantId,
       userId: targetUserId,
-      preferences: req.body
+      preferences: req.body,
+      actorUserId: currentUserId
     });
 
     return sendSuccess(res, 200, "User communication preferences updated.", preferences, requestId);
+  } catch (err) {
+    return sendError(res, statusFromError(err), err.message, requestId);
+  }
+};
+
+export const getConsentHistory = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const { tenantId, userId: currentUserId } = getScope(req);
+    if (!tenantId) return sendError(res, 403, "Tenant context required.", requestId);
+
+    const targetUserId = req.params.userId || currentUserId;
+    const { page, limit } = req.query;
+    const history = await CommunicationPreferenceService.getConsentHistory({
+      tenantId,
+      userId: targetUserId,
+      page,
+      limit
+    });
+
+    return sendSuccess(res, 200, "User consent history retrieved.", history, requestId);
   } catch (err) {
     return sendError(res, statusFromError(err), err.message, requestId);
   }
@@ -433,6 +681,61 @@ export const retrySmsController = async (req, res) => {
     });
 
     return sendSuccess(res, 200, "SMS retried successfully.", retryResult, requestId);
+  } catch (err) {
+    return sendError(res, statusFromError(err), err.message, requestId);
+  }
+};
+
+// 11. Enterprise WhatsApp Platform APIs (Part 4)
+export const sendWhatsAppController = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const { tenantId, userId } = getScope(req);
+    if (!tenantId) return sendError(res, 403, "Tenant context required.", requestId);
+
+    const result = await WhatsAppPlatformService.sendWhatsApp({
+      tenantId,
+      ...req.body,
+      userId
+    });
+
+    const statusCode = result.status === "Queued" ? 202 : 201;
+    return sendSuccess(res, statusCode, "WhatsApp message processed for delivery successfully.", result, requestId);
+  } catch (err) {
+    return sendError(res, statusFromError(err), err.message, requestId);
+  }
+};
+
+export const getWhatsAppTrackingStatusController = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const { tenantId } = getScope(req);
+    if (!tenantId) return sendError(res, 403, "Tenant context required.", requestId);
+
+    const trackingStatus = await WhatsAppPlatformService.getWhatsAppTrackingStatus({
+      tenantId,
+      trackingId: req.params.trackingId
+    });
+
+    return sendSuccess(res, 200, "WhatsApp delivery status retrieved successfully.", trackingStatus, requestId);
+  } catch (err) {
+    return sendError(res, statusFromError(err), err.message, requestId);
+  }
+};
+
+export const getWhatsAppConversationWindowController = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const { tenantId } = getScope(req);
+    if (!tenantId) return sendError(res, 403, "Tenant context required.", requestId);
+
+    const phone = req.params.phone;
+    const [conversation, isOpen] = await Promise.all([
+      WhatsAppConversationService.getConversationWindow({ tenantId, phone }),
+      WhatsAppConversationService.isWindowOpen({ tenantId, phone })
+    ]);
+
+    return sendSuccess(res, 200, "WhatsApp conversation window status retrieved.", { phone, isOpen, conversation }, requestId);
   } catch (err) {
     return sendError(res, statusFromError(err), err.message, requestId);
   }

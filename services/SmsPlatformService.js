@@ -7,6 +7,7 @@ import CommunicationPreferenceService from "./CommunicationPreferenceService.js"
 import SmsProviderRouter from "./delivery/SmsProviderRouter.js";
 import { validatePhoneNumber, formatPhoneNumber, detectEncodingAndSegments, generateSecureOtpCode } from "../utils/smsHelper.js";
 import { publishEvent } from "../utils/eventBus.js";
+import { dispatchCommunicationWithResilience } from "../utils/communicationResilience.js";
 
 /**
  * Enterprise SMS Platform Service — Part 3.
@@ -35,6 +36,7 @@ class SmsPlatformService {
     templateData = {},
     message = null,
     content = null,
+    locale = "en",
     priority = null,
     scheduledAt = null,
     sourceModule = "System",
@@ -101,7 +103,8 @@ class SmsPlatformService {
     const targetTemplateId = template || templateId;
 
     if (targetTemplateId) {
-      const tpl = await CommunicationTemplateService.getTemplateById({ tenantId, templateId: targetTemplateId });
+      // Part 8 fix — only an approved ("Active") template may be resolved for a real send.
+      const tpl = await CommunicationTemplateService.getPublishedTemplateForSend({ tenantId, templateId: targetTemplateId, locale });
       const mergedVars = { ...variables, ...templateData };
       finalContent = CommunicationTemplateService.renderTemplate(tpl.bodyTemplate, mergedVars);
     }
@@ -152,7 +155,10 @@ class SmsPlatformService {
     await this._logAudit({
       tenantId,
       messageId: trackingId,
-      event: isScheduled ? "SMSQueued" : "SMSRequested",
+      // CommunicationAuditModel's `event` enum is the generic
+      // "Communication*" vocabulary every channel shares — see the matching
+      // comment in EmailPlatformService.js's own _logAudit call.
+      event: isScheduled ? "CommunicationQueued" : "CommunicationRequested",
       details: { phone: formattedPhone, smsType: finalSmsType, encoding: encodingInfo.encoding, segments: encodingInfo.segmentCount }
     });
 
@@ -170,17 +176,36 @@ class SmsPlatformService {
       };
     }
 
-    // 8. Dispatch via Multi-Provider Router with Automatic Failover
-    const dispatchResult = await SmsProviderRouter.sendSms({
-      tenantId,
-      messageId: trackingId,
-      to: formattedPhone,
-      body: finalContent,
-      recipient: smsRecord.recipient,
-      templateData: smsRecord.templateData
-    });
+    // 8. Dispatch via Multi-Provider Router with Automatic Failover, wrapped
+    // in the shared resilience engine — retry-with-backoff + circuit breaker
+    // + Dead Letter Queue hand-off once the WHOLE failover chain (Twilio ->
+    // Vonage -> AWS SNS -> Local Telecom) is exhausted, not just a single
+    // one-shot pass through it (Part 11 fix).
+    let dispatchResult;
+    try {
+      dispatchResult = await dispatchCommunicationWithResilience({
+        channel: "SMS",
+        tenantId,
+        messageId: trackingId,
+        sourceModule,
+        idempotencyKey,
+        recipient: smsRecord.recipient,
+        run: async () => {
+          const routerResult = await SmsProviderRouter.sendSms({
+            tenantId,
+            messageId: trackingId,
+            to: formattedPhone,
+            body: finalContent,
+            recipient: smsRecord.recipient,
+            templateData: smsRecord.templateData
+          });
+          if (routerResult.status !== "Sent") {
+            throw new Error(routerResult.failureReason || "SMS delivery failed.");
+          }
+          return routerResult;
+        }
+      });
 
-    if (dispatchResult.status === "Sent") {
       smsRecord.status = "Delivered";
       smsRecord.deliveredAt = new Date();
       smsRecord.provider = dispatchResult.provider;
@@ -193,24 +218,23 @@ class SmsPlatformService {
       await this._logAudit({
         tenantId,
         messageId: trackingId,
-        event: "SMSDelivered",
+        event: "CommunicationDelivered",
         provider: dispatchResult.provider,
         details: dispatchResult
       });
-    } else {
+    } catch (dispatchErr) {
       smsRecord.status = "Failed";
-      smsRecord.provider = dispatchResult.provider;
-      smsRecord.errorDetails = { message: dispatchResult.failureReason || "SMS delivery failed." };
+      smsRecord.errorDetails = { message: dispatchErr.message };
+      smsRecord.dlqId = dispatchErr.dlqId || null;
       await smsRecord.save();
 
-      publishEvent("SMSFailed", { tenantId, trackingId, reason: dispatchResult.failureReason, provider: dispatchResult.provider });
+      publishEvent("SMSFailed", { tenantId, trackingId, reason: dispatchErr.message, dlqId: dispatchErr.dlqId || null });
 
       await this._logAudit({
         tenantId,
         messageId: trackingId,
-        event: "SMSFailed",
-        provider: dispatchResult.provider,
-        details: { reason: dispatchResult.failureReason }
+        event: "CommunicationFailed",
+        details: { reason: dispatchErr.message, dlqId: dispatchErr.dlqId || null }
       });
     }
 
@@ -474,17 +498,53 @@ class SmsPlatformService {
   }
 
   /**
-   * Internal Batch Processing for Bulk SMS Campaign
+   * Internal Batch Processing for Bulk SMS Campaign — Part 10 fix.
+   * Previously ran the entire recipient list in memory and saved the
+   * campaign exactly once, at the very end: a mid-run crash lost ALL
+   * progress (every recipient's `status`/`trackingId` mutation existed only
+   * in memory), and re-running from scratch would re-send to recipients who
+   * had already received a message. Now checkpoints to the database every
+   * `CHECKPOINT_INTERVAL` recipients, and counters are cumulative (seeded
+   * from the campaign's own current values) so a resumed run adds to prior
+   * progress instead of overwriting it. The existing `rec.status !== "Pending"`
+   * skip already made re-running idempotent — this is what makes that skip
+   * actually matter (the skipped state now survives a crash).
    */
   static async _processCampaignBatch(tenantId, campaignId, userId) {
+    const CHECKPOINT_INTERVAL = parseInt(process.env.SMS_CAMPAIGN_CHECKPOINT_INTERVAL || "20", 10);
+
     const campaign = await SmsCampaignModel.findOne({ tenantId, campaignId });
     if (!campaign || campaign.status === "Paused" || campaign.status === "Cancelled") return;
 
-    let sent = 0;
-    let delivered = 0;
-    let failed = 0;
+    campaign.status = "Processing";
+    if (!campaign.startedAt) campaign.startedAt = new Date();
+
+    let sent = campaign.sentCount || 0;
+    let delivered = campaign.deliveredCount || 0;
+    let failed = campaign.failedCount || 0;
+    let processedSinceCheckpoint = 0;
+
+    const checkpoint = async () => {
+      campaign.sentCount = sent;
+      campaign.deliveredCount = delivered;
+      campaign.failedCount = failed;
+      campaign.lastProcessedAt = new Date();
+      await campaign.save();
+      processedSinceCheckpoint = 0;
+    };
 
     for (let i = 0; i < campaign.recipients.length; i++) {
+      // Re-check pause/cancel on every checkpoint boundary, not just at
+      // entry — a long-running campaign must actually stop mid-flight when
+      // an operator pauses/cancels it, not only refuse to start a new run.
+      if (processedSinceCheckpoint === 0) {
+        const fresh = await SmsCampaignModel.findOne({ tenantId, campaignId }).select("status").lean();
+        if (!fresh || fresh.status === "Paused" || fresh.status === "Cancelled") {
+          await checkpoint();
+          return;
+        }
+      }
+
       const rec = campaign.recipients[i];
       if (rec.status !== "Pending") continue;
 
@@ -510,14 +570,14 @@ class SmsPlatformService {
         rec.failureReason = err.message;
         failed++;
       }
+
+      processedSinceCheckpoint++;
+      if (processedSinceCheckpoint >= CHECKPOINT_INTERVAL) await checkpoint();
     }
 
-    campaign.sentCount = sent;
-    campaign.deliveredCount = delivered;
-    campaign.failedCount = failed;
     campaign.status = "Completed";
     campaign.completedAt = new Date();
-    await campaign.save();
+    await checkpoint();
   }
 
   /**
@@ -543,7 +603,6 @@ class SmsPlatformService {
       campaign.status = "Paused";
     } else if (action === "resume") {
       campaign.status = "Processing";
-      this._processCampaignBatch(tenantId, campaignId, campaign.createdBy).catch(console.error);
     } else if (action === "cancel") {
       campaign.status = "Cancelled";
     } else {
@@ -551,7 +610,46 @@ class SmsPlatformService {
     }
 
     await campaign.save();
+
+    // Kicked off only AFTER the status change is durably saved —
+    // _processCampaignBatch immediately re-reads the campaign from the DB,
+    // so starting it before save() completes was a real race: it could see
+    // the still-"Paused" status and return without processing anything.
+    if (action === "resume") {
+      this._processCampaignBatch(tenantId, campaignId, campaign.createdBy).catch(console.error);
+    }
+
     return campaign;
+  }
+
+  /**
+   * Part 10 fix — resumes campaigns abandoned mid-run by a crashed/restarted
+   * process: `status: "Processing"` with no checkpoint heartbeat
+   * (`lastProcessedAt`) in the last `staleAfterMs`. Safe to call repeatedly
+   * and safe to run concurrently with a still-healthy in-flight run of the
+   * same campaign — `_processCampaignBatch`'s own `rec.status !== "Pending"`
+   * skip makes reprocessing idempotent either way.
+   */
+  static async recoverStuckCampaigns({ staleAfterMs = 10 * 60 * 1000 } = {}) {
+    const staleBefore = new Date(Date.now() - staleAfterMs);
+    const stuck = await SmsCampaignModel.find({
+      status: "Processing",
+      $or: [
+        { lastProcessedAt: { $lt: staleBefore } },
+        { lastProcessedAt: null, startedAt: { $lt: staleBefore } }
+      ]
+    }).select("tenantId campaignId createdBy").lean();
+
+    let recovered = 0;
+    for (const campaign of stuck) {
+      try {
+        await this._processCampaignBatch(campaign.tenantId, campaign.campaignId, campaign.createdBy);
+        recovered += 1;
+      } catch (err) {
+        console.error(`SMS campaign recovery failed for ${campaign.campaignId}:`, err.message);
+      }
+    }
+    return { scanned: stuck.length, recovered };
   }
 
   /**
@@ -576,7 +674,7 @@ class SmsPlatformService {
     await this._logAudit({
       tenantId,
       messageId: trackingId,
-      event: "SMSRetried",
+      event: "CommunicationRetried",
       details: { attempt: sms.retryCount }
     });
 
@@ -615,16 +713,22 @@ class SmsPlatformService {
 
   static async _logAudit({ tenantId, messageId, event, provider = null, details = {} }) {
     try {
+      // `event` is now always a valid CommunicationAuditModel enum value at
+      // every call site (the SMS*/OTP*-prefixed workaround this used to
+      // remap here is gone — see the call sites' own comments) — no remap
+      // needed, and no more silently mislabeling every SMS audit row as
+      // "CommunicationRequested".
       const audit = new CommunicationAuditModel({
         tenantId,
         auditId: this.generateId("AUD"),
         messageId,
-        event: event.startsWith("SMS") || event.startsWith("OTP") ? "CommunicationRequested" : event,
+        event,
         channel: "SMS",
         provider,
-        details: { originalEvent: event, ...details }
+        details
       });
       await audit.save();
+      publishEvent("CommunicationAuditCreated", { tenantId, auditId: audit.auditId });
     } catch (err) {
       console.error("SMS audit log error:", err.message);
     }

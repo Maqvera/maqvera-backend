@@ -49,6 +49,28 @@ const VendorSchema = new mongoose.Schema({
     type: String,
     default: null
   },
+  // Visa Module PRD §11 — "Contact Person, Mobile, WhatsApp". `contactPhone`
+  // above already covers Mobile; contactPerson/whatsapp had no home.
+  contactPerson: {
+    type: String,
+    default: null
+  },
+  whatsapp: {
+    type: String,
+    default: null
+  },
+  // PRD §11's "Country, Processing Time, Cost" are visa-submission-specific
+  // defaults (not every vendor type — hotel/car suppliers — needs them), so
+  // kept as a small sub-object rather than polluting the generic vendor
+  // fields, same discipline bankAccounts[] already follows for Vendor
+  // Payments (Part 17). Populated only for vendors that actually handle
+  // visa submissions; null/default for every other vendor type.
+  visaVendorProfile: {
+    country: { type: String, default: null },
+    processingTime: { type: Number, default: null },
+    defaultCost: { type: Number, default: null },
+    currency: { type: String, default: null }
+  },
   currency: {
     type: String,
     required: true

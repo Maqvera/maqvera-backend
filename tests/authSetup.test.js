@@ -22,6 +22,10 @@ const validPayload = {
   username: "acmeadmin",
   email: "admin@acme-test.example.com",
   password: "StrongPass1!",
+  // Per-Tenant Payment Gateway Integration (PRD Issue 12) — a real plan
+  // selection is now required at signup; see authSchemas.setupTenant in
+  // middleware/validateRequest.js.
+  planId: "507f1f77bcf86cd799439011",
 };
 
 test("authSchemas.setupTenant accepts a complete, valid payload", () => {
@@ -94,8 +98,19 @@ const makeRes = () => ({
 
 const dbSkipReason = "No reachable MongoDB configured (set URI in .env) — skipping live integration test.";
 
-test("SetupTenant creates a real tenant, Administrator role, and admin user end-to-end", { skip: !dbAvailable && dbSkipReason }, async (t) => {
-  const { SetupTenant } = await import("../controllers/Auth.js");
+// Per-Tenant Payment Gateway Integration (PRD Issue 12) split tenant setup
+// into two phases: `Auth.js#SetupTenantIntent` only creates a Stripe
+// Checkout session now (no tenant yet), and the real tenant/role/user
+// creation this suite used to exercise via the old, now-removed
+// `SetupTenant` controller function lives in
+// `TenantProvisioningService.provisionTenant` instead — called from both
+// `PaymentWebhookController.js`'s checkout-completion handler and any other
+// provisioning path. Testing that shared function directly (rather than
+// faking a signed Stripe webhook) exercises the exact same real
+// tenant/role/user-creation logic these tests always meant to prove.
+test("TenantProvisioningService.provisionTenant creates a real tenant, Administrator role, and admin user end-to-end", { skip: !dbAvailable && dbSkipReason }, async (t) => {
+  const bcrypt = (await import("bcryptjs")).default;
+  const TenantProvisioningService = (await import("../services/TenantProvisioningService.js")).default;
   const TenantModel = (await import("../models/Tenantmodel.js")).default;
   const UserModel = (await import("../models/Usermodel.js")).default;
 
@@ -108,27 +123,28 @@ test("SetupTenant creates a real tenant, Administrator role, and admin user end-
     await TenantModel.deleteMany({ tenantKey });
   });
 
-  const req = { body: { companyName: "Test Setup Co", tenantKey, username: "testsetupadmin", email, password: "StrongPass1!" }, requestId: `req-${suffix}`, headers: {}, header: () => null };
-  const res = makeRes();
+  const passwordHash = await bcrypt.hash("StrongPass1!", 10);
+  const { tenant, user } = await TenantProvisioningService.provisionTenant({
+    companyName: "Test Setup Co", tenantKey, username: "testsetupadmin", email, passwordHash
+  });
 
-  await SetupTenant(req, res);
-
-  assert.equal(res.statusCode, 201, JSON.stringify(res.body));
-  assert.equal(res.body.success, true);
-  assert.equal(res.body.data.tenantId, tenantKey);
-
-  const tenant = await TenantModel.findOne({ tenantKey });
-  assert.ok(tenant, "tenant document must be persisted");
+  assert.equal(tenant.tenantKey, tenantKey);
   assert.equal(tenant.status, "active");
-
-  const user = await UserModel.findOne({ email });
-  assert.ok(user, "user document must be persisted");
   assert.equal(user.tenantId, tenantKey);
   assert.equal(user.role, "Administrator");
+
+  const persistedTenant = await TenantModel.findOne({ tenantKey });
+  assert.ok(persistedTenant, "tenant document must be persisted");
+
+  const persistedUser = await UserModel.findOne({ email });
+  assert.ok(persistedUser, "user document must be persisted");
+  assert.equal(persistedUser.tenantId, tenantKey);
+  assert.equal(persistedUser.role, "Administrator");
 });
 
-test("SetupTenant rejects a duplicate tenantKey", { skip: !dbAvailable && dbSkipReason }, async (t) => {
-  const { SetupTenant } = await import("../controllers/Auth.js");
+test("TenantProvisioningService.provisionTenant rejects a duplicate tenantKey", { skip: !dbAvailable && dbSkipReason }, async (t) => {
+  const bcrypt = (await import("bcryptjs")).default;
+  const TenantProvisioningService = (await import("../services/TenantProvisioningService.js")).default;
   const TenantModel = (await import("../models/Tenantmodel.js")).default;
   const UserModel = (await import("../models/Usermodel.js")).default;
 
@@ -142,17 +158,13 @@ test("SetupTenant rejects a duplicate tenantKey", { skip: !dbAvailable && dbSkip
     await TenantModel.deleteMany({ tenantKey });
   });
 
-  const firstReq = { body: { companyName: "Dup Co", tenantKey, username: "dupadmin1", email: firstEmail, password: "StrongPass1!" }, requestId: `req-dup-1-${suffix}`, headers: {}, header: () => null };
-  const firstRes = makeRes();
-  await SetupTenant(firstReq, firstRes);
-  assert.equal(firstRes.statusCode, 201, JSON.stringify(firstRes.body));
+  const passwordHash = await bcrypt.hash("StrongPass1!", 10);
+  await TenantProvisioningService.provisionTenant({ companyName: "Dup Co", tenantKey, username: "dupadmin1", email: firstEmail, passwordHash });
 
-  const secondReq = { body: { companyName: "Dup Co Again", tenantKey, username: "dupadmin2", email: secondEmail, password: "StrongPass1!" }, requestId: `req-dup-2-${suffix}`, headers: {}, header: () => null };
-  const secondRes = makeRes();
-  await SetupTenant(secondReq, secondRes);
-
-  assert.equal(secondRes.statusCode, 409, JSON.stringify(secondRes.body));
-  assert.equal(secondRes.body.success, false);
+  await assert.rejects(
+    () => TenantProvisioningService.provisionTenant({ companyName: "Dup Co Again", tenantKey, username: "dupadmin2", email: secondEmail, passwordHash }),
+    { message: "This company identifier is already in use." }
+  );
 
   const usersForTenant = await UserModel.countDocuments({ tenantId: tenantKey });
   assert.equal(usersForTenant, 1, "the rejected duplicate must not have created a second user under the same tenant");

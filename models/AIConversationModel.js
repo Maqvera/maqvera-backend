@@ -83,19 +83,23 @@ const AIConversationSchema = new mongoose.Schema(
         checkOut: { type: String, default: null },
         guests: { type: Number, default: null },
         rooms: { type: Number, default: null },
-        // No current tool accepts a meal-plan filter as a search input
-        // (mealPlan is part of an OFFER's own response, not a request
-        // param) — captured for conversational continuity only.
+        // Gap 1.3 — real as of this change: get_hotel_room_offers accepts
+        // `mealPreference` and filters its own real returned offers'
+        // mealPlan by it (a best-effort match, not an enum — see
+        // AIToolRegistry.js's own tool description for why).
         mealPreference: { type: String, default: null },
         starRating: { type: Number, default: null },
         selectedHotelId: { type: String, default: null },
         selectedOfferId: { type: String, default: null },
         searchedAt: { type: Date, default: null }
       },
-      // No tool in this catalog accepts children/infants/nationality/
-      // special-assistance/wheelchair/meal-request as input — these fields
-      // are schema-ready for when such a tool exists, honestly unpopulated
-      // today rather than fabricated from guesswork.
+      // Gap 1.3 — children/infants (flight_search, forwarded to the real
+      // Amadeus Flight Offers Search API) and nationality (propose_flight_booking's
+      // traveler array, forwarded to the real Amadeus traveler document) are
+      // real as of this change. specialAssistance/wheelchairRequest/
+      // mealRequest and passportAvailable remain genuinely unsupported — no
+      // tool in this catalog accepts them as input; schema-ready, honestly
+      // unpopulated rather than fabricated from guesswork.
       passengers: {
         adults: { type: Number, default: null },
         children: { type: Number, default: null },

@@ -2,6 +2,8 @@ import mongoose from "mongoose";
 import AIOrchestrationService from "./AIOrchestrationService.js";
 import { getAIWorkflowRecoveryConfig } from "../utils/aiConfig.js";
 import logger from "../utils/logger.js";
+import { withDistributedLock } from "../utils/distributedLock.js";
+import { getSchedulerLockConfig } from "../utils/schedulerLockConfig.js";
 
 let cronLib = null;
 let recoveryJob = null;
@@ -46,7 +48,8 @@ class AIWorkflowRecoveryScheduler {
     if (expr !== sweepCronSchedule) logger.error(`Invalid AI_WORKFLOW_RECOVERY_CRON_SCHEDULE: "${sweepCronSchedule}". Falling back to "*/5 * * * *".`);
 
     recoveryJob = cronLib.schedule(expr, () => {
-      runRecoverySweep().catch((err) => logger.error("Cron AI workflow recovery sweep error", { error: err.message }));
+      withDistributedLock("scheduler:AIWorkflowRecoveryScheduler", getSchedulerLockConfig().defaultLockTtlMs, runRecoverySweep)
+        .catch((err) => logger.error("Cron AI workflow recovery sweep error", { error: err.message }));
     }, { scheduled: true, timezone: process.env.TZ || undefined });
 
     logger.info(`AIWorkflowRecoveryScheduler started — schedule: "${expr}".`);

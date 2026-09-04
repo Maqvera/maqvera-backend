@@ -96,7 +96,13 @@ test("Company admin can define, edit, and delete custom roles with a real, valid
 });
 
 test("The seeded system Administrator role cannot be deleted", { skip: !dbAvailable && dbSkipReason }, async (t) => {
-  const { SetupTenant } = await import("../controllers/Auth.js");
+  // Per-Tenant Payment Gateway Integration (PRD Issue 12) moved real
+  // tenant/role/user creation out of the old, now-removed `SetupTenant`
+  // controller function and into TenantProvisioningService.provisionTenant
+  // (Auth.js#SetupTenantIntent only creates a Stripe Checkout session now) —
+  // call that shared function directly instead.
+  const bcrypt = (await import("bcryptjs")).default;
+  const TenantProvisioningService = (await import("../services/TenantProvisioningService.js")).default;
   const { DeleteRole } = await import("../controllers/RoleController.js");
   const RoleModel = (await import("../models/Rolemodel.js")).default;
   const TenantModel = (await import("../models/Tenantmodel.js")).default;
@@ -112,9 +118,8 @@ test("The seeded system Administrator role cannot be deleted", { skip: !dbAvaila
     await TenantModel.deleteMany({ tenantKey });
   });
 
-  const setupRes = makeRes();
-  await SetupTenant({ body: { companyName: "Sys Role Co", tenantKey, username: "sysroleadmin", email, password: "StrongPass1!" }, requestId: `setup-${suffix}`, headers: {}, header: () => null }, setupRes);
-  assert.equal(setupRes.statusCode, 201, JSON.stringify(setupRes.body));
+  const passwordHash = await bcrypt.hash("StrongPass1!", 10);
+  await TenantProvisioningService.provisionTenant({ companyName: "Sys Role Co", tenantKey, username: "sysroleadmin", email, passwordHash, requestId: `setup-${suffix}` });
 
   const adminRole = await RoleModel.findOne({ tenantId: tenantKey, name: "Administrator" }).lean();
   assert.ok(adminRole && adminRole.isSystemRole);

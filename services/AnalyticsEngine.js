@@ -358,7 +358,9 @@ class AnalyticsEngine {
             $group: {
               _id: "$travelCoordinatorId",
               coordinatorName: { $first: "$coordinator" },
-              activeTravelPlans: { $sum: { $cond: [{ $nin: ["$status", ["completed", "cancelled", "archived"]] }, 1, 0] } },
+              // `$nin` is a query operator, not an aggregation expression
+              // operator — `$not`+`$in` is the real equivalent inside $group/$cond.
+              activeTravelPlans: { $sum: { $cond: [{ $not: [{ $in: ["$status", ["completed", "cancelled", "archived"]] }] }, 1, 0] } },
               completedPlans: { $sum: { $cond: [{ $eq: ["$status", "completed"] }, 1, 0] } },
               totalPlans: { $sum: 1 },
             },

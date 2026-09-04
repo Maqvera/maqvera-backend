@@ -1,0 +1,1 @@
+Shared, tenant-agnostic landing page media goes here (hero.jpg / hero.mp4, gallery-1.jpg..gallery-9.jpg, etc.) — served at /landing-assets/* (see server.js). Never per-tenant; the same files render for every tenant's landing page.

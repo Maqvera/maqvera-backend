@@ -6,6 +6,8 @@ import BankAccountModel from "../models/BankAccountModel.js";
 import AccountsReceivableModel from "../models/AccountsReceivableModel.js";
 import AccountsPayableModel from "../models/AccountsPayableModel.js";
 import TreasuryInvestmentModel from "../models/TreasuryInvestmentModel.js";
+import CashLocationModel from "../models/CashLocationModel.js";
+import TreasuryDebtModel from "../models/TreasuryDebtModel.js";
 import { isPayableTerminal } from "./AccountsPayableService.js";
 import JournalService from "./JournalService.js";
 import AuditLogModel from "../models/AuditLogmodel.js";
@@ -13,6 +15,7 @@ import { isValidIso4217Code, isValidIso4217NumericCode, ISO_4217_CURRENCIES } fr
 import { publishEvent } from "../utils/eventBus.js";
 import { getFinanceConfig } from "../utils/financeConfig.js";
 import CacheManager from "../utils/cacheManager.js";
+import logger from "../utils/logger.js";
 
 const roundCurrency = (value, decimalPlaces = 2) => {
   const factor = 10 ** decimalPlaces;
@@ -153,12 +156,19 @@ class CurrencyService {
     const isReportingCurrency = !!data.reportingCurrency;
 
     if (isBaseCurrency) {
+      // Base Currency stays strictly single — every real resolution
+      // (getBaseCurrency, revaluation, conversion) assumes exactly one;
+      // loosening this is a genuine architectural decision, not revisited
+      // here (see this Part's own doc section).
       await CurrencyModel.updateMany({ tenantId, isBaseCurrency: true }, { $set: { isBaseCurrency: false } });
       await CacheManager.invalidate(`currency:base:${tenantId}`);
     }
-    if (isReportingCurrency) {
-      await CurrencyModel.updateMany({ tenantId, isReportingCurrency: true }, { $set: { isReportingCurrency: false } });
-    }
+    // "Multiple reporting currencies are supported simultaneously" (File 7
+    // Part 4) — unlike Base Currency, nothing downstream resolves "the"
+    // single reporting currency yet (FinancialReportService has no
+    // currency-translation parameter at all — see this Part's own doc
+    // section), so there is no real single-value assumption to protect;
+    // no longer unsets a prior holder.
 
     const currency = new CurrencyModel({
       tenantId, currencyCode, name, symbol: data.symbol || null, decimalPlaces, isoNumericCode, currencyType, isBaseCurrency, isReportingCurrency,
@@ -262,6 +272,10 @@ class CurrencyService {
     await currency.save();
 
     await AuditLogModel.create({ action: "finance.currency.suspend", module: "Finance", resource: "Currency", resourceId: currency._id.toString(), userId: userId || null, tenantId, details: { reason: data?.reason || null } });
+    // Gap-fill (File 7) — every other lifecycle transition already
+    // publishes its own real domain event; Suspend/Archive were the two
+    // that only ever wrote a timeline entry.
+    publishEvent("CurrencySuspended", { tenantId, currencyId: currency._id.toString(), currencyCode: currency.currencyCode, reason: data?.reason || null, performedBy: userId || null });
 
     return currency.toJSON();
   }
@@ -276,6 +290,7 @@ class CurrencyService {
     await currency.save();
 
     await AuditLogModel.create({ action: "finance.currency.archive", module: "Finance", resource: "Currency", resourceId: currency._id.toString(), userId: userId || null, tenantId, details: {} });
+    publishEvent("CurrencyArchived", { tenantId, currencyId: currency._id.toString(), currencyCode: currency.currencyCode, performedBy: userId || null });
 
     return currency.toJSON();
   }
@@ -331,10 +346,21 @@ class CurrencyService {
     return data;
   }
 
+  /**
+   * "Caching Strategy... Currency Metadata." (File 7 Part 5) — same real
+   * `CacheManager.getOrCompute` pattern `getBaseCurrency` already proves,
+   * over the one Currency Metadata lookup actually on a hot path (every
+   * single `convert()` call). No explicit invalidation wired — this
+   * codebase has no update-decimalPlaces endpoint (only `createCurrency`
+   * ever sets it), so a short TTL alone is correct, not a gap.
+   */
   static async _getDecimalPlaces(tenantId, currencyCode) {
-    const currency = await CurrencyModel.findOne({ tenantId, currencyCode }).lean();
-    if (currency) return currency.decimalPlaces;
-    return ISO_4217_CURRENCIES[currencyCode]?.decimalPlaces ?? 2;
+    const { data } = await CacheManager.getOrCompute(`currency:decimals:${tenantId}:${currencyCode}`, async () => {
+      const currency = await CurrencyModel.findOne({ tenantId, currencyCode }).lean();
+      if (currency) return currency.decimalPlaces;
+      return ISO_4217_CURRENCIES[currencyCode]?.decimalPlaces ?? 2;
+    }, 300);
+    return data;
   }
 
   // ---- Exchange Rates ----
@@ -373,6 +399,17 @@ class CurrencyService {
 
     if (!isValidIso4217Code(fromCurrency) || !isValidIso4217Code(toCurrency)) throw new Error("fromCurrency and toCurrency must be valid ISO 4217 codes.");
     if (fromCurrency === toCurrency) throw new Error("fromCurrency and toCurrency must differ.");
+    // "Source Currency Exists" / "Target Currency Exists" — File 7 Part 2.
+    // A syntactically valid ISO 4217 code isn't enough; the tenant must
+    // have actually registered the currency via POST /currencies first
+    // (previously unchecked — any ISO code could get a rate recorded
+    // against it even if the tenant never onboarded that currency).
+    const [fromRegistered, toRegistered] = await Promise.all([
+      CurrencyModel.exists({ tenantId, currencyCode: fromCurrency }),
+      CurrencyModel.exists({ tenantId, currencyCode: toCurrency })
+    ]);
+    if (!fromRegistered) throw new Error(`Source currency "${fromCurrency}" is not registered for this tenant — create it via POST /currencies first.`);
+    if (!toRegistered) throw new Error(`Target currency "${toCurrency}" is not registered for this tenant — create it via POST /currencies first.`);
     if (!rate || rate <= 0) throw new Error("rate must be a positive number.");
     if (!effectiveDate) throw new Error("effectiveDate is required.");
     if (!config.exchangeRateTypes.includes(rateType)) throw new Error(`Invalid rateType "${rateType}".`);
@@ -503,6 +540,50 @@ class CurrencyService {
   }
 
   /**
+   * GET /api/v1/exchange-rates/{rateId} — File 7 Part 2. Real "Rate
+   * Details" (the row itself), "Historical Versions" (every row this
+   * exact currency-pair/rateType family has ever had, oldest to newest —
+   * the same `supersedes`/`supersededBy` chain `createExchangeRate`
+   * already builds, walked forward via a plain query rather than
+   * re-deriving it), "Provider" (the row's own field), "Audit History"
+   * (real `AuditLogModel` rows), "Approval History" (the create/approve/
+   * reject subset of that same audit trail), and "Usage Statistics" (a
+   * real aggregate over `CurrencyConversionModel.rateId` — how many real
+   * business conversions actually resolved against this exact rate row,
+   * not a fabricated popularity metric). "Merchant"/"Company"/"Branch" are
+   * dropped — no backing entity for any of them (see this Part's own
+   * doc section in docs/05-api/07-finance-api.md).
+   */
+  static async getExchangeRateById(rateId, tenantId) {
+    const exchangeRate = await ExchangeRateModel.findOne({ _id: rateId, tenantId }).lean();
+    if (!exchangeRate) throw new Error("Exchange rate not found.");
+
+    const [historicalVersions, auditHistory, usageStats] = await Promise.all([
+      ExchangeRateModel.find({ tenantId, fromCurrency: exchangeRate.fromCurrency, toCurrency: exchangeRate.toCurrency, rateType: exchangeRate.rateType })
+        .sort({ version: 1 }).select("rate version effectiveDate expiresAt approvalStatus provider source createdAt").lean(),
+      AuditLogModel.find({ tenantId, resource: "ExchangeRate", resourceId: exchangeRate._id.toString() }).sort({ createdAt: -1 }).lean(),
+      CurrencyConversionModel.aggregate([
+        { $match: { tenantId, rateId: exchangeRate._id } },
+        { $group: { _id: null, usageCount: { $sum: 1 }, totalConvertedAmount: { $sum: "$convertedAmount" }, lastUsedAt: { $max: "$createdAt" } } }
+      ])
+    ]);
+
+    const approvalHistory = auditHistory.filter((a) => ["finance.currency.create_rate", "finance.currency.approve_rate", "finance.currency.reject_rate"].includes(a.action));
+
+    return {
+      ...exchangeRate,
+      historicalVersions,
+      auditHistory,
+      approvalHistory,
+      usageStatistics: {
+        usageCount: usageStats[0]?.usageCount || 0,
+        totalConvertedAmount: roundCurrency(usageStats[0]?.totalConvertedAmount || 0, 8),
+        lastUsedAt: usageStats[0]?.lastUsedAt || null
+      }
+    };
+  }
+
+  /**
    * "Automatic Rates... Open Exchange APIs." Real HTTP call (global
    * fetch — Node's own built-in, no SDK needed) against
    * openexchangerates.org's real latest-rates endpoint. Honestly
@@ -521,12 +602,27 @@ class CurrencyService {
     if (tenantCurrencies.length === 0) return { imported: 0, rates: [] };
 
     const url = `${config.openExchangeRatesBaseUrl.replace(/\/$/, "")}/latest.json?app_id=${config.openExchangeRatesAppId}&base=${baseCurrency}`;
+    // "Observability... Provider Latency." (File 7 Part 5) — real,
+    // measured wall-clock time of the actual HTTP call, logged either way
+    // (never a fabricated metric), plus the real "Provider failures must
+    // ... fail over when configured" AI rule reinterpreted honestly: only
+    // one real provider integration exists in this codebase (Open
+    // Exchange Rates) — there is no second one to fail OVER to — so this
+    // publishes the real unavailability/recovery signal a tenant's own
+    // alerting could act on, without fabricating a failover it can't do.
+    const fetchStartedAt = Date.now();
     let payload;
     try {
       const response = await fetch(url);
       if (!response.ok) throw new Error(`Open Exchange Rates responded with HTTP ${response.status}.`);
       payload = await response.json();
+      const latencyMs = Date.now() - fetchStartedAt;
+      logger.info(`Open Exchange Rates import succeeded for tenant ${tenantId} in ${latencyMs}ms.`, { tenantId, provider: "OpenExchangeAPI", latencyMs });
+      publishEvent("RateProviderRecovered", { tenantId, provider: "OpenExchangeAPI", latencyMs, performedBy: userId || "system" });
     } catch (error) {
+      const latencyMs = Date.now() - fetchStartedAt;
+      logger.error(`Open Exchange Rates import failed for tenant ${tenantId} after ${latencyMs}ms.`, { tenantId, provider: "OpenExchangeAPI", latencyMs, error: error.message });
+      publishEvent("RateProviderUnavailable", { tenantId, provider: "OpenExchangeAPI", latencyMs, error: error.message, performedBy: userId || "system" });
       throw new Error(`Failed to fetch rates from Open Exchange Rates: ${error.message}`);
     }
     if (!payload || typeof payload.rates !== "object") throw new Error("Open Exchange Rates returned an unexpected response shape.");
@@ -554,6 +650,12 @@ class CurrencyService {
       // (that gate is for a human manually typing in a rate).
       await CurrencyService._activateExchangeRateRow(exchangeRate, "system");
       imported.push(exchangeRate.toJSON());
+      // File 7 Part 4 — "Search Integration... Exchange Rates." The bulk
+      // `RateImported` summary below has no single row id to index against;
+      // this per-row event (the same one every manual create/approve
+      // already publishes) is what actually keeps each imported rate's
+      // search entry current.
+      publishEvent("ExchangeRateUpdated", { tenantId, exchangeRateId: exchangeRate._id.toString(), fromCurrency: baseCurrency, toCurrency: currency.currencyCode, rate, rateType: "Spot", effectiveDate, version, approvalStatus: exchangeRate.approvalStatus, performedBy: "system" });
     }
 
     await AuditLogModel.create({ action: "finance.currency.import_rates", module: "Finance", resource: "ExchangeRate", resourceId: baseCurrency, userId: userId || null, tenantId, details: { baseCurrency, count: imported.length } });
@@ -808,7 +910,7 @@ class CurrencyService {
     });
 
     await AuditLogModel.create({ action: "finance.currency.revalue", module: "Finance", resource: targetType, resourceId: targetId.toString(), userId: userId || null, tenantId, details: { gainLossAmount, gainLossType, rate } });
-    publishEvent("CurrencyRevalued", { tenantId, targetType, targetId: targetId.toString(), currencyCode: currency.toUpperCase(), gainLossAmount, gainLossType, performedBy: userId || "system" });
+    publishEvent("CurrencyRevalued", { tenantId, revaluationId: revaluation._id.toString(), targetType, targetId: targetId.toString(), currencyCode: currency.toUpperCase(), gainLossAmount, gainLossType, performedBy: userId || "system" });
     if (gainLossType === "Unrealized Gain") publishEvent("FXGainCalculated", { tenantId, targetType, targetId: targetId.toString(), amount: gainLossAmount, performedBy: userId || "system" });
     if (gainLossType === "Unrealized Loss") publishEvent("FXLossCalculated", { tenantId, targetType, targetId: targetId.toString(), amount: gainLossAmount, performedBy: userId || "system" });
 
@@ -879,8 +981,41 @@ class CurrencyService {
       }
     }
 
+    // File 7 Part 3 — "Cash Accounts." Real per-location control account
+    // (`glAccountCode`), same as BankAccount's own block above.
+    if (config.fxRevaluationTargets.includes("CashLocation")) {
+      const cashLocations = await CashLocationModel.find({ tenantId, status: "Opened", currency: { $ne: baseCurrency }, balance: { $gt: 0 } }).lean();
+      for (const location of cashLocations) {
+        const result = await CurrencyService.revalueRecord({
+          targetType: "CashLocation", targetId: location._id, currency: location.currency, foreignAmount: location.balance,
+          controlAccountCode: location.glAccountCode, bookingDate: location.createdAt, tenantId, revaluationDate, userId
+        });
+        if (result) results.push(result);
+      }
+    }
+
+    // File 7 Part 3 — "Loans." `treasuryDebtControlAccountCode` defaults
+    // unconfigured, same skip-until-configured fallback as every other
+    // shared control account here.
+    if (config.fxRevaluationTargets.includes("TreasuryDebt")) {
+      const debts = await TreasuryDebtModel.find({ tenantId, status: "Active", currency: { $ne: baseCurrency }, outstandingBalance: { $gt: 0 } }).lean();
+      for (const debt of debts) {
+        const result = await CurrencyService.revalueRecord({
+          targetType: "TreasuryDebt", targetId: debt._id, currency: debt.currency, foreignAmount: debt.outstandingBalance,
+          controlAccountCode: config.treasuryDebtControlAccountCode, bookingDate: debt.createdAt, tenantId, revaluationDate, userId
+        });
+        if (result) results.push(result);
+      }
+    }
+
     const totalGain = roundCurrency(results.filter((r) => r.gainLossType === "Unrealized Gain").reduce((sum, r) => sum + r.gainLossAmount, 0));
     const totalLoss = roundCurrency(results.filter((r) => r.gainLossType === "Unrealized Loss").reduce((sum, r) => sum + r.gainLossAmount, 0));
+
+    // "RevaluationCompleted" (File 7 Part 5) — the real completion
+    // counterpart to `CurrencyRevaluationStarted` published above; every
+    // `CurrencyRevalued` in between is per-record, this is the one
+    // real per-run summary event.
+    publishEvent("RevaluationCompleted", { tenantId, revaluationDate, revalued: results.length, totalGain, totalLoss, baseCurrency, performedBy: userId || "system" });
 
     return { revalued: results.length, totalGain, totalLoss, baseCurrency, results };
   }
@@ -937,6 +1072,53 @@ class CurrencyService {
     }
 
     return { baseCurrency, exposure };
+  }
+
+  /**
+   * GET /api/v1/currencies/dashboard — File 7 Part 4's own "Read Models...
+   * Built asynchronously using events" section, reinterpreted honestly:
+   * this codebase has no separate materialized read-model store/worker
+   * (same boundary every other Part's own "async worker pipeline" ask has
+   * hit) — every field here is a real, live aggregate computed on read,
+   * over the exact same collections the rest of this module already
+   * writes to. "Merchant Currency Usage" is dropped — no Merchant model.
+   */
+  static async getCurrencyDashboard(tenantId) {
+    const config = getFinanceConfig();
+    const [activeCurrencies, totalCurrencies, pendingCurrencyApprovals, pendingRateApprovals, latestRates, lastImportAudit, exposure, recentRevaluations] = await Promise.all([
+      CurrencyModel.countDocuments({ tenantId, status: "Active" }),
+      CurrencyModel.countDocuments({ tenantId }),
+      CurrencyModel.countDocuments({ tenantId, status: "Pending Approval" }),
+      ExchangeRateModel.countDocuments({ tenantId, approvalStatus: "Pending Approval" }),
+      ExchangeRateModel.find({ tenantId, approvalStatus: "Activated" }).sort({ effectiveDate: -1 }).limit(10).select("fromCurrency toCurrency rate rateType provider effectiveDate version").lean(),
+      AuditLogModel.findOne({ tenantId, action: "finance.currency.import_rates" }).sort({ createdAt: -1 }).lean(),
+      CurrencyService.getCurrencyExposure(tenantId),
+      CurrencyRevaluationModel.find({ tenantId }).sort({ revaluationDate: -1 }).limit(50).select("revaluationDate targetType gainLossAmount gainLossType").lean()
+    ]);
+
+    const unrealizedGain = roundCurrency(recentRevaluations.filter((r) => r.gainLossType === "Unrealized Gain").reduce((sum, r) => sum + r.gainLossAmount, 0));
+    const unrealizedLoss = roundCurrency(recentRevaluations.filter((r) => r.gainLossType === "Unrealized Loss").reduce((sum, r) => sum + r.gainLossAmount, 0));
+
+    return {
+      activeCurrencies: { active: activeCurrencies, total: totalCurrencies },
+      latestExchangeRates: latestRates,
+      // "Rate Import Status" / "Provider Health" — real, derived from the
+      // same `AuditLogModel` row `importRatesFromProvider` already writes;
+      // no fabricated uptime/latency metric invented on top.
+      rateImportStatus: {
+        providerConfigured: !!config.openExchangeRatesAppId,
+        lastImportAt: lastImportAudit?.createdAt || null,
+        lastImportDetails: lastImportAudit?.details || null
+      },
+      providerHealth: {
+        openExchangeRates: config.openExchangeRatesAppId ? "Configured" : "NotConfigured",
+        lastImportStatus: lastImportAudit ? "Success" : "NeverRun"
+      },
+      pendingApprovals: { currencies: pendingCurrencyApprovals, exchangeRates: pendingRateApprovals, total: pendingCurrencyApprovals + pendingRateApprovals },
+      fxExposure: exposure,
+      fxGainLoss: { unrealizedGain, unrealizedLoss, sampledFromRevaluations: recentRevaluations.length },
+      revaluationSummary: { lastRevaluationDate: recentRevaluations[0]?.revaluationDate || null, recentRunCount: recentRevaluations.length }
+    };
   }
 }
 

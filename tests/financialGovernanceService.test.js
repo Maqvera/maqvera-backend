@@ -216,4 +216,5 @@ test("Financial Governance & Compliance Platform (Part 19)", async (t) => {
   await GovernanceEvaluationModel.deleteMany({ tenantId: { $in: [tenantA, tenantB] } });
   await GovernanceEvidenceModel.deleteMany({ tenantId: { $in: [tenantA, tenantB] } });
   await PaymentModel.deleteMany({ tenantId: { $in: [tenantA, tenantB] } });
+  await mongoose.disconnect();
 });

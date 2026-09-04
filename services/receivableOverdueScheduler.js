@@ -3,6 +3,8 @@ import AuditLogModel from "../models/AuditLogmodel.js";
 import { publishEvent } from "../utils/eventBus.js";
 import { getFinanceConfig } from "../utils/financeConfig.js";
 import logger from "../utils/logger.js";
+import { withDistributedLock } from "../utils/distributedLock.js";
+import { getSchedulerLockConfig } from "../utils/schedulerLockConfig.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -136,7 +138,8 @@ class ReceivableOverdueScheduler {
     if (expr !== config.overdueCheckCron) logger.error(`Invalid AR_OVERDUE_CRON_SCHEDULE: "${config.overdueCheckCron}". Falling back to "0 4 * * *".`);
 
     overdueJob = cronLib.schedule(expr, () => {
-      runOverdueCheck().catch((err) => logger.error("Cron receivable overdue error", { error: err.message }));
+      withDistributedLock("scheduler:ReceivableOverdueScheduler", getSchedulerLockConfig().defaultLockTtlMs, runOverdueCheck)
+        .catch((err) => logger.error("Cron receivable overdue error", { error: err.message }));
     }, { scheduled: true, timezone: process.env.TZ || undefined });
 
     logger.info(`ReceivableOverdueScheduler started — schedule: "${expr}".`);

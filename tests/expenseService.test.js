@@ -18,9 +18,12 @@ import {
   deriveApprovalStatus,
   deriveBudgetStatus,
   deriveAccountingStatus,
+  deriveReimbursementStatus,
   computeFraudRiskScore,
   validateAllocations,
-  computeAllocationAmounts
+  computeAllocationAmounts,
+  buildApprovalHistory,
+  validateCategoryGroup
 } from "../services/ExpenseService.js";
 
 const CONFIG = {
@@ -149,6 +152,16 @@ test("deriveAccountingStatus is Posted only when a real journalId exists, never 
   assert.equal(deriveAccountingStatus({ status: "Approved", accrual: { journalId: "abc" }, reimbursement: {} }), "Posted");
 });
 
+test("deriveReimbursementStatus maps the real lifecycle status onto the spec's own Reimbursement Status vocabulary", () => {
+  assert.equal(deriveReimbursementStatus({ status: "Draft" }), "NotYetApproved");
+  assert.equal(deriveReimbursementStatus({ status: "Under Review" }), "NotYetApproved");
+  assert.equal(deriveReimbursementStatus({ status: "Approved" }), "PendingReimbursement");
+  assert.equal(deriveReimbursementStatus({ status: "Reimbursed" }), "Reimbursed");
+  assert.equal(deriveReimbursementStatus({ status: "Closed" }), "Reimbursed");
+  assert.equal(deriveReimbursementStatus({ status: "Rejected" }), "NotApplicable");
+  assert.equal(deriveReimbursementStatus({ status: "Cancelled" }), "NotApplicable");
+});
+
 test("computeFraudRiskScore flags a duplicate checksum, an OCR/claimed amount mismatch, and a category-cap breach independently, capped at 100", () => {
   assert.deepEqual(computeFraudRiskScore({ isDuplicate: false, ocrAmount: null, claimedAmount: 100 }), { score: 0, flags: [] });
   assert.deepEqual(computeFraudRiskScore({ isDuplicate: true, ocrAmount: null, claimedAmount: 100 }), { score: 50, flags: ["DuplicateReceiptChecksum"] });
@@ -166,6 +179,40 @@ test("validateAllocations requires percentages to total exactly 100% and each al
   assert.doesNotThrow(() => validateAllocations([{ costCenter: "CC-1", percentage: 40 }, { projectId: "P-1", percentage: 60 }], 500));
   assert.throws(() => validateAllocations([{ costCenter: "CC-1", percentage: 40 }, { projectId: "P-1", percentage: 50 }], 500), /must total 100%/);
   assert.throws(() => validateAllocations([{ percentage: 100 }], 500), /at least one target/);
+});
+
+test("buildApprovalHistory merges real approvals[] with the matching ApprovalRequest decision when one exists", () => {
+  const expense = { approvals: [{ level: "Manager", approvedBy: "user1", approvedAt: new Date("2027-01-01"), notes: "ok" }] };
+  const withRequest = buildApprovalHistory(expense, {
+    levels: [{ slaDeadline: new Date("2027-01-02") }],
+    decisions: [{ signatureHash: "abc123", decidedOnBehalfOf: null }],
+    escalatedAt: null
+  });
+  assert.deepEqual(withRequest, [{ level: "Manager", approver: "user1", decision: "Approved", comments: "ok", decidedAt: new Date("2027-01-01"), signatureHash: "abc123", delegatedFrom: null, slaDeadline: new Date("2027-01-02"), escalated: false }]);
+});
+
+test("buildApprovalHistory degrades gracefully to real approvals[] alone when no ApprovalRequest exists", () => {
+  const expense = { approvals: [{ level: "Manager", approvedBy: "user1", approvedAt: new Date("2027-01-01"), notes: null }] };
+  const withoutRequest = buildApprovalHistory(expense, null);
+  assert.equal(withoutRequest[0].signatureHash, null);
+  assert.equal(withoutRequest[0].delegatedFrom, null);
+  assert.equal(withoutRequest[0].slaDeadline, null);
+});
+
+test("validateCategoryGroup is a no-op when categoryGroup is omitted", () => {
+  assert.doesNotThrow(() => validateCategoryGroup(null, "Travel", { Travel: ["Travel"] }));
+});
+
+test("validateCategoryGroup rejects an unknown categoryGroup", () => {
+  assert.throws(() => validateCategoryGroup("Bogus", "Travel", { Travel: ["Travel"] }), /Invalid categoryGroup/);
+});
+
+test("validateCategoryGroup rejects a category that doesn't belong to the supplied categoryGroup", () => {
+  assert.throws(() => validateCategoryGroup("Office", "Travel", { Travel: ["Travel"], Office: ["Rent"] }), /does not belong to categoryGroup/);
+});
+
+test("validateCategoryGroup accepts a category that belongs to the supplied categoryGroup", () => {
+  assert.doesNotThrow(() => validateCategoryGroup("Travel", "Meals", { Travel: ["Travel", "Meals"] }));
 });
 
 test("computeAllocationAmounts derives each allocation's real amount from its percentage of the expense total", () => {

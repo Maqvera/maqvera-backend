@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>{{{sharedCss}}}</style>
+</head>
+<body>
+  {{> companyHeader}}
+
+  <h1 class="doc-title">DEBIT NOTE</h1>
+  {{#if isDraft}}<div class="draft-banner">DRAFT — NOT YET ISSUED</div>{{/if}}
+
+  <div class="meta-block">
+    <div>Debit Note Number: {{debitNumber}}</div>
+    <div>{{referenceLabel}}: {{invoiceNumber}}</div>
+    <div>Date: {{formatDate issuedAt}}</div>
+    <div>{{partyLabel}}: {{partyName}}</div>
+    <div>Reason: {{reason}}</div>
+  </div>
+
+  <div class="section-title">Debited Items</div>
+  <table class="doc-table">
+    <thead><tr><th>Description</th><th>Amount</th><th>Tax</th><th>Line Total</th></tr></thead>
+    <tbody>
+      {{#each items}}
+      <tr>
+        <td>{{this.description}}</td>
+        <td>{{formatNumber this.amount}} {{../currency}}</td>
+        <td>{{#if this.taxCode}}{{this.taxCode}}: +{{formatNumber this.taxAdjustment}}{{/if}}</td>
+        <td>{{formatNumber this.lineTotal}} {{../currency}}</td>
+      </tr>
+      {{/each}}
+    </tbody>
+  </table>
+
+  <div class="totals-block">
+    <div>Debit Amount: {{formatNumber debitAmount}} {{currency}}</div>
+    {{#if (gt taxAdjustmentTotal 0)}}<div>Tax Adjustment: +{{formatNumber taxAdjustmentTotal}} {{currency}}</div>{{/if}}
+    <div class="grand-total">Grand Total Debited: {{formatNumber grandTotal}} {{currency}}</div>
+    <div style="font-size:9pt;">This document increases the outstanding balance of the referenced {{referencedThing}}.</div>
+  </div>
+</body>
+</html>

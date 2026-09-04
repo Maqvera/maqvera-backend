@@ -2,10 +2,15 @@ import CommunicationMessageModel from "../models/CommunicationMessageModel.js";
 import CommunicationAuditModel from "../models/CommunicationAuditModel.js";
 import CommunicationTemplateService from "./CommunicationTemplateService.js";
 import CommunicationPreferenceService from "./CommunicationPreferenceService.js";
-import EmailDeliveryAdapter from "./delivery/EmailDeliveryAdapter.js";
+import { getDeliveryAdapter } from "./delivery/index.js";
 import { publishEvent } from "../utils/eventBus.js";
+import { dispatchCommunicationWithResilience } from "../utils/communicationResilience.js";
 
-const emailDeliveryAdapter = new EmailDeliveryAdapter();
+// The same Email ProviderRouter (Part 13) the generic Communication
+// Platform dispatch path uses — not a second, separately-constructed
+// adapter — so a future second Email provider is visible from this Part 2
+// path too without any change here.
+const emailChannelRouter = getDeliveryAdapter("Email");
 
 /**
  * Enterprise Email Platform Service — Part 2.
@@ -29,6 +34,7 @@ class EmailPlatformService {
     to,
     variables = {},
     templateData = {},
+    locale = "en",
     subject = null,
     content = null,
     body = null,
@@ -84,7 +90,8 @@ class EmailPlatformService {
     const targetTemplateId = template || templateId;
 
     if (targetTemplateId) {
-      const tpl = await CommunicationTemplateService.getTemplateById({ tenantId, templateId: targetTemplateId });
+      // Part 8 fix — only an approved ("Active") template may be resolved for a real send.
+      const tpl = await CommunicationTemplateService.getPublishedTemplateForSend({ tenantId, templateId: targetTemplateId, locale });
       const mergedVars = { ...variables, ...templateData };
       finalSubject = CommunicationTemplateService.renderTemplate(tpl.subjectTemplate || subject || "Notification", mergedVars);
       finalContent = CommunicationTemplateService.renderTemplate(tpl.bodyTemplate, mergedVars);
@@ -143,7 +150,13 @@ class EmailPlatformService {
     await this._logAudit({
       tenantId,
       messageId: trackingId,
-      event: isScheduled ? "EmailQueued" : "EmailRequested",
+      // CommunicationAuditModel's own `event` enum is the generic
+      // "Communication*" vocabulary shared by every channel (see
+      // models/CommunicationAuditModel.js) — a channel-prefixed value here
+      // ("EmailRequested") fails schema validation and the row silently
+      // never saves. The channel itself is already a separate field on the
+      // same row; it doesn't need to be repeated in `event` too.
+      event: isScheduled ? "CommunicationQueued" : "CommunicationRequested",
       details: { recipients, subject: finalSubject, emailType, sourceModule }
     });
 
@@ -160,58 +173,67 @@ class EmailPlatformService {
       };
     }
 
-    // 7. Dispatch via Email Delivery Adapter Layer
+    // 7. Dispatch via Email Delivery Adapter Layer — retry-with-backoff +
+    // circuit breaker + Dead Letter Queue hand-off on exhaustion/permanent
+    // failure (Part 11 fix), not a one-shot call with manual-retry-only recovery.
     try {
-      const result = await emailDeliveryAdapter.send({
-        to: recipients.join(", "),
-        subject: finalSubject,
-        body: finalContent,
-        attachment: parsedAttachments[0] || null
+      const result = await dispatchCommunicationWithResilience({
+        channel: "Email",
+        tenantId,
+        messageId: trackingId,
+        sourceModule,
+        idempotencyKey,
+        recipient: { email: recipients[0], userId: targetUserId },
+        run: async () => {
+          const sendResult = await emailChannelRouter.send({
+            tenantId,
+            messageId: trackingId,
+            to: recipients.join(", "),
+            subject: finalSubject,
+            body: finalContent,
+            attachment: parsedAttachments[0] || null
+          });
+          if (sendResult.status !== "Sent") {
+            throw new Error(sendResult.failureReason || "Provider delivery failed.");
+          }
+          return sendResult;
+        }
       });
 
-      if (result.status === "Sent") {
-        emailRecord.status = "Sent";
-        emailRecord.deliveredAt = new Date();
-        emailRecord.provider = result.provider || "Nodemailer SMTP";
-        emailRecord.providerResponse = result.providerResponse || {};
-        await emailRecord.save();
-
-        publishEvent("EmailSent", { tenantId, trackingId, provider: emailRecord.provider });
-        publishEvent("EmailDelivered", { tenantId, trackingId, provider: emailRecord.provider });
-
-        await this._logAudit({
-          tenantId,
-          messageId: trackingId,
-          event: "EmailDelivered",
-          provider: emailRecord.provider,
-          details: result
-        });
-      } else {
-        emailRecord.status = "Failed";
-        emailRecord.errorDetails = { message: result.failureReason || "Provider delivery failed." };
-        await emailRecord.save();
-
-        publishEvent("EmailFailed", { tenantId, trackingId, reason: result.failureReason });
-
-        await this._logAudit({
-          tenantId,
-          messageId: trackingId,
-          event: "EmailFailed",
-          details: { reason: result.failureReason }
-        });
-      }
-    } catch (deliveryErr) {
-      emailRecord.status = "Failed";
-      emailRecord.errorDetails = { message: deliveryErr.message };
+      // CommunicationMessageModel's own status enum has no "Sent" value —
+      // "Delivered" is the terminal-success state every other channel
+      // (CommunicationPlatformService/SmsPlatformService/WhatsAppPlatformService)
+      // already uses; setting "Sent" here failed schema validation on save,
+      // silently mis-recording every successful email as "Failed".
+      emailRecord.status = "Delivered";
+      emailRecord.deliveredAt = new Date();
+      emailRecord.provider = result.provider || "Nodemailer SMTP";
+      emailRecord.providerResponse = result.providerResponse || {};
       await emailRecord.save();
 
-      publishEvent("EmailFailed", { tenantId, trackingId, reason: deliveryErr.message });
+      publishEvent("EmailSent", { tenantId, trackingId, provider: emailRecord.provider });
+      publishEvent("EmailDelivered", { tenantId, trackingId, provider: emailRecord.provider });
 
       await this._logAudit({
         tenantId,
         messageId: trackingId,
-        event: "EmailFailed",
-        details: { error: deliveryErr.message }
+        event: "CommunicationDelivered",
+        provider: emailRecord.provider,
+        details: result
+      });
+    } catch (deliveryErr) {
+      emailRecord.status = "Failed";
+      emailRecord.errorDetails = { message: deliveryErr.message };
+      emailRecord.dlqId = deliveryErr.dlqId || null;
+      await emailRecord.save();
+
+      publishEvent("EmailFailed", { tenantId, trackingId, reason: deliveryErr.message, dlqId: deliveryErr.dlqId || null });
+
+      await this._logAudit({
+        tenantId,
+        messageId: trackingId,
+        event: "CommunicationFailed",
+        details: { error: deliveryErr.message, dlqId: deliveryErr.dlqId || null }
       });
     }
 
@@ -274,6 +296,7 @@ class EmailPlatformService {
         details
       });
       await audit.save();
+      publishEvent("CommunicationAuditCreated", { tenantId, auditId: audit.auditId });
     } catch (err) {
       console.error("Email audit log failed:", err.message);
     }

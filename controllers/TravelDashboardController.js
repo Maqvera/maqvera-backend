@@ -1,7 +1,53 @@
+import mongoose from "mongoose";
 import AnalyticsEngine from "../services/AnalyticsEngine.js";
+import ReportExportService from "../services/ReportExportService.js";
+import AuditLogModel from "../models/AuditLogmodel.js";
+import ReportAuditService from "../services/ReportAuditService.js";
 import { sendError, sendSuccess } from "../utils/apiResponse.js";
 import { createRequestId } from "../utils/authTokens.js";
 import { getAccessScope } from "../utils/accessScope.js";
+import { toWidgetArray } from "../utils/dashboardWidgetContract.js";
+import { publishEvent } from "../utils/eventBus.js";
+
+// Reporting Platform Part 13 fix — Travel dashboards had NO audit logging
+// at all before this (unlike Visa/Finance, whose handle() factories
+// already log every view). Mirrors VisaDashboardController.js's own
+// fire-and-forget, readyState-guarded discipline exactly; ReportAuditService
+// is the additional tamper-evident layer, called alongside (not instead of)
+// AuditLogModel — see models/ReportAuditEventModel.js's own doc comment.
+const auditDashboardAccess = (tenantId, userId, dashboardType, action) => {
+  if (mongoose.connection?.readyState === 1) {
+    AuditLogModel.create({
+      tenantId, userId: userId || "system", action, module: "TravelAnalytics",
+      details: { dashboardType }
+    }).catch((err) => console.error("Travel dashboard audit log error:", err));
+  }
+  ReportAuditService.recordEvent({
+    tenantId, module: "Travel", resourceType: "Dashboard", resourceKey: dashboardType,
+    action: action === "EXPORT_DASHBOARD" ? "EXPORT" : "VIEW", userId
+  }).catch((err) => console.error("Travel dashboard report-audit error:", err));
+};
+
+// Reporting Platform Part 4 fix — DashboardWidgetContract projection
+// (see utils/dashboardWidgetContract.js). Covers the primary-dashboard
+// and KPI fields; only keys actually present on a given response become
+// widgets, so this one map is safe to reuse for both endpoints below.
+const TRAVEL_WIDGET_MAP = {
+  activeTravelPlans: { title: "Active Travel Plans", type: "metric" },
+  todaysDepartures: { title: "Today's Departures", type: "metric" },
+  todaysArrivals: { title: "Today's Arrivals", type: "metric" },
+  travelersInTransit: { title: "Travelers In Transit", type: "metric" },
+  operationalHealthScore: { title: "Operational Health Score", type: "metric" },
+  onTimeDeparturePct: { title: "On-Time Departure %", type: "metric" },
+  onTimeArrivalPct: { title: "On-Time Arrival %", type: "metric" },
+  hotelCheckInSuccessPct: { title: "Hotel Check-In Success %", type: "metric" },
+  attendancePct: { title: "Attendance %", type: "metric" },
+  travelerSatisfaction: { title: "Traveler Satisfaction", type: "metric" },
+  tripCompletionPct: { title: "Trip Completion %", type: "metric" },
+  avgDelayMinutes: { title: "Avg Delay (Minutes)", type: "metric" },
+  guidePerformancePct: { title: "Guide Performance %", type: "metric" },
+  vehicleUtilizationPct: { title: "Vehicle Utilization %", type: "metric" },
+};
 
 // Business Rule: "Supports role-based widgets... Widgets filtered
 // automatically." No explicit role-to-widget mapping is given anywhere in
@@ -56,8 +102,15 @@ export const GetPrimaryDashboard = async (req, res) => {
       filteredData = narrowed;
     }
 
+    // Reporting Platform Part 12 fix — usage-analytics hook (informational only).
+    publishEvent("DashboardViewed", { tenantId, dashboardType: "primary", performedBy: req.auth?.userId || req.auth?.id || null, module: "Travel" });
+    auditDashboardAccess(tenantId, req.auth?.userId || req.auth?.id || null, "primary", "VIEW_DASHBOARD");
+
     return sendSuccess(res, 200, "Primary dashboard retrieved successfully.", {
       data: filteredData,
+      // Reporting Platform Part 4 fix — additive DashboardWidgetContract
+      // projection; `data` above is unchanged.
+      widgets: toWidgetArray(filteredData, TRAVEL_WIDGET_MAP),
       meta: { fromCache, refreshedAt: new Date() }
     }, requestId);
   } catch (err) {
@@ -93,7 +146,14 @@ export const GetDashboardKPIs = async (req, res) => {
       filteredData = rest;
     }
 
-    return sendSuccess(res, 200, "Dashboard KPIs retrieved successfully.", { data: filteredData, meta: { fromCache } }, requestId);
+    publishEvent("DashboardViewed", { tenantId, dashboardType: "kpis", performedBy: req.auth?.userId || req.auth?.id || null, module: "Travel" });
+    auditDashboardAccess(tenantId, req.auth?.userId || req.auth?.id || null, "kpis", "VIEW_DASHBOARD");
+
+    return sendSuccess(res, 200, "Dashboard KPIs retrieved successfully.", {
+      data: filteredData,
+      widgets: toWidgetArray(filteredData, TRAVEL_WIDGET_MAP),
+      meta: { fromCache }
+    }, requestId);
   } catch (err) {
     console.error("GetDashboardKPIs Error:", err);
     return sendError(res, 500, err.message || "Failed to fetch dashboard KPIs.", requestId);
@@ -121,6 +181,9 @@ export const GetDashboardTrends = async (req, res) => {
     }
 
     const { data, fromCache } = await AnalyticsEngine.generateTrends({ tenantId, period });
+
+    publishEvent("DashboardViewed", { tenantId, dashboardType: "trends", performedBy: req.auth?.userId || req.auth?.id || null, module: "Travel" });
+    auditDashboardAccess(tenantId, req.auth?.userId || req.auth?.id || null, "trends", "VIEW_DASHBOARD");
 
     return sendSuccess(res, 200, "Dashboard trends retrieved successfully.", { data, meta: { fromCache } }, requestId);
   } catch (err) {
@@ -156,6 +219,9 @@ export const GetDashboardMap = async (req, res) => {
       filteredData = rest;
     }
 
+    publishEvent("DashboardViewed", { tenantId, dashboardType: "map", performedBy: req.auth?.userId || req.auth?.id || null, module: "Travel" });
+    auditDashboardAccess(tenantId, req.auth?.userId || req.auth?.id || null, "map", "VIEW_DASHBOARD");
+
     return sendSuccess(res, 200, "Dashboard map data retrieved successfully.", { data: filteredData, meta: { fromCache } }, requestId);
   } catch (err) {
     console.error("GetDashboardMap Error:", err);
@@ -189,6 +255,9 @@ export const GetDashboardWorkload = async (req, res) => {
       const { openIncidentsCount, ...rest } = data;
       filteredData = rest;
     }
+
+    publishEvent("DashboardViewed", { tenantId, dashboardType: "workload", performedBy: req.auth?.userId || req.auth?.id || null, module: "Travel" });
+    auditDashboardAccess(tenantId, req.auth?.userId || req.auth?.id || null, "workload", "VIEW_DASHBOARD");
 
     return sendSuccess(res, 200, "Dashboard workload data retrieved successfully.", { data: filteredData, meta: { fromCache } }, requestId);
   } catch (err) {
@@ -224,9 +293,92 @@ export const GetDashboardAlerts = async (req, res) => {
 
     const { data, fromCache } = await AnalyticsEngine.getOperationalAlerts({ tenantId });
 
+    publishEvent("DashboardViewed", { tenantId, dashboardType: "alerts", performedBy: req.auth?.userId || req.auth?.id || null, module: "Travel" });
+    auditDashboardAccess(tenantId, req.auth?.userId || req.auth?.id || null, "alerts", "VIEW_DASHBOARD");
+
     return sendSuccess(res, 200, "Dashboard alerts retrieved successfully.", { data, meta: { fromCache } }, requestId);
   } catch (err) {
     console.error("GetDashboardAlerts Error:", err);
     return sendError(res, 500, err.message || "Failed to fetch dashboard alerts.", requestId);
+  }
+};
+
+const VIEW_LOADERS = {
+  primary: (tenantId) => AnalyticsEngine.buildPrimaryDashboard({ tenantId }),
+  kpis: (tenantId) => AnalyticsEngine.calculateKPIs({ tenantId }),
+  trends: (tenantId, query) => AnalyticsEngine.generateTrends({ tenantId, period: query.period || "7 Days" }),
+  map: (tenantId) => AnalyticsEngine.getLiveMapData({ tenantId }),
+  workload: (tenantId) => AnalyticsEngine.getWorkloadData({ tenantId }),
+  alerts: (tenantId) => AnalyticsEngine.getOperationalAlerts({ tenantId })
+};
+
+/**
+ * 7. GET /api/v1/travel/dashboard/export?view=primary|kpis|trends|map|workload|alerts&format=csv|xlsx|pdf
+ * Reporting Platform Part 9/7 fix — Travel dashboards had no export capability at
+ * all before this; reuses the SAME generic ReportExportService.js Finance
+ * reports already use (Part 9), not a second export implementation. Same
+ * incident-derived-field filtering as the matching live GET endpoint above —
+ * an exported file must never contain data the caller couldn't see live.
+ */
+export const ExportDashboard = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    const permissions = req.auth?.permissions || [];
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    const tenantId = scope.tenantId;
+
+    if (!permissions.includes("travel.read") && !permissions.includes("travel_plans.read") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
+
+    const view = req.query.view || "primary";
+    const loader = VIEW_LOADERS[view];
+    if (!loader) return sendError(res, 400, `Invalid view "${view}". Must be one of: ${Object.keys(VIEW_LOADERS).join(", ")}.`, requestId);
+    if (view === "alerts" && !hasIncidentAccess(permissions)) {
+      return sendError(res, 403, "Permission denied — incident read access is required for operational alerts.", requestId);
+    }
+
+    const { data } = await loader(tenantId, req.query);
+    let exportData = data;
+    if (!hasIncidentAccess(permissions)) {
+      const { openIncidents, criticalIncidents, emergencyCases, incidentRatePct, emergencyCount, avgIncidentResolutionHours, avgResponseTimeHours, incidentLocations, emergencyAlertsCount, openIncidentsCount, ...rest } = exportData;
+      exportData = rest;
+    }
+
+    const format = (req.query.format || "csv").toLowerCase();
+    const formatMap = { csv: "CSV", xlsx: "Excel", excel: "Excel", pdf: "PDF", json: "JSON" };
+    const resolvedFormat = formatMap[format];
+    if (!resolvedFormat) return sendError(res, 400, `Invalid format "${format}". Must be one of: csv, xlsx, pdf, json.`, requestId);
+
+    // Reporting Platform Part 12 fix — usage-analytics hook (informational only).
+    publishEvent("DashboardExported", { tenantId, dashboardType: view, performedBy: req.auth?.userId || req.auth?.id || null, module: "Travel" });
+    auditDashboardAccess(tenantId, req.auth?.userId || req.auth?.id || null, view, "EXPORT_DASHBOARD");
+
+    const report = { reportType: `Travel${view.charAt(0).toUpperCase()}${view.slice(1)}Dashboard`, data: exportData, generatedAt: new Date(), _id: Date.now() };
+
+    if (resolvedFormat === "CSV") {
+      const { content, mimeType, filename } = ReportExportService.generateCsv(report, { permissions });
+      res.setHeader("Content-Type", mimeType);
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      return res.status(200).send(content);
+    }
+    if (resolvedFormat === "Excel") {
+      const { buffer, mimeType, filename } = await ReportExportService.generateExcel(report, { permissions });
+      res.setHeader("Content-Type", mimeType);
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      return res.status(200).send(buffer);
+    }
+    if (resolvedFormat === "PDF") {
+      const buffer = await ReportExportService.generatePdfBuffer(report, { permissions, tenantId });
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `attachment; filename="${report.reportType}.pdf"`);
+      return res.status(200).send(buffer);
+    }
+    // JSON — the data itself, already the real underlying object.
+    return sendSuccess(res, 200, "Dashboard data retrieved successfully.", exportData, requestId);
+  } catch (err) {
+    console.error("ExportDashboard Error:", err);
+    return sendError(res, 500, err.message || "Failed to export dashboard.", requestId);
   }
 };

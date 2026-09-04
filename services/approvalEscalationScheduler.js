@@ -8,6 +8,8 @@ import { resolveContactForMethod } from "./ReceiptService.js";
 import { publishEvent } from "../utils/eventBus.js";
 import { getFinanceConfig } from "../utils/financeConfig.js";
 import logger from "../utils/logger.js";
+import { withDistributedLock } from "../utils/distributedLock.js";
+import { getSchedulerLockConfig } from "../utils/schedulerLockConfig.js";
 
 // Enterprise Financial Approval Workflow — Finance Module Part 22. "SLA
 // Tracking and Escalations... SLA Expiry, Reminder, Manager Escalation,
@@ -85,7 +87,8 @@ class ApprovalEscalationScheduler {
     if (expr !== config.approvalEscalationCron) logger.error(`Invalid APPROVAL_ESCALATION_CRON_SCHEDULE: "${config.approvalEscalationCron}". Falling back to "0 * * * *".`);
 
     escalationJob = cronLib.schedule(expr, () => {
-      runApprovalEscalation().catch((err) => logger.error("Cron approval escalation error", { error: err.message }));
+      withDistributedLock("scheduler:ApprovalEscalationScheduler", getSchedulerLockConfig().defaultLockTtlMs, runApprovalEscalation)
+        .catch((err) => logger.error("Cron approval escalation error", { error: err.message }));
     }, { scheduled: true, timezone: process.env.TZ || undefined });
 
     logger.info(`ApprovalEscalationScheduler started — schedule: "${expr}".`);

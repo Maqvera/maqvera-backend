@@ -11,6 +11,10 @@ import { createRequestId } from "../utils/authTokens.js";
 import EnterpriseTimelineEngineService from "../services/EnterpriseTimelineEngineService.js";
 import AuditLogModel from "../models/AuditLogmodel.js";
 import { getAccessScope } from "../utils/accessScope.js";
+import PaymentService from "../services/PaymentService.js";
+import PaymentModel from "../models/PaymentModel.js";
+import RefundService from "../services/RefundService.js";
+import { VISA_REFUND_REASONS } from "../utils/visaConstants.js";
 
 /**
  * GET /api/v1/visa-cases
@@ -250,6 +254,146 @@ export const getVisaTypes = async (req, res) => {
   } catch (error) {
     console.error("getVisaTypes error:", error);
     return sendError(res, 500, error.message || "Failed to retrieve visa types.", requestId);
+  }
+};
+
+/**
+ * POST /api/v1/visa-types
+ * PRD §8 — Admin defines Visa Type pricing (Vendor Cost, Selling Price, Currency).
+ */
+export const createVisaType = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    const permissions = req.auth?.permissions || [];
+    if (!permissions.includes("visa.types.write") && !permissions.includes("visa.write") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
+    const userId = req.auth?.userId || req.auth?.id || "system";
+
+    const visaType = await VisaRequirementService.createVisaType(req.body, scope.tenantId, userId);
+    return sendSuccess(res, 201, "Visa type created successfully.", visaType, requestId);
+  } catch (error) {
+    console.error("createVisaType error:", error);
+    const statusCode = error.message?.includes("already exists") ? 409 : error.message?.includes("required") ? 400 : 500;
+    return sendError(res, statusCode, error.message || "Failed to create visa type.", requestId);
+  }
+};
+
+/**
+ * PATCH /api/v1/visa-types/:visaTypeId
+ * PRD §8 — updates a Visa Type's pricing/details; sellingPrice is recomputed server-side.
+ */
+export const updateVisaType = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    const permissions = req.auth?.permissions || [];
+    if (!permissions.includes("visa.types.write") && !permissions.includes("visa.write") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
+    const userId = req.auth?.userId || req.auth?.id || "system";
+    const { visaTypeId } = req.params;
+
+    const visaType = await VisaRequirementService.updateVisaType(visaTypeId, req.body, scope.tenantId, userId);
+    return sendSuccess(res, 200, "Visa type updated successfully.", visaType, requestId);
+  } catch (error) {
+    console.error("updateVisaType error:", error);
+    const statusCode = error.message?.includes("not found") ? 404 : 500;
+    return sendError(res, statusCode, error.message || "Failed to update visa type.", requestId);
+  }
+};
+
+/**
+ * PATCH /api/v1/visa-cases/:visaCaseId/applications/:applicationNumber/pricing
+ * PRD §8/§12 — prices a specific case application; sellingPrice is
+ * server-computed from the submitted cost breakdown, never client-trusted.
+ */
+export const updateVisaCaseApplicationPricing = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    const permissions = req.auth?.permissions || [];
+    if (!permissions.includes("visa.finance.write") && !permissions.includes("visa.write") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
+    const userId = req.auth?.userId || req.auth?.id || "system";
+    const { visaCaseId, applicationNumber } = req.params;
+
+    const visaCase = await VisaService.updateApplicationPricing(visaCaseId, applicationNumber, req.body, scope.tenantId, userId);
+    return sendSuccess(res, 200, "Application pricing updated successfully.", visaCase, requestId);
+  } catch (error) {
+    console.error("updateVisaCaseApplicationPricing error:", error);
+    const statusCode = error.message?.includes("not found") ? 404 : 500;
+    return sendError(res, statusCode, error.message || "Failed to update application pricing.", requestId);
+  }
+};
+
+/**
+ * GET /api/v1/countries
+ * PRD §7 — Country master list (public reference data, same as visa-types).
+ */
+export const listCountries = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const tenantId = req.auth?.tenantId || null;
+    const result = await VisaRequirementService.listCountries(req.query, tenantId);
+    return sendSuccess(res, 200, "Countries retrieved successfully.", result, requestId);
+  } catch (error) {
+    console.error("listCountries error:", error);
+    return sendError(res, 500, error.message || "Failed to retrieve countries.", requestId);
+  }
+};
+
+/**
+ * POST /api/v1/countries
+ * PRD §7 — Admin defines a country (Name, Currency, Processing Time, Active/Inactive).
+ */
+export const createCountry = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    const permissions = req.auth?.permissions || [];
+    if (!permissions.includes("visa.countries.write") && !permissions.includes("visa.write") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
+    const userId = req.auth?.userId || req.auth?.id || "system";
+
+    const country = await VisaRequirementService.createCountry(req.body, scope.tenantId, userId);
+    return sendSuccess(res, 201, "Country created successfully.", country, requestId);
+  } catch (error) {
+    console.error("createCountry error:", error);
+    const statusCode = error.message?.includes("already exists") ? 409 : error.message?.includes("required") ? 400 : 500;
+    return sendError(res, statusCode, error.message || "Failed to create country.", requestId);
+  }
+};
+
+/**
+ * PATCH /api/v1/countries/:countryMasterId
+ * PRD §7 — updates a country's name/currency/processing time/active status.
+ */
+export const updateCountry = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    const permissions = req.auth?.permissions || [];
+    if (!permissions.includes("visa.countries.write") && !permissions.includes("visa.write") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
+    const userId = req.auth?.userId || req.auth?.id || "system";
+    const { countryMasterId } = req.params;
+
+    const country = await VisaRequirementService.updateCountry(countryMasterId, req.body, scope.tenantId, userId);
+    return sendSuccess(res, 200, "Country updated successfully.", country, requestId);
+  } catch (error) {
+    console.error("updateCountry error:", error);
+    const statusCode = error.message?.includes("not found") ? 404 : 500;
+    return sendError(res, statusCode, error.message || "Failed to update country.", requestId);
   }
 };
 
@@ -1195,5 +1339,74 @@ export const getTimelineEventById = async (req, res) => {
     return sendSuccess(res, 200, "Timeline event retrieved successfully.", event, requestId);
   } catch (error) {
     return sendError(res, error.message?.includes("not found") ? 404 : 500, error.message || "Failed to retrieve timeline event.", requestId);
+  }
+};
+
+/**
+ * GET /api/v1/visa-cases/:visaCaseId/payments
+ * PRD §14 — thin wrapper over the generic Payment Engine
+ * (PaymentService.listPaymentsForTarget), scoped to payments allocated
+ * against this case (allocations[].targetType "Visa"). No parallel payment
+ * engine — see Visa Module PRD §13/§14 gap-closing notes.
+ */
+export const getVisaCasePayments = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    const permissions = req.auth?.permissions || [];
+    const { visaCaseId } = req.params;
+
+    if (!permissions.includes("visa.finance.read") && !permissions.includes("visa.read") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
+
+    const result = await PaymentService.listPaymentsForTarget("Visa", visaCaseId, scope.tenantId, req.query);
+    return sendSuccess(res, 200, "Visa case payments retrieved successfully.", result, requestId);
+  } catch (error) {
+    console.error("getVisaCasePayments error:", error);
+    return sendError(res, 500, error.message || "Failed to retrieve visa case payments.", requestId);
+  }
+};
+
+/**
+ * POST /api/v1/visa-cases/:visaCaseId/refunds
+ * PRD §15 — thin wrapper over the generic Refund Engine
+ * (RefundService.createRefund), restricted to a payment already allocated
+ * to this case and a reason from the PRD's own list (VISA_REFUND_REASONS).
+ */
+export const createVisaCaseRefund = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    const permissions = req.auth?.permissions || [];
+    const userId = req.auth?.userId || req.auth?.id || null;
+    const { visaCaseId } = req.params;
+    const { paymentId, refundAmount, reason, refundMethod } = req.body;
+
+    if (!permissions.includes("visa.finance.write") && !permissions.includes("visa.write") && !permissions.includes("admin")) {
+      return sendError(res, 403, "Permission denied.", requestId);
+    }
+    if (!paymentId) return sendError(res, 400, "paymentId is required.", requestId);
+    if (!reason || !VISA_REFUND_REASONS.includes(reason)) {
+      return sendError(res, 400, `Invalid reason "${reason}". Allowed: ${VISA_REFUND_REASONS.join(", ")}.`, requestId);
+    }
+
+    // Guard: only a payment actually allocated to THIS visa case can be
+    // refunded through the visa-scoped endpoint — otherwise a caller with
+    // visa.finance.write could refund any payment in the tenant by paymentId alone.
+    const payment = await PaymentModel.findOne({
+      _id: paymentId, tenantId: scope.tenantId,
+      allocations: { $elemMatch: { targetType: "Visa", targetId: visaCaseId } }
+    }).lean();
+    if (!payment) return sendError(res, 404, "Payment not found or not allocated to this visa case.", requestId);
+
+    const refund = await RefundService.createRefund({ paymentId, refundAmount, reason, refundMethod }, scope.tenantId, userId);
+    return sendSuccess(res, 201, "Refund created successfully.", refund, requestId);
+  } catch (error) {
+    console.error("createVisaCaseRefund error:", error);
+    const statusCode = error.message?.includes("required") || error.message?.includes("exceeds") || error.message?.includes("Invalid") ? 400 : error.message?.includes("not found") ? 404 : 500;
+    return sendError(res, statusCode, error.message || "Failed to create refund.", requestId);
   }
 };

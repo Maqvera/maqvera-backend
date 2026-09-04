@@ -7,6 +7,7 @@ import GdsIntegrationService from "./GdsIntegrationService.js";
 import AmadeusFlightPricingService from "./AmadeusFlightPricingService.js";
 import { recordCanonicalDomainEvent } from "../controllers/TravelNotesTimelineController.js";
 import { publishEvent } from "../utils/eventBus.js";
+import CurrencyService from "./CurrencyService.js";
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const PHONE_PATTERN = /^\+?[0-9][0-9\s-]{6,14}[0-9]$/;
@@ -41,7 +42,7 @@ export const toDocTicketStatus = (internalStatus) => ({
  * AmadeusFlightPricingService (EXT-003) rather than reimplementing either.
  */
 class AmadeusFlightBookingService {
-  static async createBooking({ tenantId, userId, userName, travelPlanId, flightAssignmentId, flightOffer, travelers, contact, requestId }) {
+  static async createBooking({ tenantId, userId, userName, travelPlanId, flightAssignmentId, flightOffer, travelers, contact, convertedCurrency = null, requestId }) {
     // Validation Rules §10: Travel Plan Exists, Flight Assignment Exists,
     // Same Tenant.
     if (!travelPlanId || !flightAssignmentId) {
@@ -136,6 +137,26 @@ class AmadeusFlightBookingService {
 
     const ticketingDeadline = gdsResult.ticketingDeadline ? new Date(gdsResult.ticketingDeadline) : new Date(Date.now() + 24 * 60 * 60 * 1000);
 
+    // Multi-currency balance entry — server-side authoritative recompute,
+    // same pattern as BookingController.CreateBooking (§4/§7 of the
+    // multi-currency requirements doc).
+    const resolvedTotalPrice = gdsResult.totalPrice || pricing.totalPrice;
+    const resolvedCurrency = gdsResult.currency || pricing.currency;
+    let conversionFields = {
+      convertedAmount: null, convertedCurrency: null,
+      conversionRate: null, conversionRateId: null, conversionAsOf: null
+    };
+    if (convertedCurrency && resolvedTotalPrice > 0) {
+      const conversion = await CurrencyService.convert(resolvedTotalPrice, resolvedCurrency, convertedCurrency, tenantId);
+      conversionFields = {
+        convertedAmount: conversion.convertedAmount,
+        convertedCurrency: convertedCurrency.toUpperCase(),
+        conversionRate: conversion.rate,
+        conversionRateId: conversion.rateId || null,
+        conversionAsOf: new Date()
+      };
+    }
+
     const flightBooking = await FlightBookingModel.create({
       tenantId,
       travelPlanId,
@@ -150,8 +171,9 @@ class AmadeusFlightBookingService {
       providerBookingReference: gdsResult.providerBookingReference || gdsResult.pnr,
       airlineOrderId: gdsResult.airlineOrderId || gdsResult.providerBookingReference || gdsResult.pnr,
       status: "Reserved",
-      totalPrice: gdsResult.totalPrice || pricing.totalPrice,
-      currency: gdsResult.currency || pricing.currency,
+      totalPrice: resolvedTotalPrice,
+      currency: resolvedCurrency,
+      ...conversionFields,
       ticketingDeadline,
       travelers: travelers.map((t, idx) => ({
         // Preserved so EXT-005's ticketing response can key `tickets[]` by

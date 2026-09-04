@@ -1,7 +1,10 @@
+import multer from "multer";
 import CustomerCollectionService from "../services/CustomerCollectionService.js";
+import CustomerCreditService from "../services/CustomerCreditService.js";
 import { sendSuccess, sendError } from "../utils/apiResponse.js";
 import { createRequestId } from "../utils/authTokens.js";
 import { getAccessScope } from "../utils/accessScope.js";
+import { getFinanceConfig } from "../utils/financeConfig.js";
 
 const hasPermission = (req, ...keys) => {
   const permissions = req.auth?.permissions || [];
@@ -15,6 +18,13 @@ const statusFromError = (error) => {
   if (message.includes("required") || message.includes("cannot") || message.includes("Cannot") || message.includes("Invalid") || message.includes("exceeds") || message.includes("must be") || message.includes("mismatch") || message.includes("expired") || message.includes("no remaining balance") || message.includes("no outstanding balance")) return 400;
   return 500;
 };
+
+// File 6 Part 5 — memoryStorage-multer, same pattern as ExpenseController's
+// own uploadReceiptFile.
+export const uploadCollectionAttachmentFile = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: getFinanceConfig().customerCollectionAttachmentMaxFileSizeBytes }
+}).single("file");
 
 // ---- Collection Requests ----
 
@@ -36,6 +46,58 @@ export const createCollectionRequest = async (req, res) => {
   } catch (error) {
     console.error("createCollectionRequest error:", error);
     return sendError(res, statusFromError(error), error.message || "Failed to create customer collection request.", requestId);
+  }
+};
+
+// ---- Payment Allocation Engine ----
+
+export const allocatePayment = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "finance.customercollection.manage")) return sendError(res, 403, "Permission denied.", requestId);
+    const userId = req.auth?.userId || req.auth?.id || null;
+
+    const result = await CustomerCollectionService.allocatePaymentAcrossInvoices(req.params.paymentId, req.body, scope.tenantId, userId);
+    return sendSuccess(res, 200, "Payment allocated successfully.", result, requestId);
+  } catch (error) {
+    console.error("allocatePayment error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to allocate payment.", requestId);
+  }
+};
+
+// ---- Customer Credit Balance Management ----
+
+export const listCustomerCredits = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "finance.customercollection.read", "finance.read")) return sendError(res, 403, "Permission denied.", requestId);
+
+    const result = await CustomerCreditService.listCredits(req.query, scope.tenantId);
+    return sendSuccess(res, 200, "Customer credits retrieved successfully.", result, requestId);
+  } catch (error) {
+    console.error("listCustomerCredits error:", error);
+    return sendError(res, 500, error.message || "Failed to retrieve customer credits.", requestId);
+  }
+};
+
+// ---- Customer Credit Risk Scoring ----
+
+export const getCustomerRiskScore = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "finance.customercollection.read", "finance.read")) return sendError(res, 403, "Permission denied.", requestId);
+
+    const result = await CustomerCollectionService.getCustomerRiskScore(req.params.customerId, scope.tenantId);
+    return sendSuccess(res, 200, "Customer risk score computed successfully.", result, requestId);
+  } catch (error) {
+    console.error("getCustomerRiskScore error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to compute customer risk score.", requestId);
   }
 };
 
@@ -336,5 +398,176 @@ export const createCustomerDeposit = async (req, res) => {
   } catch (error) {
     console.error("createCustomerDeposit error:", error);
     return sendError(res, statusFromError(error), error.message || "Failed to create customer deposit.", requestId);
+  }
+};
+
+// ---- File 6 Part 5: Attachments ----
+
+export const uploadCollectionAttachment = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "finance.customercollection.manage")) return sendError(res, 403, "Permission denied.", requestId);
+    if (!req.file) return sendError(res, 400, "A file is required.", requestId);
+    const userId = req.auth?.userId || req.auth?.id || null;
+
+    const attachment = await CustomerCollectionService.uploadAttachment(req.params.collectionId, req.file, scope.tenantId, userId);
+    return sendSuccess(res, 201, "Attachment uploaded successfully.", attachment, requestId);
+  } catch (error) {
+    console.error("uploadCollectionAttachment error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to upload attachment.", requestId);
+  }
+};
+
+export const listCollectionAttachments = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "finance.customercollection.read", "finance.read")) return sendError(res, 403, "Permission denied.", requestId);
+
+    const items = await CustomerCollectionService.listAttachments(req.params.collectionId, scope.tenantId);
+    return sendSuccess(res, 200, "Attachments retrieved successfully.", { items }, requestId);
+  } catch (error) {
+    console.error("listCollectionAttachments error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to retrieve attachments.", requestId);
+  }
+};
+
+// ---- Comments ----
+
+export const addCollectionComment = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "finance.customercollection.manage")) return sendError(res, 403, "Permission denied.", requestId);
+    const userId = req.auth?.userId || req.auth?.id || null;
+
+    const comment = await CustomerCollectionService.addComment(req.params.collectionId, req.body, scope.tenantId, userId);
+    return sendSuccess(res, 201, "Comment added successfully.", comment, requestId);
+  } catch (error) {
+    console.error("addCollectionComment error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to add comment.", requestId);
+  }
+};
+
+export const listCollectionComments = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "finance.customercollection.read", "finance.read")) return sendError(res, 403, "Permission denied.", requestId);
+
+    const items = await CustomerCollectionService.listComments(req.params.collectionId, scope.tenantId);
+    return sendSuccess(res, 200, "Comments retrieved successfully.", { items }, requestId);
+  } catch (error) {
+    console.error("listCollectionComments error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to retrieve comments.", requestId);
+  }
+};
+
+// ---- Manual Timeline Entry ----
+
+export const addCollectionTimelineEntry = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "finance.customercollection.manage")) return sendError(res, 403, "Permission denied.", requestId);
+    const userId = req.auth?.userId || req.auth?.id || null;
+
+    const entry = await CustomerCollectionService.addTimelineEntry(req.params.collectionId, req.body, scope.tenantId, userId);
+    return sendSuccess(res, 201, "Timeline entry added successfully.", entry, requestId);
+  } catch (error) {
+    console.error("addCollectionTimelineEntry error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to add timeline entry.", requestId);
+  }
+};
+
+// ---- Payment Link Regeneration ----
+
+export const regeneratePaymentLink = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "finance.customercollection.manage")) return sendError(res, 403, "Permission denied.", requestId);
+    const userId = req.auth?.userId || req.auth?.id || null;
+
+    const result = await CustomerCollectionService.regeneratePaymentLink(req.params.collectionId, scope.tenantId, userId);
+    return sendSuccess(res, 200, "Payment link regenerated successfully.", result, requestId);
+  } catch (error) {
+    console.error("regeneratePaymentLink error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to regenerate payment link.", requestId);
+  }
+};
+
+// ---- Advance Allocation ----
+
+export const allocateAdvance = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "finance.customercollection.manage")) return sendError(res, 403, "Permission denied.", requestId);
+    const userId = req.auth?.userId || req.auth?.id || null;
+
+    const result = await CustomerCollectionService.allocateAdvance(req.params.collectionId, scope.tenantId, userId);
+    return sendSuccess(res, 200, "Advance allocated successfully.", result, requestId);
+  } catch (error) {
+    console.error("allocateAdvance error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to allocate advance.", requestId);
+  }
+};
+
+// ---- Reopen ----
+
+export const reopenCollection = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "finance.customercollection.approve")) return sendError(res, 403, "Permission denied.", requestId);
+    const userId = req.auth?.userId || req.auth?.id || null;
+
+    const result = await CustomerCollectionService.reopenCollection(req.params.collectionId, req.body, scope.tenantId, userId);
+    return sendSuccess(res, 200, "Collection reopened successfully.", result, requestId);
+  } catch (error) {
+    console.error("reopenCollection error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to reopen collection.", requestId);
+  }
+};
+
+// ---- Audit & History ----
+
+export const getCollectionAuditTrail = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "finance.customercollection.read", "finance.read")) return sendError(res, 403, "Permission denied.", requestId);
+
+    const result = await CustomerCollectionService.getAuditTrail(req.params.collectionId, scope.tenantId, req.query);
+    return sendSuccess(res, 200, "Collection audit trail retrieved successfully.", result, requestId);
+  } catch (error) {
+    console.error("getCollectionAuditTrail error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to retrieve collection audit trail.", requestId);
+  }
+};
+
+export const getCollectionHistory = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "finance.customercollection.read", "finance.read")) return sendError(res, 403, "Permission denied.", requestId);
+
+    const result = await CustomerCollectionService.getCollectionHistory(req.params.collectionId, scope.tenantId);
+    return sendSuccess(res, 200, "Collection history retrieved successfully.", result, requestId);
+  } catch (error) {
+    console.error("getCollectionHistory error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to retrieve collection history.", requestId);
   }
 };

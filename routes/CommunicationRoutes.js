@@ -8,13 +8,27 @@ import {
   getMessageById,
   retryMessage,
   cancelMessage,
+  archiveMessage,
+  restoreMessage,
+  purgeMessage,
+  applyMessageLegalHold,
+  removeMessageLegalHold,
+  getMessageLegalHoldStatus,
   getCommunicationAnalytics,
+  refreshCommunicationAnalytics,
   createTemplate,
   listTemplates,
   getTemplateById,
   updateTemplate,
+  listTemplateVersions,
+  listTemplateLocales,
+  submitTemplateForReview,
+  approveTemplate,
+  rejectTemplate,
+  rollbackTemplate,
   getUserPreferences,
   updateUserPreferences,
+  getConsentHistory,
   sendEmailController,
   getEmailTrackingStatusController,
   sendSmsController,
@@ -24,7 +38,10 @@ import {
   createBulkSmsCampaignController,
   getBulkSmsCampaignController,
   updateBulkSmsCampaignStatusController,
-  retrySmsController
+  retrySmsController,
+  sendWhatsAppController,
+  getWhatsAppTrackingStatusController,
+  getWhatsAppConversationWindowController
 } from "../controllers/CommunicationPlatformController.js";
 
 const router = express.Router();
@@ -45,19 +62,36 @@ router.get("/messages", limiter, listMessages);
 router.get("/messages/:messageId", limiter, getMessageById);
 router.post("/messages/:messageId/retry", limiter, retryMessage);
 router.post("/messages/:messageId/cancel", limiter, cancelMessage);
+
+// Retention & Legal Hold (Part 15)
+router.post("/messages/:messageId/archive", limiter, validate(communicationSchemas.archiveMessage), archiveMessage);
+router.post("/messages/:messageId/restore", limiter, restoreMessage);
+router.post("/messages/:messageId/purge", limiter, validate(communicationSchemas.purgeMessage), purgeMessage);
+router.post("/messages/:messageId/legal-hold", limiter, validate(communicationSchemas.applyLegalHold), applyMessageLegalHold);
+router.delete("/messages/:messageId/legal-hold", limiter, validate(communicationSchemas.removeLegalHold), removeMessageLegalHold);
+router.get("/messages/:messageId/legal-hold", limiter, getMessageLegalHoldStatus);
 router.get("/analytics", limiter, getCommunicationAnalytics);
+router.post("/analytics/refresh", limiter, refreshCommunicationAnalytics);
 
 // Communication Templates
 router.post("/templates", limiter, validate(communicationSchemas.createTemplate), createTemplate);
 router.get("/templates", limiter, listTemplates);
 router.get("/templates/:templateId", limiter, getTemplateById);
 router.patch("/templates/:templateId", limiter, validate(communicationSchemas.updateTemplate), updateTemplate);
+router.get("/templates/:templateId/versions", limiter, listTemplateVersions);
+router.get("/templates/:templateId/locales", limiter, listTemplateLocales);
+router.post("/templates/:templateId/submit", limiter, validate(communicationSchemas.templateLocaleAction), submitTemplateForReview);
+router.post("/templates/:templateId/approve", limiter, validate(communicationSchemas.templateLocaleAction), approveTemplate);
+router.post("/templates/:templateId/reject", limiter, validate(communicationSchemas.rejectTemplate), rejectTemplate);
+router.post("/templates/:templateId/rollback", limiter, validate(communicationSchemas.rollbackTemplate), rollbackTemplate);
 
 // Communication Preferences
 router.get("/preferences", limiter, getUserPreferences);
 router.get("/preferences/:userId", limiter, getUserPreferences);
 router.patch("/preferences", limiter, validate(communicationSchemas.updateUserPreferences), updateUserPreferences);
 router.patch("/preferences/:userId", limiter, validate(communicationSchemas.updateUserPreferences), updateUserPreferences);
+router.get("/preferences/:userId/consent-history", limiter, getConsentHistory);
+router.get("/consent-history", limiter, getConsentHistory);
 
 // Enterprise Email Platform APIs (Part 2)
 router.post("/emails", limiter, validate(communicationSchemas.sendEmail), sendEmailController);
@@ -87,5 +121,10 @@ router.get("/sms/:trackingId", limiter, getSmsTrackingStatusController);
 router.post("/sms/:trackingId/retry", limiter, retrySmsController);
 router.get("/:trackingId", limiter, getSmsTrackingStatusController);
 router.post("/:trackingId/retry", limiter, retrySmsController);
+
+// Enterprise WhatsApp Platform APIs (Part 4)
+router.post("/whatsapp", limiter, validate(communicationSchemas.sendWhatsApp), sendWhatsAppController);
+router.get("/whatsapp/:trackingId", limiter, getWhatsAppTrackingStatusController);
+router.get("/whatsapp/conversations/:phone/window", limiter, getWhatsAppConversationWindowController);
 
 export default router;

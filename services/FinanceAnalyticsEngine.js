@@ -358,8 +358,10 @@ class FinanceAnalyticsEngine {
   // ── Personalization ────────────────────────────────────────
 
   static async getPreferences({ tenantId, userId, dashboardType }) {
-    const preference = await DashboardPreferenceModel.findOne({ tenantId, userId, dashboardType }).lean();
-    return preference || { tenantId, userId, dashboardType, layout: null, favoriteWidgets: [], filters: {}, theme: null, refreshInterval: null };
+    // Reporting Platform Part 4 fix — DashboardPreferenceModel.module is
+    // now required; this engine only ever writes "Finance" rows.
+    const preference = await DashboardPreferenceModel.findOne({ tenantId, userId, module: "Finance", dashboardType }).lean();
+    return preference || { tenantId, userId, module: "Finance", dashboardType, layout: null, favoriteWidgets: [], filters: {}, theme: null, refreshInterval: null };
   }
 
   static async savePreferences({ tenantId, userId, dashboardType, layout, favoriteWidgets, filters, theme, refreshInterval }) {
@@ -375,8 +377,8 @@ class FinanceAnalyticsEngine {
     if (refreshInterval !== undefined) update.refreshInterval = refreshInterval;
 
     const preference = await DashboardPreferenceModel.findOneAndUpdate(
-      { tenantId, userId, dashboardType },
-      { $set: update, $setOnInsert: { tenantId, userId, dashboardType } },
+      { tenantId, userId, module: "Finance", dashboardType },
+      { $set: update, $setOnInsert: { tenantId, userId, module: "Finance", dashboardType } },
       { upsert: true, new: true, setDefaultsOnInsert: true }
     );
     publishEvent("DashboardCustomized", { tenantId, userId, dashboardType, performedBy: userId || null });

@@ -7,6 +7,7 @@ import { VISA_CASE_STATUSES, VISA_DOMAIN_EVENTS } from "../utils/visaConstants.j
 import EnterpriseDocumentModel from "../models/EnterpriseDocumentModel.js";
 import PassportTrackingModel from "../models/PassportTrackingModel.js";
 import EmbassyMasterModel from "../models/EmbassyMasterModel.js";
+import VendorModel from "../models/VendorModel.js";
 import mongoose from "mongoose";
 
 const EMBASSY_TRANSITIONS = {
@@ -78,7 +79,7 @@ class EmbassyProcessingService {
   /**
    * Create Embassy Submission
    */
-  static async createEmbassySubmission(visaCaseId, { embassyId, embassyName, submissionMethod = "Online_Portal", submissionDate = new Date(), expectedProcessingDays = 7, trackingNumber, courierCompany, remarks }, tenantId, userId) {
+  static async createEmbassySubmission(visaCaseId, { embassyId, embassyName, vendorId = null, submissionMethod = "Online_Portal", submissionDate = new Date(), expectedProcessingDays, trackingNumber, courierCompany, remarks }, tenantId, userId) {
     if (!visaCaseId || !embassyId) {
       throw new Error("visaCaseId and embassyId are required.");
     }
@@ -88,10 +89,21 @@ class EmbassyProcessingService {
       throw new Error("Visa Case not found.");
     }
     let embassy = null;
+    // Visa Module PRD §11 — the AP-payable vendor/agent, distinct from the
+    // embassy/processing center resolved above. Optional: a submission can
+    // go straight to the embassy with no third-party vendor involved.
+    let vendor = null;
     if (mongoose.connection.readyState === 1) {
       embassy = await EmbassyMasterModel.findOne({ tenantId, embassyId, isActive: true });
       if (!embassy) throw new Error("Embassy processing center not found or inactive.");
+      if (vendorId) {
+        vendor = await VendorModel.findOne({ _id: vendorId, tenantId, status: "Active" });
+        if (!vendor) throw new Error("Vendor not found or inactive.");
+      }
     }
+    // Vendor's own default processing time is used only when the caller
+    // didn't explicitly supply one — never silently overrides an explicit value.
+    const resolvedExpectedProcessingDays = expectedProcessingDays ?? vendor?.visaVendorProfile?.processingTime ?? 7;
     if (visaCase.status !== VISA_CASE_STATUSES.READY_FOR_SUBMISSION) throw new Error("Visa Case workflow is not ready for embassy submission.");
     const mandatoryRequirements = visaCase.requiredDocuments.filter((document) => document.isMandatory);
     if (mandatoryRequirements.some((document) => document.status !== "verified" || document.verificationStatus !== "verified")) throw new Error("All mandatory documents must be approved before embassy submission.");
@@ -111,7 +123,7 @@ class EmbassyProcessingService {
 
     const submissionNumber = await this.generateSubmissionNumber(tenantId);
     const subDate = new Date(submissionDate);
-    const expectedCompletion = new Date(subDate.getTime() + expectedProcessingDays * 24 * 60 * 60 * 1000);
+    const expectedCompletion = new Date(subDate.getTime() + resolvedExpectedProcessingDays * 24 * 60 * 60 * 1000);
 
     const newSub = new EmbassySubmissionModel({
       tenantId,
@@ -120,6 +132,7 @@ class EmbassyProcessingService {
       caseNumber: visaCase.caseNumber,
       embassyId: embassyId || null,
       embassyName: embassy?.name || embassyName || embassyId,
+      vendorId: vendor?._id || null,
       destinationCountry: visaCase.destinationCountry,
       // "Assigned Officer" — had a schema field but nothing anywhere ever
       // set it. Not a fabricated assignment: the officer already handling
@@ -129,7 +142,7 @@ class EmbassyProcessingService {
       submissionMethod,
       status: submissionMethod === "Courier" ? "Ready" : "Received",
       submissionDate: subDate,
-      expectedProcessingDays,
+      expectedProcessingDays: resolvedExpectedProcessingDays,
       expectedCompletionDate: expectedCompletion,
       courierTracking: {
         courierCompany: courierCompany || null,
@@ -138,9 +151,9 @@ class EmbassyProcessingService {
       },
       slaTracking: {
         submissionTime: subDate,
-        processingTimeDays: expectedProcessingDays,
+        processingTimeDays: resolvedExpectedProcessingDays,
         isSlaBreached: false,
-        slaPolicyName: `Standard ${expectedProcessingDays}-Day SLA`
+        slaPolicyName: `Standard ${resolvedExpectedProcessingDays}-Day SLA`
       },
       remarks
     });
@@ -152,6 +165,7 @@ class EmbassyProcessingService {
     visaCase.embassySubmissions.push({
       submissionNumber,
       embassyName: embassy?.name || embassyName || embassyId,
+      vendorId: vendor?._id || null,
       submissionDate: subDate,
       trackingNumber: trackingNumber || null,
       status: "submitted",
@@ -161,7 +175,7 @@ class EmbassyProcessingService {
 
     visaCase.timeline.push({
       event: "EmbassySubmissionCreated",
-      description: `Submitted to ${embassyName} (Ref: ${submissionNumber}). Expected processing: ${expectedProcessingDays} days.`,
+      description: `Submitted to ${embassyName} (Ref: ${submissionNumber}). Expected processing: ${resolvedExpectedProcessingDays} days.`,
       statusFrom: VISA_CASE_STATUSES.READY_FOR_SUBMISSION,
       statusTo: VISA_CASE_STATUSES.SUBMITTED_TO_EMBASSY,
       performedBy: userId || "system",
@@ -179,7 +193,7 @@ class EmbassyProcessingService {
       details: { submissionNumber, visaCaseId, embassyName }
     }).catch(err => console.error("Audit error:", err));
 
-    publishEvent("EmbassySubmissionCreated", { submissionId: newSub._id, visaCaseId, tenantId });
+    publishEvent("EmbassySubmissionCreated", { submissionId: newSub._id, visaCaseId, tenantId, vendorId: vendor?._id || null });
 
     return newSub;
   }

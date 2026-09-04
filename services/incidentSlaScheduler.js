@@ -4,6 +4,8 @@ import VisaCaseModel from "../models/VisaCaseModel.js";
 import { publishEvent } from "../utils/eventBus.js";
 import { getIncidentConfig } from "../utils/incidentConfig.js";
 import logger from "../utils/logger.js";
+import { withDistributedLock } from "../utils/distributedLock.js";
+import { getSchedulerLockConfig } from "../utils/schedulerLockConfig.js";
 
 const incidentConfig = getIncidentConfig();
 
@@ -154,7 +156,8 @@ class IncidentSlaScheduler {
     if (expr !== SLA_SWEEP_CRON) logger.error(`Invalid INCIDENT_SLA_SWEEP_CRON_SCHEDULE: "${SLA_SWEEP_CRON}". Falling back to "*/10 * * * *".`);
 
     slaJob = cronLib.schedule(expr, () => {
-      runIncidentSlaSweep().catch((err) => logger.error("Cron incident SLA sweep error", { error: err.message }));
+      withDistributedLock("scheduler:IncidentSlaScheduler", getSchedulerLockConfig().defaultLockTtlMs, runIncidentSlaSweep)
+        .catch((err) => logger.error("Cron incident SLA sweep error", { error: err.message }));
     }, { scheduled: true, timezone: process.env.TZ || undefined });
 
     logger.info(`IncidentSlaScheduler started — schedule: "${expr}".`);

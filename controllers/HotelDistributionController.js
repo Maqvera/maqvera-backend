@@ -7,6 +7,7 @@ import { sendError, sendSuccess } from "../utils/apiResponse.js";
 import { publishEvent } from "../utils/eventBus.js";
 import { createRequestId } from "../utils/authTokens.js";
 import { getHotelSearchValidationConfig, getFlightSearchValidationConfig } from "../utils/gdsConfig.js";
+import CurrencyService from "../services/CurrencyService.js";
 
 /**
  * 1. POST /api/v1/hotel-search
@@ -21,7 +22,12 @@ export const SearchHotels = async (req, res) => {
     if (!permissions.includes("hotel.search") && !permissions.includes("admin")) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
-    const { city, checkIn, checkOut, rooms = 1, adults = 2, children = 0, nationality = "PK", currency = "PKR", provider = "Amadeus" } = req.body;
+    const { city, checkIn, checkOut, rooms = 1, adults = 2, children = 0, nationality = "PK", provider = "Amadeus" } = req.body;
+    // Golden Rule 2 (never hardcode a currency) — resolves to the tenant's
+    // own configured base currency (utils/financeConfig.js's defaultCurrency
+    // fallback) instead of a literal "PKR", the same resolution
+    // CurrencyService.getRate already uses for conversion elsewhere.
+    const currency = (req.body.currency || await CurrencyService.getBaseCurrency(tenantId)).toUpperCase();
 
     if (!city || !checkIn || !checkOut) {
       return sendError(res, 400, "city, checkIn, and checkOut dates are required.", requestId);
@@ -156,7 +162,7 @@ export const CreateHotelBooking = async (req, res) => {
     if (!permissions.includes("hotel.book") && !permissions.includes("admin")) {
       return sendError(res, 403, "Permission denied.", requestId);
     }
-    const { offerId, bookingId, travelPlanId, guests = [] } = req.body;
+    const { offerId, bookingId, travelPlanId, guests = [], convertedCurrency = null } = req.body;
 
     if (!offerId) {
       return sendError(res, 400, "offerId is required.", requestId);
@@ -246,6 +252,31 @@ export const CreateHotelBooking = async (req, res) => {
       tenantId
     });
 
+    // Multi-currency balance entry — server-side authoritative recompute,
+    // same pattern as BookingController.CreateBooking (§4 of the
+    // multi-currency requirements doc). CurrencyService.convert() is the
+    // single source of truth for rates.
+    const resolvedTotalPrice = supplierResult.totalPrice || totalPrice;
+    let conversionFields = {
+      convertedAmount: null, convertedCurrency: null,
+      conversionRate: null, conversionRateId: null, conversionAsOf: null
+    };
+    if (convertedCurrency && resolvedTotalPrice > 0) {
+      try {
+        const conversion = await CurrencyService.convert(resolvedTotalPrice, currency, convertedCurrency, tenantId);
+        conversionFields = {
+          convertedAmount: conversion.convertedAmount,
+          convertedCurrency: convertedCurrency.toUpperCase(),
+          conversionRate: conversion.rate,
+          conversionRateId: conversion.rateId || null,
+          conversionAsOf: new Date()
+        };
+      } catch (conversionError) {
+        console.error("Hotel booking currency conversion error:", conversionError);
+        return sendError(res, 422, conversionError.message || `Unable to convert ${currency} to ${convertedCurrency}.`, requestId);
+      }
+    }
+
     const hotelBooking = await HotelBookingModel.create({
       tenantId,
       bookingId: bookingId || null,
@@ -268,8 +299,9 @@ export const CreateHotelBooking = async (req, res) => {
         lastName: g.lastName,
         isLeadGuest: idx === 0
       })),
-      totalPrice: supplierResult.totalPrice || totalPrice,
+      totalPrice: resolvedTotalPrice,
       currency,
+      ...conversionFields,
       version: 1,
       versionHistory: [
         {

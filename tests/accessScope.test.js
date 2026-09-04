@@ -59,7 +59,13 @@ const makeRes = () => ({
 const CUSTOMER_PERMISSIONS = ["customer.read", "customer.create", "customers.read", "customers.create"];
 
 test("Company-wide shared data: every user of a tenant sees all of that tenant's customers, and tenant B never sees tenant A's data", { skip: !dbAvailable && dbSkipReason }, async (t) => {
-  const { SetupTenant } = await import("../controllers/Auth.js");
+  // Per-Tenant Payment Gateway Integration (PRD Issue 12) moved real
+  // tenant/role/user creation out of the old, now-removed `SetupTenant`
+  // controller function and into TenantProvisioningService.provisionTenant
+  // (Auth.js#SetupTenantIntent only creates a Stripe Checkout session now) —
+  // call that shared function directly instead.
+  const bcrypt = (await import("bcryptjs")).default;
+  const TenantProvisioningService = (await import("../services/TenantProvisioningService.js")).default;
   const { ListCustomers, CreateCustomer } = await import("../controllers/CustomerController.js");
   const TenantModel = (await import("../models/Tenantmodel.js")).default;
   const RoleModel = (await import("../models/Rolemodel.js")).default;
@@ -77,15 +83,12 @@ test("Company-wide shared data: every user of a tenant sees all of that tenant's
     await TenantModel.deleteMany({ tenantKey: { $in: [tenantAKey, tenantBKey] } });
   });
 
+  const passwordHash = await bcrypt.hash("StrongPass1!", 10);
   const adminAEmail = `admin-a-${suffix}@example.com`;
-  const setupARes = makeRes();
-  await SetupTenant({ body: { companyName: "Tenant A Co", tenantKey: tenantAKey, username: "tenantAadmin", email: adminAEmail, password: "StrongPass1!" }, requestId: `setup-a-${suffix}`, headers: {}, header: () => null }, setupARes);
-  assert.equal(setupARes.statusCode, 201, JSON.stringify(setupARes.body));
+  await TenantProvisioningService.provisionTenant({ companyName: "Tenant A Co", tenantKey: tenantAKey, username: "tenantAadmin", email: adminAEmail, passwordHash, requestId: `setup-a-${suffix}` });
 
   const adminBEmail = `admin-b-${suffix}@example.com`;
-  const setupBRes = makeRes();
-  await SetupTenant({ body: { companyName: "Tenant B Co", tenantKey: tenantBKey, username: "tenantBadmin", email: adminBEmail, password: "StrongPass1!" }, requestId: `setup-b-${suffix}`, headers: {}, header: () => null }, setupBRes);
-  assert.equal(setupBRes.statusCode, 201, JSON.stringify(setupBRes.body));
+  await TenantProvisioningService.provisionTenant({ companyName: "Tenant B Co", tenantKey: tenantBKey, username: "tenantBadmin", email: adminBEmail, passwordHash, requestId: `setup-b-${suffix}` });
 
   // Sanity: each tenant owns an independent Administrator role document —
   // that part of tenant isolation (role catalogs never shared across

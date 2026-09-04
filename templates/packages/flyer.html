@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html dir="{{dir}}">
+<head>
+<meta charset="utf-8">
+<style>
+{{{sharedCss}}}
+body { font-family: Arial, Helvetica, sans-serif; }
+.flyer-hero { text-align: center; padding: 24px 0; }
+.flyer-hero img { max-height: 70px; }
+.flyer-package-name { font-size: 28px; font-weight: bold; margin: 12px 0 4px; }
+.flyer-destination { font-size: 16px; color: #555; }
+.flyer-price-grid { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; margin: 20px 0; }
+.flyer-price-card { border: 2px solid #222; border-radius: 8px; padding: 14px 20px; text-align: center; min-width: 140px; }
+.flyer-price-card .room-name { font-weight: bold; font-size: 15px; text-transform: uppercase; }
+.flyer-price-card .room-price { font-size: 20px; font-weight: bold; margin-top: 6px; }
+.flyer-includes { margin: 20px auto; max-width: 480px; }
+.flyer-includes li { list-style: none; padding: 2px 0; }
+.flyer-includes li:before { content: "\2713  "; font-weight: bold; }
+.flyer-cta { text-align: center; font-size: 18px; font-weight: bold; margin: 24px 0 8px; }
+.flyer-contact { text-align: center; font-size: 13px; color: #444; }
+.flyer-hotel-detail { margin: 12px 0; padding: 10px 14px; border: 1px solid #ddd; border-radius: 6px; }
+.flyer-hotel-detail img { max-width: 100%; max-height: 220px; object-fit: cover; border-radius: 4px; }
+.flyer-hotel-detail .hotel-detail-name { font-weight: bold; font-size: 15px; margin: 6px 0 2px; }
+.flyer-hotel-detail .hotel-detail-desc { font-size: 13px; color: #444; margin: 4px 0; }
+.flyer-hotel-detail .hotel-detail-meta { font-size: 12px; color: #666; }
+.flyer-hotel-detail .hotel-detail-amenities { font-size: 12px; color: #444; }
+</style>
+</head>
+<body>
+  <div class="flyer-hero">
+    {{#if company.logoUrl}}<img src="{{company.logoUrl}}" alt="{{company.name}}">{{/if}}
+    <div class="flyer-package-name">{{package.name}}</div>
+    <div class="flyer-destination">
+      {{#each package.segments}}{{this.city}}{{#unless @last}} &bull; {{/unless}}{{/each}}
+      &nbsp;|&nbsp; {{formatDate package.travelStartDate}} - {{formatDate package.travelEndDate}}
+    </div>
+  </div>
+
+  <div class="section-title">{{strings.itinerary}}</div>
+  <table class="doc-table">
+    <thead><tr><th>#</th><th>City</th><th>Hotel</th><th>{{strings.nights}}</th></tr></thead>
+    <tbody>
+      {{#each package.segments}}
+      <tr>
+        <td>{{inc @index}}</td>
+        <td>{{this.city}}</td>
+        <td>{{this.hotelName}}</td>
+        <td>{{this.nights}}</td>
+      </tr>
+      {{/each}}
+    </tbody>
+  </table>
+
+  {{#each package.segments}}
+  {{#if this.hotelName}}
+  <div class="flyer-hotel-detail">
+    {{#if this.hotelImage}}<img src="{{this.hotelImage}}" alt="{{this.hotelName}}">{{/if}}
+    <div class="hotel-detail-name">{{this.hotelName}}</div>
+    {{#if this.hotelDescription}}<div class="hotel-detail-desc">{{this.hotelDescription}}</div>{{/if}}
+    {{#if this.hotelAmenities.length}}
+    <div class="hotel-detail-amenities">{{#each this.hotelAmenities}}{{this}}{{#unless @last}}, {{/unless}}{{/each}}</div>
+    {{/if}}
+    {{#if this.hotelCheckInTime}}<div class="hotel-detail-meta">{{../strings.checkIn}}: {{this.hotelCheckInTime}}{{#if this.hotelCheckOutTime}} &nbsp;|&nbsp; {{../strings.checkOut}}: {{this.hotelCheckOutTime}}{{/if}}</div>{{/if}}
+  </div>
+  {{/if}}
+  {{/each}}
+
+  <div class="section-title">{{strings.packagePrice}}</div>
+  <div class="flyer-price-grid">
+    {{#each rooms}}
+    <div class="flyer-price-card">
+      <div class="room-name">{{this.roomTypeName}}</div>
+      <div>{{this.occupancy}} Person(s)</div>
+      <div class="room-price">{{formatNumber this.finalPricePerPerson}} {{../package.sellingCurrency}}</div>
+      <div>{{../strings.perPerson}}</div>
+    </div>
+    {{/each}}
+  </div>
+
+  <div class="section-title">{{strings.includes}}</div>
+  <ul class="flyer-includes">
+    {{#each includedComponents}}<li>{{this}}</li>{{/each}}
+  </ul>
+
+  <div class="flyer-cta">{{strings.bookNow}}</div>
+  <div class="flyer-contact">
+    {{#if company.phone}}Call/WhatsApp: {{company.phone}}{{/if}}
+    {{#if company.email}} &nbsp;|&nbsp; {{company.email}}{{/if}}
+    {{#if company.address}}<div>{{company.address}}</div>{{/if}}
+  </div>
+</body>
+</html>

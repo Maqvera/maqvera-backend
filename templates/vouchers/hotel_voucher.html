@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>{{{sharedCss}}}</style>
+</head>
+<body>
+  {{> voucherHeader}}
+
+  <p class="greeting-line">{{#if documentSettings.greetingText}}{{documentSettings.greetingText}}{{else}}Dear Sir, We seize this opportunity to thank you very much for your kind interest and confidence in us. We are delighted to confirm you on definite basis as following.{{/if}}</p>
+
+  {{#if typeDetails.hotels.length}}
+  <div class="section-title">Room Details</div>
+  <div class="table-scroll">
+  <table class="doc-table">
+    <thead>
+      <tr><th>Room Type</th><th>View</th><th>Qty.</th><th>Check In</th><th>Check Out</th><th>Nights</th><th>Pax</th><th>Meal Plan</th></tr>
+    </thead>
+    <tbody>
+      {{#each typeDetails.hotels}}
+      <tr>
+        <td>{{this.roomType}}</td>
+        <td>{{this.view}}</td>
+        <td>{{this.roomsCount}}</td>
+        <td>{{formatDate this.checkIn}}</td>
+        <td>{{formatDate this.checkOut}}</td>
+        <td>{{this.nights}}</td>
+        <td>{{this.guestsCount}}</td>
+        <td>{{this.mealPlan}}</td>
+      </tr>
+      {{/each}}
+    </tbody>
+  </table>
+  </div>
+  {{/if}}
+
+  {{#if typeDetails.flights.length}}
+  <div class="section-title">Flights</div>
+  {{#each typeDetails.flights}}
+    <div>Flight {{inc @index}}: {{#if this.reservationNumber}}{{this.reservationNumber}}{{else}}{{#if this.providerConfirmationNumber}}{{this.providerConfirmationNumber}}{{else}}N/A{{/if}}{{/if}}</div>
+  {{/each}}
+  {{/if}}
+
+  {{#if typeDetails.carRentals.length}}
+  <div class="section-title">Car Rentals</div>
+  {{#each typeDetails.carRentals}}
+    <div>Car Rental {{inc @index}}: {{this.rentalCompany}} — {{#if this.vehicleType}}{{this.vehicleType}}{{else}}N/A{{/if}},
+      Pickup {{this.pickupLocation}} ({{formatDateTime this.pickupDateTime}}), Dropoff {{this.dropoffLocation}} ({{formatDateTime this.dropoffDateTime}})</div>
+  {{/each}}
+  {{/if}}
+
+  {{> termsAndPolicies}}
+</body>
+</html>

@@ -2,6 +2,8 @@ import mongoose from "mongoose";
 import KPIEngine from "./KPIEngine.js";
 import CacheManager from "../utils/cacheManager.js";
 import logger from "../utils/logger.js";
+import { withDistributedLock } from "../utils/distributedLock.js";
+import { getSchedulerLockConfig } from "../utils/schedulerLockConfig.js";
 
 // ─────────────────────────────────────────────────────────────
 // Configuration — all from environment
@@ -120,11 +122,13 @@ class AnalyticsScheduler {
     const nightlyExpr = cronLib.validate(NIGHTLY_CRON) ? NIGHTLY_CRON : "0 2 * * *";
 
     incrementalJob = cronLib.schedule(incrementalExpr, () => {
-      incrementalRefresh().catch((err) => logger.error("Cron incremental error", { error: err.message }));
+      withDistributedLock("scheduler:AnalyticsScheduler:incremental", getSchedulerLockConfig().defaultLockTtlMs, incrementalRefresh)
+        .catch((err) => logger.error("Cron incremental error", { error: err.message }));
     }, { scheduled: true, timezone: process.env.TZ || undefined });
 
     nightlyJob = cronLib.schedule(nightlyExpr, () => {
-      nightlyRebuild().catch((err) => logger.error("Cron nightly error", { error: err.message }));
+      withDistributedLock("scheduler:AnalyticsScheduler:nightly", getSchedulerLockConfig().defaultLockTtlMs, nightlyRebuild)
+        .catch((err) => logger.error("Cron nightly error", { error: err.message }));
     }, { scheduled: true, timezone: process.env.TZ || undefined });
 
     logger.info(`AnalyticsScheduler started — incremental: "${incrementalExpr}", nightly: "${nightlyExpr}"`);

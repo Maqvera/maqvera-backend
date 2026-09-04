@@ -32,6 +32,16 @@ const EmbassySubmissionSchema = new mongoose.Schema({
     type: String,
     required: true
   },
+  // Visa Module PRD §11/§17 — the AP-payable vendor/agent who handled this
+  // submission, distinct from embassyId/embassyName (the destination
+  // processing center). Optional. Indexed for "Vendor Business"/"Vendor
+  // Outstanding" reporting once AccountsPayableModel rows reference it too.
+  vendorId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "vendor",
+    default: null,
+    index: true
+  },
   destinationCountry: {
     type: String,
     required: true,

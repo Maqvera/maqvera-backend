@@ -169,6 +169,19 @@ Live Results ──► AI Ranking ──► Dynamic Recommendation ──► Use
 
 ---
 
+## 9A. Selecting a Provider Explicitly (Amadeus / Sabre)
+
+Every endpoint under `06B` (flight search + fare rules/baggage/seat-map/pricing), `06C` (flight booking + ticketing), and `06E` (hotel search/booking/cancellation) already accepts an explicit provider selector — this was built in from the start (`services/GdsIntegrationService.js`), not added later:
+
+- **Flight search** (`POST /api/v1/flight-search`) — body field `preferredProvider` (e.g. `"Sabre"`). Omit it to use the configured primary (`GDS_PRIMARY_PROVIDER`, default `Amadeus`) with automatic failover to the configured secondary (`GDS_SECONDARY_PROVIDER`, default `Sabre`) on failure.
+- **Every other flight-search/booking/ticketing/hotel endpoint** — body field `provider` (e.g. `"Sabre"`), defaulting to `"Amadeus"` when omitted. A hotel booking/cancellation never takes an explicit `provider` at all — it's resolved automatically from the original search's cached offer (`GdsIntegrationService.revalidateHotelOffer`) or the stored booking record, so the provider a hotel was actually searched/booked through is always the one used for every later action on it.
+
+Verified genuinely working end-to-end (not just "the code compiles") in `tests/sabreProviderIntegration.test.js`: a Sabre flight search, Sabre fare rules, a Sabre hotel search, a Sabre hotel booking, and a Sabre hotel cancellation, asserting the actual Sabre-shaped response data at every step (`provider: "Sabre"`, `OFF-SABRE-*`/`HOTEL-SABRE-*`/`SABRE-HB-*` id/reservation-number prefixes).
+
+**`controllers/ExternalFlightController.js`** (`GET /api/v1/external/flights/search`, the EXT-002 spec-compliance contract) is the one deliberate exception — it is Amadeus-only **by design**, per its own doc comment, because it exposes the raw Amadeus adapter contract for a specific external integration spec. It is not a gap; use the endpoints above for any multi-provider (including Sabre) need.
+
+**Not yet real**: `SabreAdapter`/`GdsIntegrationService` do not implement Amadeus's extension methods (seat maps beyond an always-empty stub, branded fares, ancillary services, flight inspiration, schedule sync, hotel-offer pricing) for Sabre — calling those with `provider: "Sabre"` throws a clean "not implemented in Sabre" error rather than silently returning Amadeus data. **Galileo/Travelport is not implemented at all** — no adapter exists; do not build one speculatively without a confirmed product need (a Travelport integration is a substantial separate credentialing/build effort).
+
 ## 10. Completion Status
 
 - **Status**: ✅ Architecture Approved

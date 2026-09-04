@@ -1,0 +1,1934 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Maqvera Backend API Documentation",
+    "version": "1.0.0",
+    "description": "Complete Interactive API Testing Suite for Maqvera Multi-Tenant Enterprise Platform",
+    "contact": {
+      "name": "Maqvera Engineering Team"
+    }
+  },
+  "servers": [
+    {
+      "url": "http://localhost:5001/api/v1",
+      "description": "Local Development Server (v1 API)"
+    },
+    {
+      "url": "http://localhost:5001",
+      "description": "Root Server"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Enter your Bearer Access Token obtained from /auth/login"
+      }
+    },
+    "schemas": {
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "example": false
+          },
+          "message": {
+            "type": "string",
+            "example": "Payment already exists."
+          },
+          "data": {
+            "type": "object",
+            "properties": {
+              "code": {
+                "type": "string",
+                "example": "PAYMENT_ALREADY_EXISTS",
+                "description": "Stable, catalog-backed error code — see utils/errorContract.js#ERROR_CATALOG."
+              },
+              "category": {
+                "type": "string",
+                "example": "Business",
+                "enum": [
+                  "Validation",
+                  "Business",
+                  "Authorization",
+                  "Authentication",
+                  "NotFound",
+                  "Conflict",
+                  "RateLimit",
+                  "Integration",
+                  "Infrastructure",
+                  "System"
+                ]
+              },
+              "severity": {
+                "type": "string",
+                "example": "Error",
+                "enum": [
+                  "Info",
+                  "Warning",
+                  "Error",
+                  "Critical"
+                ]
+              },
+              "httpStatus": {
+                "type": "integer",
+                "example": 409
+              },
+              "correlationId": {
+                "type": "string",
+                "nullable": true,
+                "example": "corr-a1b2c3d4"
+              },
+              "timestamp": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "details": {
+                "type": "object",
+                "nullable": true,
+                "description": "Present only for field-level validation failures or code-specific extra context; omitted (not null) otherwise."
+              }
+            }
+          },
+          "requestId": {
+            "type": "string",
+            "example": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
+          }
+        }
+      },
+      "SuccessResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "example": true
+          },
+          "message": {
+            "type": "string",
+            "example": "Operation completed successfully"
+          },
+          "data": {
+            "type": "object"
+          },
+          "requestId": {
+            "type": "string",
+            "example": "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d"
+          }
+        }
+      },
+      "PaginatedResponse": {
+        "type": "object",
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {}
+          },
+          "pagination": {
+            "type": "object",
+            "properties": {
+              "total": {
+                "type": "integer",
+                "example": 137
+              },
+              "page": {
+                "type": "integer",
+                "example": 1
+              },
+              "pageSize": {
+                "type": "integer",
+                "example": 20
+              },
+              "totalPages": {
+                "type": "integer",
+                "example": 7
+              }
+            }
+          }
+        }
+      },
+      "EnterpriseEventEnvelope": {
+        "type": "object",
+        "properties": {
+          "eventId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "eventName": {
+            "type": "string",
+            "example": "InvoiceApproved"
+          },
+          "eventVersion": {
+            "type": "string",
+            "example": "1.0"
+          },
+          "occurredAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "correlationId": {
+            "type": "string",
+            "nullable": true
+          },
+          "tenantId": {
+            "type": "string",
+            "nullable": true
+          },
+          "merchantAccountId": {
+            "type": "string",
+            "nullable": true
+          },
+          "source": {
+            "type": "string",
+            "example": "Finance Payments Platform"
+          },
+          "data": {
+            "type": "object",
+            "description": "Event-specific payload — shape varies per eventName/eventVersion."
+          }
+        }
+      },
+      "SignupRequest": {
+        "type": "object",
+        "required": [
+          "username",
+          "email",
+          "password"
+        ],
+        "properties": {
+          "username": {
+            "type": "string",
+            "example": "JohnDoe"
+          },
+          "email": {
+            "type": "string",
+            "example": "john@example.com"
+          },
+          "password": {
+            "type": "string",
+            "example": "Password123!"
+          }
+        }
+      },
+      "LoginRequest": {
+        "type": "object",
+        "required": [
+          "email",
+          "password"
+        ],
+        "properties": {
+          "email": {
+            "type": "string",
+            "example": "john@example.com"
+          },
+          "password": {
+            "type": "string",
+            "example": "Password123!"
+          },
+          "rememberMe": {
+            "type": "boolean",
+            "example": false
+          }
+        }
+      },
+      "CreateUserRequest": {
+        "type": "object",
+        "required": [
+          "username",
+          "email",
+          "password",
+          "role"
+        ],
+        "properties": {
+          "username": {
+            "type": "string",
+            "example": "JaneAgent"
+          },
+          "email": {
+            "type": "string",
+            "example": "jane@company.com"
+          },
+          "password": {
+            "type": "string",
+            "example": "SecurePass123!"
+          },
+          "role": {
+            "type": "string",
+            "example": "Agent"
+          },
+          "department": {
+            "type": "string",
+            "example": "Sales"
+          }
+        }
+      },
+      "CreateCustomerRequest": {
+        "type": "object",
+        "required": [
+          "firstName",
+          "lastName",
+          "email"
+        ],
+        "properties": {
+          "firstName": {
+            "type": "string",
+            "example": "Alice"
+          },
+          "lastName": {
+            "type": "string",
+            "example": "Walker"
+          },
+          "email": {
+            "type": "string",
+            "example": "alice.walker@example.com"
+          },
+          "phone": {
+            "type": "string",
+            "example": "+1234567890"
+          }
+        }
+      },
+      "CreateBookingRequest": {
+        "type": "object",
+        "required": [
+          "customerId",
+          "bookingType"
+        ],
+        "properties": {
+          "customerId": {
+            "type": "string",
+            "example": "64f1ab29c4e1234567890abc"
+          },
+          "bookingType": {
+            "type": "string",
+            "example": "flight"
+          },
+          "totalAmount": {
+            "type": "number",
+            "example": 550
+          },
+          "currency": {
+            "type": "string",
+            "example": "USD"
+          }
+        }
+      },
+      "CreateVisaCaseRequest": {
+        "type": "object",
+        "required": [
+          "customerId",
+          "destinationCountry",
+          "visaType"
+        ],
+        "properties": {
+          "customerId": {
+            "type": "string",
+            "example": "64f1ab29c4e1234567890abc"
+          },
+          "destinationCountry": {
+            "type": "string",
+            "example": "GB"
+          },
+          "visaType": {
+            "type": "string",
+            "example": "Tourist"
+          },
+          "travelDate": {
+            "type": "string",
+            "example": "2026-10-15"
+          }
+        }
+      },
+      "FlightSearchRequest": {
+        "type": "object",
+        "required": [
+          "originLocationCode",
+          "destinationLocationCode",
+          "departureDate",
+          "adults"
+        ],
+        "properties": {
+          "originLocationCode": {
+            "type": "string",
+            "example": "LHR"
+          },
+          "destinationLocationCode": {
+            "type": "string",
+            "example": "DXB"
+          },
+          "departureDate": {
+            "type": "string",
+            "example": "2026-09-01"
+          },
+          "adults": {
+            "type": "integer",
+            "example": 1
+          }
+        }
+      },
+      "AIChatRequest": {
+        "type": "object",
+        "required": [
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "type": "string",
+            "example": "What visa requirements apply for a UK passport traveling to Dubai?"
+          }
+        }
+      }
+    },
+    "headers": {
+      "RateLimitLimit": {
+        "schema": {
+          "type": "integer"
+        },
+        "description": "The resolved limit for this request's scope/window."
+      },
+      "RateLimitRemaining": {
+        "schema": {
+          "type": "integer"
+        },
+        "description": "Requests remaining in the current window."
+      },
+      "RateLimitReset": {
+        "schema": {
+          "type": "integer"
+        },
+        "description": "Unix timestamp (seconds) when the current window resets."
+      },
+      "RetryAfter": {
+        "schema": {
+          "type": "integer"
+        },
+        "description": "Seconds to wait before retrying — present only on a 429 response."
+      }
+    }
+  },
+  "security": [
+    {
+      "BearerAuth": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "Authentication",
+      "description": "Signup, Login, Logout, MFA, Sessions & Security"
+    },
+    {
+      "name": "Users & Employees",
+      "description": "User Accounts, Roles, Permissions & Invitations"
+    },
+    {
+      "name": "Customers",
+      "description": "Customer Profiles, Passports, Documents & Emergency Contacts"
+    },
+    {
+      "name": "Bookings",
+      "description": "Booking Management, Workflow States & Financial Summaries"
+    },
+    {
+      "name": "Travel Plans",
+      "description": "Itineraries & Travel Planning"
+    },
+    {
+      "name": "Visa Processing Engine",
+      "description": "Visa Cases, Requirements, Verification & Embassy Processing"
+    },
+    {
+      "name": "Flight & Hotel Distribution",
+      "description": "GDS Flight Search, Booking & Hotel Offers"
+    },
+    {
+      "name": "AI Travel Assistant",
+      "description": "AI Chat Assistant & Tool Orchestration"
+    },
+    {
+      "name": "Incidents & SLA",
+      "description": "Enterprise Incident & SLA Escalation Tracking"
+    },
+    {
+      "name": "Enterprise Search",
+      "description": "Cross-Module Global Search Index"
+    },
+    {
+      "name": "Reference Data",
+      "description": "Airports, Currencies & Countries Reference Lookup"
+    },
+    {
+      "name": "Notes & Audit Timeline",
+      "description": "Activity Audit Logs & Operational Notes"
+    },
+    {
+      "name": "Finance — Payments",
+      "description": "Enterprise Payment Engine — gateway-integrated and manually-recorded payments"
+    }
+  ],
+  "paths": {
+    "/auth/signup": {
+      "post": {
+        "tags": [
+          "Authentication"
+        ],
+        "summary": "Register a new user account",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SignupRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Signup successful"
+          },
+          "409": {
+            "description": "User already exists"
+          }
+        }
+      }
+    },
+    "/auth/login": {
+      "post": {
+        "tags": [
+          "Authentication"
+        ],
+        "summary": "Authenticate user and issue JWT tokens",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Login successful"
+          },
+          "401": {
+            "description": "Invalid credentials"
+          }
+        }
+      }
+    },
+    "/auth/me": {
+      "get": {
+        "tags": [
+          "Authentication"
+        ],
+        "summary": "Get current authenticated user profile, permissions & tenant context",
+        "responses": {
+          "200": {
+            "description": "User profile loaded"
+          },
+          "401": {
+            "description": "Unauthorized"
+          }
+        }
+      }
+    },
+    "/auth/refresh": {
+      "post": {
+        "tags": [
+          "Authentication"
+        ],
+        "summary": "Refresh access token using refresh token",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "refreshToken": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Token refreshed"
+          }
+        }
+      }
+    },
+    "/auth/logout": {
+      "post": {
+        "tags": [
+          "Authentication"
+        ],
+        "summary": "Log out user & revoke active session",
+        "responses": {
+          "200": {
+            "description": "Logout successful"
+          }
+        }
+      }
+    },
+    "/auth/forgot-password": {
+      "post": {
+        "tags": [
+          "Authentication"
+        ],
+        "summary": "Request password reset email",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "email": {
+                    "type": "string",
+                    "example": "user@example.com"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Instructions sent if account exists"
+          }
+        }
+      }
+    },
+    "/auth/reset-password": {
+      "post": {
+        "tags": [
+          "Authentication"
+        ],
+        "summary": "Reset password using reset token",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "resetToken": {
+                    "type": "string"
+                  },
+                  "newPassword": {
+                    "type": "string"
+                  },
+                  "confirmPassword": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Password reset successful"
+          }
+        }
+      }
+    },
+    "/auth/sessions": {
+      "get": {
+        "tags": [
+          "Authentication"
+        ],
+        "summary": "List all active sessions for the user",
+        "responses": {
+          "200": {
+            "description": "Sessions listed"
+          }
+        }
+      }
+    },
+    "/auth/sessions/{sessionId}": {
+      "delete": {
+        "tags": [
+          "Authentication"
+        ],
+        "summary": "Revoke a specific session",
+        "parameters": [
+          {
+            "name": "sessionId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Session revoked"
+          }
+        }
+      }
+    },
+    "/auth/mfa/setup": {
+      "post": {
+        "tags": [
+          "Authentication"
+        ],
+        "summary": "Initiate MFA TOTP setup",
+        "responses": {
+          "200": {
+            "description": "MFA setup initialized"
+          }
+        }
+      }
+    },
+    "/auth/mfa/status": {
+      "get": {
+        "tags": [
+          "Authentication"
+        ],
+        "summary": "Check current MFA status",
+        "responses": {
+          "200": {
+            "description": "MFA status returned"
+          }
+        }
+      }
+    },
+    "/auth/security": {
+      "get": {
+        "tags": [
+          "Authentication"
+        ],
+        "summary": "Get Security Center metrics & active devices",
+        "responses": {
+          "200": {
+            "description": "Security summary loaded"
+          }
+        }
+      }
+    },
+    "/users": {
+      "get": {
+        "tags": [
+          "Users & Employees"
+        ],
+        "summary": "List all user accounts within tenant",
+        "responses": {
+          "200": {
+            "description": "Users list loaded"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Users & Employees"
+        ],
+        "summary": "Create a new employee user account",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateUserRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "User created successfully"
+          }
+        }
+      }
+    },
+    "/users/{userId}": {
+      "get": {
+        "tags": [
+          "Users & Employees"
+        ],
+        "summary": "Get single user details",
+        "parameters": [
+          {
+            "name": "userId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "User loaded"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Users & Employees"
+        ],
+        "summary": "Update user profile details",
+        "parameters": [
+          {
+            "name": "userId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "User updated"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Users & Employees"
+        ],
+        "summary": "Delete user account",
+        "parameters": [
+          {
+            "name": "userId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "User deleted"
+          }
+        }
+      }
+    },
+    "/users/invite": {
+      "post": {
+        "tags": [
+          "Users & Employees"
+        ],
+        "summary": "Send invitation email to a new user",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "email": {
+                    "type": "string"
+                  },
+                  "role": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Invitation sent"
+          }
+        }
+      }
+    },
+    "/users/{userId}/status": {
+      "patch": {
+        "tags": [
+          "Users & Employees"
+        ],
+        "summary": "Update user status (active/suspended/inactive)",
+        "parameters": [
+          {
+            "name": "userId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "example": "suspended"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "User status updated"
+          }
+        }
+      }
+    },
+    "/users/{userId}/role": {
+      "patch": {
+        "tags": [
+          "Users & Employees"
+        ],
+        "summary": "Update assigned role for user",
+        "parameters": [
+          {
+            "name": "userId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "role": {
+                    "type": "string",
+                    "example": "Manager"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Role assigned"
+          }
+        }
+      }
+    },
+    "/customers": {
+      "get": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "List all customer profiles",
+        "responses": {
+          "200": {
+            "description": "Customers list loaded"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Create a new customer profile",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateCustomerRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Customer created"
+          }
+        }
+      }
+    },
+    "/customers/search": {
+      "get": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Search customers by name, email, or phone",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "example": "Alice"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Search results returned"
+          }
+        }
+      }
+    },
+    "/customers/{customerId}": {
+      "get": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Get customer profile by ID",
+        "parameters": [
+          {
+            "name": "customerId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Customer profile loaded"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Update customer profile",
+        "parameters": [
+          {
+            "name": "customerId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Customer updated"
+          }
+        }
+      }
+    },
+    "/customers/{customerId}/emergency-contacts": {
+      "get": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Get customer emergency contacts",
+        "parameters": [
+          {
+            "name": "customerId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Emergency contacts loaded"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Add customer emergency contact",
+        "parameters": [
+          {
+            "name": "customerId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Contact added"
+          }
+        }
+      }
+    },
+    "/customers/{customerId}/passports": {
+      "get": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Get customer passport details",
+        "parameters": [
+          {
+            "name": "customerId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Passports loaded"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Add new passport details",
+        "parameters": [
+          {
+            "name": "customerId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Passport added"
+          }
+        }
+      }
+    },
+    "/bookings": {
+      "get": {
+        "tags": [
+          "Bookings"
+        ],
+        "summary": "List all booking headers",
+        "responses": {
+          "200": {
+            "description": "Bookings list loaded"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Bookings"
+        ],
+        "summary": "Create a new booking header",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateBookingRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Booking created"
+          }
+        }
+      }
+    },
+    "/bookings/search": {
+      "get": {
+        "tags": [
+          "Bookings"
+        ],
+        "summary": "Search bookings by reference, customer or type",
+        "responses": {
+          "200": {
+            "description": "Search results returned"
+          }
+        }
+      }
+    },
+    "/bookings/{bookingId}": {
+      "get": {
+        "tags": [
+          "Bookings"
+        ],
+        "summary": "Get booking details by ID",
+        "parameters": [
+          {
+            "name": "bookingId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Booking details loaded"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Bookings"
+        ],
+        "summary": "Update booking header",
+        "parameters": [
+          {
+            "name": "bookingId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Booking updated"
+          }
+        }
+      }
+    },
+    "/bookings/{bookingId}/confirm": {
+      "post": {
+        "tags": [
+          "Bookings"
+        ],
+        "summary": "Confirm booking",
+        "parameters": [
+          {
+            "name": "bookingId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Booking confirmed"
+          }
+        }
+      }
+    },
+    "/bookings/{bookingId}/cancel": {
+      "post": {
+        "tags": [
+          "Bookings"
+        ],
+        "summary": "Cancel booking",
+        "parameters": [
+          {
+            "name": "bookingId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Booking cancelled"
+          }
+        }
+      }
+    },
+    "/bookings/{bookingId}/travelers": {
+      "get": {
+        "tags": [
+          "Bookings"
+        ],
+        "summary": "List travelers associated with booking",
+        "parameters": [
+          {
+            "name": "bookingId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Travelers loaded"
+          }
+        }
+      }
+    },
+    "/bookings/{bookingId}/financial-summary": {
+      "get": {
+        "tags": [
+          "Bookings"
+        ],
+        "summary": "Get financial breakdown for booking",
+        "parameters": [
+          {
+            "name": "bookingId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Financial summary loaded"
+          }
+        }
+      }
+    },
+    "/travel-plans": {
+      "get": {
+        "tags": [
+          "Travel Plans"
+        ],
+        "summary": "List all travel itineraries",
+        "responses": {
+          "200": {
+            "description": "Travel plans loaded"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Travel Plans"
+        ],
+        "summary": "Create a new travel plan",
+        "responses": {
+          "201": {
+            "description": "Travel plan created"
+          }
+        }
+      }
+    },
+    "/visa/cases": {
+      "get": {
+        "tags": [
+          "Visa Processing Engine"
+        ],
+        "summary": "List visa processing cases",
+        "responses": {
+          "200": {
+            "description": "Visa cases loaded"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Visa Processing Engine"
+        ],
+        "summary": "Create a new visa application case",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateVisaCaseRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Visa case created"
+          }
+        }
+      }
+    },
+    "/visa/cases/{visaCaseId}": {
+      "get": {
+        "tags": [
+          "Visa Processing Engine"
+        ],
+        "summary": "Get visa case by ID",
+        "parameters": [
+          {
+            "name": "visaCaseId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Visa case details loaded"
+          }
+        }
+      }
+    },
+    "/visa/cases/{visaCaseId}/transition": {
+      "post": {
+        "tags": [
+          "Visa Processing Engine"
+        ],
+        "summary": "Execute workflow state machine transition for visa case",
+        "parameters": [
+          {
+            "name": "visaCaseId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "transition": {
+                    "type": "string",
+                    "example": "submit"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Workflow state transitioned"
+          }
+        }
+      }
+    },
+    "/visa-types": {
+      "get": {
+        "tags": [
+          "Visa Processing Engine"
+        ],
+        "summary": "Catalog of supported visa types (Public)",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Visa types returned"
+          }
+        }
+      }
+    },
+    "/countries/{countryId}/visa-requirements": {
+      "get": {
+        "tags": [
+          "Visa Processing Engine"
+        ],
+        "summary": "Get country visa requirement rules (Public)",
+        "security": [],
+        "parameters": [
+          {
+            "name": "countryId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "GB"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Requirements loaded"
+          }
+        }
+      }
+    },
+    "/dashboard": {
+      "get": {
+        "tags": [
+          "Visa Processing Engine"
+        ],
+        "summary": "Get Visa Processing Dashboard Metrics & KPIs",
+        "responses": {
+          "200": {
+            "description": "Dashboard data loaded"
+          }
+        }
+      }
+    },
+    "/flight-search/search": {
+      "post": {
+        "tags": [
+          "Flight & Hotel Distribution"
+        ],
+        "summary": "Search flight offers via GDS provider",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FlightSearchRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Flight offers returned"
+          }
+        }
+      }
+    },
+    "/flight-bookings/create": {
+      "post": {
+        "tags": [
+          "Flight & Hotel Distribution"
+        ],
+        "summary": "Create flight booking and generate PNR",
+        "responses": {
+          "201": {
+            "description": "Flight booking created"
+          }
+        }
+      }
+    },
+    "/hotel-offers": {
+      "get": {
+        "tags": [
+          "Flight & Hotel Distribution"
+        ],
+        "summary": "Search hotel distribution offers",
+        "responses": {
+          "200": {
+            "description": "Hotel offers loaded"
+          }
+        }
+      }
+    },
+    "/hotel-bookings": {
+      "post": {
+        "tags": [
+          "Flight & Hotel Distribution"
+        ],
+        "summary": "Book hotel offer",
+        "responses": {
+          "201": {
+            "description": "Hotel booking confirmed"
+          }
+        }
+      }
+    },
+    "/ai/chat": {
+      "post": {
+        "tags": [
+          "AI Travel Assistant"
+        ],
+        "summary": "Conversational AI Travel Assistant interface",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AIChatRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "AI Assistant response"
+          }
+        }
+      }
+    },
+    "/ai/orchestrate": {
+      "post": {
+        "tags": [
+          "AI Travel Assistant"
+        ],
+        "summary": "AI Tool Execution & Multi-Step Orchestrator",
+        "responses": {
+          "200": {
+            "description": "Orchestration completed"
+          }
+        }
+      }
+    },
+    "/incidents": {
+      "get": {
+        "tags": [
+          "Incidents & SLA"
+        ],
+        "summary": "List enterprise incidents & SLA alerts",
+        "responses": {
+          "200": {
+            "description": "Incidents loaded"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Incidents & SLA"
+        ],
+        "summary": "Report new enterprise incident",
+        "responses": {
+          "201": {
+            "description": "Incident recorded"
+          }
+        }
+      }
+    },
+    "/incidents/{incidentId}/escalate": {
+      "patch": {
+        "tags": [
+          "Incidents & SLA"
+        ],
+        "summary": "Escalate incident severity / level",
+        "parameters": [
+          {
+            "name": "incidentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Incident escalated"
+          }
+        }
+      }
+    },
+    "/search": {
+      "post": {
+        "tags": [
+          "Enterprise Search"
+        ],
+        "summary": "Execute cross-module enterprise search query",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "query": {
+                    "type": "string",
+                    "example": "Alice"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Search results returned"
+          }
+        }
+      }
+    },
+    "/reference/airports": {
+      "get": {
+        "tags": [
+          "Reference Data"
+        ],
+        "summary": "Get master airports reference list",
+        "responses": {
+          "200": {
+            "description": "Airports reference list"
+          }
+        }
+      }
+    },
+    "/reference/currencies": {
+      "get": {
+        "tags": [
+          "Reference Data"
+        ],
+        "summary": "Get supported currencies list",
+        "responses": {
+          "200": {
+            "description": "Currencies reference list"
+          }
+        }
+      }
+    },
+    "/reference/countries": {
+      "get": {
+        "tags": [
+          "Reference Data"
+        ],
+        "summary": "Get countries reference list",
+        "responses": {
+          "200": {
+            "description": "Countries reference list"
+          }
+        }
+      }
+    },
+    "/notes": {
+      "get": {
+        "tags": [
+          "Notes & Audit Timeline"
+        ],
+        "summary": "List system notes",
+        "responses": {
+          "200": {
+            "description": "Notes loaded"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Notes & Audit Timeline"
+        ],
+        "summary": "Create note entry",
+        "responses": {
+          "201": {
+            "description": "Note created"
+          }
+        }
+      }
+    },
+    "/timeline": {
+      "get": {
+        "tags": [
+          "Notes & Audit Timeline"
+        ],
+        "summary": "List audit activity timeline",
+        "responses": {
+          "200": {
+            "description": "Timeline loaded"
+          }
+        }
+      }
+    },
+    "/payments": {
+      "post": {
+        "tags": [
+          "Finance — Payments"
+        ],
+        "summary": "Record a payment against a customer or vendor",
+        "description": "Records a real payment, running it through the configured gateway adapter when `gateway` is a live processor (e.g. `Stripe`) or recording it directly when `gateway` is `Manual`/omitted. Emits `PaymentAuthorized`/`PaymentCaptured`/`PaymentFailed` domain events (Enterprise Event Versioning Standard) and, for any tenant subscribed to them, a signed webhook delivery (Enterprise Webhook Standard). Idempotent when called with an `Idempotency-Key` header (Enterprise Idempotency Standard) — a retried request with the same key returns the original result rather than creating a second payment.\n",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "header",
+            "name": "Idempotency-Key",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Recommended for any client that might retry this call — see the Enterprise Idempotency Standard."
+          },
+          {
+            "in": "header",
+            "name": "Correlation-ID",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Propagated onto every domain event, audit entry, and error response this call produces."
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "amount",
+                  "currency",
+                  "paymentMethod"
+                ],
+                "properties": {
+                  "paymentType": {
+                    "type": "string",
+                    "example": "Customer",
+                    "description": "Config-driven — Customer, Vendor, Employee, Refund, Advance, Deposit."
+                  },
+                  "partyType": {
+                    "type": "string",
+                    "enum": [
+                      "customer",
+                      "vendor"
+                    ]
+                  },
+                  "partyId": {
+                    "type": "string",
+                    "description": "MongoDB ObjectId of the customer/vendor this payment applies to."
+                  },
+                  "amount": {
+                    "type": "number",
+                    "example": 1500,
+                    "description": "Must be greater than 0."
+                  },
+                  "currency": {
+                    "type": "string",
+                    "example": "USD",
+                    "description": "Must be one of this tenant's supported currencies."
+                  },
+                  "paymentMethod": {
+                    "type": "string",
+                    "example": "Credit Card",
+                    "description": "Config-driven — Cash, Bank Transfer, Cheque, Credit Card, Wallet, and more."
+                  },
+                  "gateway": {
+                    "type": "string",
+                    "example": "Stripe",
+                    "description": "Config-driven — Manual, Stripe, PayPal, and more. Omit or 'Manual' for a directly-recorded payment."
+                  },
+                  "gatewayPaymentMethodId": {
+                    "type": "string",
+                    "description": "Real gateway token (e.g. a Stripe PaymentMethod id) — required for a live gateway."
+                  },
+                  "reference": {
+                    "type": "string",
+                    "example": "INV-2026-00042"
+                  },
+                  "transactionDate": {
+                    "type": "string",
+                    "format": "date-time"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Payment recorded/authorized successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/SuccessResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "properties": {
+                            "paymentNumber": {
+                              "type": "string",
+                              "example": "PAY-2026-000123"
+                            },
+                            "status": {
+                              "type": "string",
+                              "example": "Completed"
+                            },
+                            "amount": {
+                              "type": "number",
+                              "example": 1500
+                            },
+                            "currency": {
+                              "type": "string",
+                              "example": "USD"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation failed (missing/invalid amount, currency, or paymentMethod).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "The payment gateway declined the request — a real, terminal business outcome, not a thrown error.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "allOf": [
+                    {
+                      "$ref": "#/components/schemas/SuccessResponse"
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "data": {
+                          "type": "object",
+                          "properties": {
+                            "status": {
+                              "type": "string",
+                              "example": "Failed"
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "No tenant context, or the caller's role lacks the `finance.payment.create` permission.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "x-rate-limit": {
+          "note": "Not yet mounted on this route — see docs/07-enterprise-standards/13-rate-limiting.md Adoption. Once mounted, responses carry the headers below.",
+          "headers": {
+            "X-RateLimit-Limit": {
+              "$ref": "#/components/headers/RateLimitLimit"
+            },
+            "X-RateLimit-Remaining": {
+              "$ref": "#/components/headers/RateLimitRemaining"
+            }
+          }
+        },
+        "x-code-samples": [
+          {
+            "lang": "cURL",
+            "source": "curl -X POST https://api.example.com/api/v1/payments \\\n  -H \"Authorization: Bearer $ACCESS_TOKEN\" \\\n  -H \"Content-Type: application/json\" \\\n  -H \"Idempotency-Key: $(uuidgen)\" \\\n  -d '{\"amount\":1500.00,\"currency\":\"USD\",\"paymentMethod\":\"Credit Card\",\"partyType\":\"customer\",\"partyId\":\"64f1ab29c4e1234567890abc\"}'\n"
+          },
+          {
+            "lang": "JavaScript",
+            "source": "const res = await fetch(\"https://api.example.com/api/v1/payments\", {\n  method: \"POST\",\n  headers: {\n    Authorization: `Bearer ${accessToken}`,\n    \"Content-Type\": \"application/json\",\n    \"Idempotency-Key\": crypto.randomUUID()\n  },\n  body: JSON.stringify({ amount: 1500.00, currency: \"USD\", paymentMethod: \"Credit Card\", partyType: \"customer\", partyId })\n});\nconst { data: payment } = await res.json();\n"
+          }
+        ]
+      }
+    }
+  }
+}

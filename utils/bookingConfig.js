@@ -124,5 +124,9 @@ export const getBookingConfig = () => ({
   serviceTypes: parseStringList(process.env.BOOKING_SERVICE_TYPES_JSON, ['package', 'flight', 'hotel', 'room', 'visa', 'transport', 'insurance', 'guide', 'meals', 'meal_plan', 'ziyarat', 'activity', 'addon', 'other']),
   serviceCategories: parseStringList(process.env.BOOKING_SERVICE_CATEGORIES_JSON, ['transportation', 'accommodation', 'immigration', 'insurance', 'tour', 'food', 'religious', 'entertainment', 'other']),
   serviceWorkflowStatuses: parseStringList(process.env.BOOKING_SERVICE_WORKFLOW_STATUSES_JSON, ['created', 'reserved', 'confirmed', 'in_progress', 'completed', 'cancelled', 'expired', 'failed']),
-  supportedCurrencies: parseStringList(process.env.SUPPORTED_CURRENCIES_JSON, ['usd', 'sar', 'aed', 'eur', 'gbp'])
+  supportedCurrencies: parseStringList(process.env.SUPPORTED_CURRENCIES_JSON, ['usd', 'sar', 'aed', 'eur', 'gbp']),
+  // Structured hotel service details (BookingServiceModel.details when
+  // serviceType==="hotel" — see utils/hotelServiceDetails.js).
+  hotelMealPlans: parseStringList(process.env.HOTEL_MEAL_PLANS_JSON, ['room_only', 'bed_breakfast', 'half_board', 'full_board', 'all_inclusive']),
+  hotelRoomViews: parseStringList(process.env.HOTEL_ROOM_VIEWS_JSON, ['no_view', 'city_view', 'sea_view', 'garden_view', 'mountain_view', 'pool_view', 'haram_view'])
 });

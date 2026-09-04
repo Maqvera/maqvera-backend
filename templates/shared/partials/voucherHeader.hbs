@@ -1,0 +1,28 @@
+<div class="voucher-header">
+  <div class="voucher-header-col">
+    {{#if company.logoUrl}}<img class="logo logo-sm" src="{{company.logoUrl}}" alt="logo">{{/if}}
+    {{#if client.companyName}}<div class="vh-line vh-strong">INVOICE TO: {{client.companyName}}</div>{{/if}}
+    {{#if guest.name}}<div class="vh-line">Guest Name: {{guest.name}}</div>{{/if}}
+    {{#with typeDetails.hotels.[0] as |hotel|}}
+      {{#if hotel.city}}<div class="vh-line">City: {{hotel.city}}</div>{{/if}}
+    {{/with}}
+    {{#if guest.nationality}}<div class="vh-line">Nationality: {{guest.nationality}}</div>{{/if}}
+    {{#if booking.bookingStatus}}<div class="vh-line">Booking Status: {{booking.bookingStatus}}</div>{{/if}}
+  </div>
+  <div class="voucher-header-col">
+    {{#with typeDetails.hotels.[0] as |hotel|}}
+      {{#if hotel.hotelName}}<div class="vh-line">Hotel Name: {{hotel.hotelName}}</div>{{/if}}
+      {{#if hotel.hotelConfirmationNumber}}<div class="vh-line">Hotel CNF#: {{hotel.hotelConfirmationNumber}}</div>{{/if}}
+    {{/with}}
+    {{#if typeDetails.transport}}<div class="vh-line">Transport: {{typeDetails.transport}}</div>{{/if}}
+    {{#if typeDetails.mazarat}}<div class="vh-line">Mazarat: {{typeDetails.mazarat}}</div>{{/if}}
+  </div>
+  <div class="voucher-header-col voucher-header-right">
+    <div class="vh-heading">CLIENT VOUCHER</div>
+    <div class="vh-line">REF# {{voucherNumber}}</div>
+    {{#if company.vatNumber}}<div class="vh-line">VAT No. {{company.vatNumber}}</div>{{/if}}
+    {{#if generatedBy}}<div class="vh-line">Create by {{generatedBy}}</div>{{/if}}
+    {{#if printedBy}}<div class="vh-line">Printed By {{printedBy}}</div>{{/if}}
+    {{#if qrCodeDataUri}}<img class="qr-code qr-code-sm" src="{{qrCodeDataUri}}" alt="QR code">{{/if}}
+  </div>
+</div>

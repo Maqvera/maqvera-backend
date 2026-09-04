@@ -1,6 +1,8 @@
 import CustomerCollectionService from "./CustomerCollectionService.js";
 import { getFinanceConfig } from "../utils/financeConfig.js";
 import logger from "../utils/logger.js";
+import { withDistributedLock } from "../utils/distributedLock.js";
+import { getSchedulerLockConfig } from "../utils/schedulerLockConfig.js";
 
 // Enterprise Customer Payments — Finance Module Part 18. Mirrors
 // services/receivableOverdueScheduler.js's own real node-cron pattern
@@ -47,7 +49,8 @@ class CustomerCollectionScheduler {
     if (expr !== config.customerCollectionOverdueCron) logger.error(`Invalid CUSTOMER_COLLECTION_OVERDUE_CRON_SCHEDULE: "${config.customerCollectionOverdueCron}". Falling back to "0 9 * * *".`);
 
     overdueJob = cronLib.schedule(expr, () => {
-      runCollectionOverdueCheck().catch((err) => logger.error("Cron customer collection overdue error", { error: err.message }));
+      withDistributedLock("scheduler:CustomerCollectionScheduler", getSchedulerLockConfig().defaultLockTtlMs, runCollectionOverdueCheck)
+        .catch((err) => logger.error("Cron customer collection overdue error", { error: err.message }));
     }, { scheduled: true, timezone: process.env.TZ || undefined });
 
     logger.info(`CustomerCollectionScheduler started — schedule: "${expr}".`);

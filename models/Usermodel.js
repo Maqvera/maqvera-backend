@@ -18,6 +18,16 @@ const UserSchema = new mongoose.Schema({
         enum: ["active", "inactive", "suspended", "deleted"],
         default: "active"
     },
+    // Multi-Language System (PRD "CRM Feature Map by Phase" Phase 3 module
+    // 37) — same free-string, "en" default shape as CustomerModel.js's own
+    // preferredLanguage (not a duplicate; CustomerModel is customers,
+    // this is staff). Backend piece only: selects which
+    // CommunicationTemplateModel locale variant a staff-triggered send
+    // resolves to; the frontend owns actual UI string translation.
+    preferredLanguage: {
+        type: String,
+        default: "en"
+    },
     email: {
         type: String,
         required: true,

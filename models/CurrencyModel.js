@@ -34,9 +34,11 @@ const CurrencySchema = new mongoose.Schema({
   // one may be true at a time; CurrencyService.createCurrency/setBaseCurrency
   // unset any prior holder before setting a new one.
   isBaseCurrency: { type: Boolean, default: false, index: true },
-  // "Reporting Currency" (File 4 Part 2) — the one currency consolidated
-  // reports are expressed in when it differs from the Base/Functional
-  // currency. Same at-most-one-per-tenant discipline as isBaseCurrency.
+  // "Reporting Currency" (File 4 Part 2) — a currency consolidated reports
+  // could be expressed in when it differs from the Base/Functional
+  // currency. Unlike isBaseCurrency, this is NOT at-most-one-per-tenant —
+  // "Multiple reporting currencies are supported simultaneously" (File 7
+  // Part 4); `createCurrency` never unsets a prior holder for this flag.
   isReportingCurrency: { type: Boolean, default: false, index: true },
   // Config-driven (currencyStatuses) — Draft, Pending Approval, Approved,
   // Active, Suspended, Archived, Deprecated. See utils/financeConfig.js's
@@ -59,7 +61,17 @@ const CurrencySchema = new mongoose.Schema({
   }],
   createdBy: { type: String, default: null },
   updatedBy: { type: String, default: null }
-}, { timestamps: true });
+}, {
+  timestamps: true,
+  // "Support optimistic locking." (File 7 Part 5) — real: every
+  // CurrencyService method that mutates this model follows the same
+  // findOne-then-mutate-then-.save() shape (never findOneAndUpdate), so
+  // Mongoose's own version-check-on-save now genuinely throws on a
+  // concurrent stale write. Uses the schema's own hidden `__v` — distinct
+  // from this model's own application-level `version` counter above,
+  // which is a separate, real transition-count field, not touched by this.
+  optimisticConcurrency: true
+});
 
 CurrencySchema.index({ tenantId: 1, currencyCode: 1 }, { unique: true });
 CurrencySchema.index({ tenantId: 1, status: 1 });

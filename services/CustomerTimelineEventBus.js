@@ -5,12 +5,15 @@ import { recordTimeline } from "../controllers/CustomerController.js";
 // Cross-module timeline aggregation ("The timeline aggregates events from
 // multiple modules", Part 5). Booking is currently the only other module
 // with a real customerId FK (BookingHeaderModel.customerId), so its events
-// need a lookup (payload only carries bookingId). Visa (links via
-// travelerId, not customerId) and Communication (Email/WhatsApp/SMS) still
-// have no real join key back to Customer, so they remain out. Finance's
-// Accounts Receivable module (docs/05-api/07-finance-api.md Part 5) is the
-// first Finance event source wired here — it was previously excluded for
-// the same "no real customerId FK" reason, but AccountsReceivableModel now
+// need a lookup (payload only carries bookingId) — Per-Tenant Payment
+// Gateway Integration's own `PaymentSucceeded`/`PaymentRefunded` events
+// (published by `services/BookingPaymentService.js`) join the same way,
+// via the booking they were applied to. Visa (links via travelerId, not
+// customerId) and Communication (Email/WhatsApp/SMS) still have no real
+// join key back to Customer, so they remain out. Finance's Accounts
+// Receivable module (docs/05-api/07-finance-api.md Part 5) is the first
+// Finance event source wired here — it was previously excluded for the
+// same "no real customerId FK" reason, but AccountsReceivableModel now
 // has one, and its events already carry customerId directly (no lookup
 // needed, unlike Booking's).
 const EVENT_DEFINITIONS = {
@@ -19,7 +22,15 @@ const EVENT_DEFINITIONS = {
   BookingCancelled: (payload) => ({ eventType: "booking_cancelled", description: `Booking ${payload.bookingId} cancelled${payload.reason ? `: ${payload.reason}` : ""}` }),
   BookingStatusChanged: (payload) => ({ eventType: "booking_status_changed", description: `Booking ${payload.bookingId} status changed to ${payload.newStatus || "unknown"}` }),
   BookingArchived: (payload) => ({ eventType: "booking_archived", description: `Booking ${payload.bookingId} archived` }),
-  BookingRescheduled: (payload) => ({ eventType: "booking_rescheduled", description: `Booking ${payload.bookingId} rescheduled` })
+  BookingRescheduled: (payload) => ({ eventType: "booking_rescheduled", description: `Booking ${payload.bookingId} rescheduled` }),
+  // Per-Tenant Payment Gateway Integration — real join key via
+  // `payload.bookingId -> BookingHeaderModel.customerId`, the exact same
+  // Booking-style lookup every event above already uses (unlike Finance's
+  // own AR events below, `BookingPaymentService`'s `PaymentSucceeded`/
+  // `PaymentRefunded` payloads carry `bookingId`, not `customerId`
+  // directly).
+  PaymentSucceeded: (payload) => ({ eventType: "payment_succeeded", description: `Payment of ${payload.amountPaid} ${payload.currency || ""} received for booking ${payload.bookingId}`.trim() }),
+  PaymentRefunded: (payload) => ({ eventType: "payment_refunded", description: `Refund of ${payload.refundAmount} issued for booking ${payload.bookingId}` })
 };
 
 // Finance/AR events — payload already carries customerId, so these are

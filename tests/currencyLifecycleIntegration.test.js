@@ -81,13 +81,23 @@ test("CurrencyService: gated Currency lifecycle when CURRENCY_APPROVAL_REQUIRED 
 });
 
 test("CurrencyService: exchange rate versioning, auto-supersede, and approval gating", { skip: !dbAvailable && dbSkipReason }, async (t) => {
+  const CurrencyModel = (await import("../models/CurrencyModel.js")).default;
   const ExchangeRateModel = (await import("../models/ExchangeRateModel.js")).default;
   const CurrencyService = (await import("../services/CurrencyService.js")).default;
 
   const suffix = `rate-${Date.now()}`;
   const tenantId = `test-${suffix}`;
 
-  t.after(async () => { await ExchangeRateModel.deleteMany({ tenantId }); });
+  t.after(async () => {
+    await ExchangeRateModel.deleteMany({ tenantId });
+    await CurrencyModel.deleteMany({ tenantId });
+  });
+
+  // File 7 Part 2 — createExchangeRate now requires both currencies to be
+  // real, registered CurrencyModel rows for the tenant first.
+  await CurrencyService.createCurrency({ currencyCode: "USD", baseCurrency: true }, tenantId, "tester");
+  await CurrencyService.createCurrency({ currencyCode: "PKR" }, tenantId, "tester");
+  await CurrencyService.createCurrency({ currencyCode: "AED" }, tenantId, "tester");
 
   const first = await CurrencyService.createExchangeRate({ fromCurrency: "USD", toCurrency: "PKR", rate: 280, effectiveDate: "2027-01-01" }, tenantId, "tester");
   assert.equal(first.version, 1);
@@ -110,9 +120,25 @@ test("CurrencyService: exchange rate versioning, auto-supersede, and approval ga
     CurrencyService.createExchangeRate({ fromCurrency: "USD", toCurrency: "AED", rate: 3.67, effectiveDate: "2027-01-01", expiresAt: "2026-12-31" }, tenantId, "tester"),
     /expiresAt must be after effectiveDate/
   );
+
+  // File 7 Part 2 — "Source Currency Exists"/"Target Currency Exists".
+  await assert.rejects(
+    CurrencyService.createExchangeRate({ fromCurrency: "USD", toCurrency: "JPY", rate: 150, effectiveDate: "2027-01-01" }, tenantId, "tester"),
+    /Target currency "JPY" is not registered/
+  );
+
+  // File 7 Part 2 — GET /exchange-rates/{rateId}: Historical Versions +
+  // Approval History + Usage Statistics.
+  const detail = await CurrencyService.getExchangeRateById(second._id, tenantId);
+  assert.equal(detail.historicalVersions.length, 2);
+  assert.equal(detail.historicalVersions[0].version, 1);
+  assert.equal(detail.historicalVersions[1].version, 2);
+  assert.ok(detail.approvalHistory.length >= 1);
+  assert.deepEqual(detail.usageStatistics, { usageCount: 0, totalConvertedAmount: 0, lastUsedAt: null });
 });
 
 test("CurrencyService: approval-gated exchange rate never resolves for conversion until approved", { skip: !dbAvailable && dbSkipReason }, async (t) => {
+  const CurrencyModel = (await import("../models/CurrencyModel.js")).default;
   const ExchangeRateModel = (await import("../models/ExchangeRateModel.js")).default;
   const CurrencyService = (await import("../services/CurrencyService.js")).default;
 
@@ -123,8 +149,12 @@ test("CurrencyService: approval-gated exchange rate never resolves for conversio
 
   t.after(async () => {
     await ExchangeRateModel.deleteMany({ tenantId });
+    await CurrencyModel.deleteMany({ tenantId });
     if (original === undefined) delete process.env.EXCHANGE_RATE_APPROVAL_REQUIRED; else process.env.EXCHANGE_RATE_APPROVAL_REQUIRED = original;
   });
+
+  await CurrencyService.createCurrency({ currencyCode: "USD", baseCurrency: true }, tenantId, "tester");
+  await CurrencyService.createCurrency({ currencyCode: "SAR" }, tenantId, "tester");
 
   const rate = await CurrencyService.createExchangeRate({ fromCurrency: "USD", toCurrency: "SAR", rate: 3.75, effectiveDate: "2027-01-01" }, tenantId, "tester");
   assert.equal(rate.approvalStatus, "Pending Approval");
@@ -156,6 +186,84 @@ test("CurrencyService: provider priority breaks ties on the exact same effective
   const resolved = await CurrencyService.getRate(tenantId, "EUR", "USD", { asOfDate: "2027-04-02" });
   // CentralBank is earlier than OpenExchangeAPI in the default rateProviderPriority.
   assert.equal(resolved.rate, 1.12);
+});
+
+test("CurrencyService.convert: an identified source always persists a real CurrencyConversionModel historical snapshot (File 7 Part 3)", { skip: !dbAvailable && dbSkipReason }, async (t) => {
+  const CurrencyModel = (await import("../models/CurrencyModel.js")).default;
+  const ExchangeRateModel = (await import("../models/ExchangeRateModel.js")).default;
+  const CurrencyConversionModel = (await import("../models/CurrencyConversionModel.js")).default;
+  const CurrencyService = (await import("../services/CurrencyService.js")).default;
+
+  const suffix = `apiconv-${Date.now()}`;
+  const tenantId = `test-${suffix}`;
+
+  t.after(async () => {
+    await CurrencyModel.deleteMany({ tenantId });
+    await ExchangeRateModel.deleteMany({ tenantId });
+    await CurrencyConversionModel.deleteMany({ tenantId });
+  });
+
+  await CurrencyService.createCurrency({ currencyCode: "USD", baseCurrency: true }, tenantId, "tester");
+  await CurrencyService.createCurrency({ currencyCode: "PKR" }, tenantId, "tester");
+  await CurrencyService.createExchangeRate({ fromCurrency: "USD", toCurrency: "PKR", rate: 280, effectiveDate: "2027-01-01" }, tenantId, "tester");
+
+  const result = await CurrencyService.convert(350, "USD", "PKR", tenantId, { asOfDate: "2027-05-10", rateType: "Spot", source: "Custom" });
+  assert.equal(result.convertedAmount, 98000);
+  assert.equal(result.rate, 280);
+  assert.ok(result.conversionId, "expected a real CurrencyConversionModel snapshot id");
+
+  const snapshot = await CurrencyConversionModel.findById(result.conversionId).lean();
+  assert.equal(snapshot.originalAmount, 350);
+  assert.equal(snapshot.convertedAmount, 98000);
+  assert.equal(snapshot.conversionSource, "Custom");
+});
+
+test("CurrencyService.runPeriodEndRevaluation: CashLocation and TreasuryDebt are real revaluation targets (File 7 Part 3)", { skip: !dbAvailable && dbSkipReason }, async (t) => {
+  const CurrencyModel = (await import("../models/CurrencyModel.js")).default;
+  const ExchangeRateModel = (await import("../models/ExchangeRateModel.js")).default;
+  const CurrencyRevaluationModel = (await import("../models/CurrencyRevaluationModel.js")).default;
+  const CashLocationModel = (await import("../models/CashLocationModel.js")).default;
+  const TreasuryDebtModel = (await import("../models/TreasuryDebtModel.js")).default;
+  const CurrencyService = (await import("../services/CurrencyService.js")).default;
+
+  const suffix = `reval-${Date.now()}`;
+  const tenantId = `test-${suffix}`;
+
+  t.after(async () => {
+    await CurrencyModel.deleteMany({ tenantId });
+    await ExchangeRateModel.deleteMany({ tenantId });
+    await CurrencyRevaluationModel.deleteMany({ tenantId });
+    await CashLocationModel.deleteMany({ tenantId });
+    await TreasuryDebtModel.deleteMany({ tenantId });
+  });
+
+  await CurrencyService.createCurrency({ currencyCode: "USD", baseCurrency: true }, tenantId, "tester");
+  await CurrencyService.createCurrency({ currencyCode: "EUR" }, tenantId, "tester");
+  // effectiveDate must be on/before both the record's real (test-run-time)
+  // bookingDate AND the revaluationDate below — a future-dated rate is
+  // never resolved for a past `asOfDate` lookup.
+  await CurrencyService.createExchangeRate({ fromCurrency: "EUR", toCurrency: "USD", rate: 1.1, effectiveDate: "2020-01-01" }, tenantId, "tester");
+
+  await CashLocationModel.create({ tenantId, cashLocationCode: `CASH-${suffix}`, name: "EUR Petty Cash", type: "Petty Cash", currency: "EUR", balance: 1000, status: "Opened" });
+  await TreasuryDebtModel.create({
+    tenantId, debtId: `DEBT-${suffix}`, facilityName: "EUR Term Loan", debtType: "TermLoan", lender: "Test Bank",
+    currency: "EUR", principalAmount: 5000, outstandingBalance: 5000, interestRate: 5, startDate: new Date("2027-01-01"), maturityDate: new Date("2030-01-01")
+  });
+
+  // File 7 Part 5 — "RevaluationCompleted" real per-run summary event.
+  const { subscribeEvent } = await import("../utils/eventBus.js");
+  let completedPayload = null;
+  subscribeEvent("RevaluationCompleted", (payload) => { if (payload.tenantId === tenantId) completedPayload = payload; });
+
+  const result = await CurrencyService.runPeriodEndRevaluation(tenantId, "tester", new Date("2027-06-01"));
+  const targetTypes = result.results.map((d) => d.targetType);
+  assert.ok(targetTypes.includes("CashLocation"), "expected CashLocation to be a real revaluation target");
+  assert.ok(targetTypes.includes("TreasuryDebt"), "expected TreasuryDebt to be a real revaluation target");
+
+  await new Promise((resolve) => setTimeout(resolve, 20)); // publishEvent dispatches via queueMicrotask.
+  assert.ok(completedPayload, "expected a real RevaluationCompleted event");
+  assert.equal(completedPayload.revalued, result.revalued);
+  assert.equal(completedPayload.totalGain, result.totalGain);
 });
 
 after(async () => {

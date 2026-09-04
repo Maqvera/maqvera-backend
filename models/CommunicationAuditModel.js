@@ -52,7 +52,21 @@ const CommunicationAuditSchema = new mongoose.Schema({
     type: Date,
     default: Date.now,
     index: true
-  }
+  },
+  // Part 15 fix — same Enterprise Data Retention & Legal Hold Standard
+  // fields every other archivable record in this codebase carries
+  // (mirrors Finance's own AuditEventModel, already wired to
+  // auditRetentionScheduler.js's identical lifecycle).
+  isArchived: { type: Boolean, default: false, index: true },
+  archivedAt: { type: Date, default: null },
+  archivedBy: { type: String, default: null },
+  archiveReason: { type: String, default: null },
+  purgeEligibleAt: { type: Date, default: null, index: true },
+  retentionPolicy: { type: String, default: null },
+  restoredAt: { type: Date, default: null },
+  restoredBy: { type: String, default: null },
+  legalHold: { type: Boolean, default: false, index: true },
+  legalHoldReason: { type: String, default: null }
 }, { timestamps: true });
 
 CommunicationAuditSchema.index({ tenantId: 1, messageId: 1, createdAt: -1 });

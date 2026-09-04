@@ -1,5 +1,6 @@
 import express from "express";
 import authenticateAccessToken from "../middleware/authenticateAccessToken.js";
+import { requireFeature, subscriptionResponseHeaders } from "../middleware/subscriptionEnforcement.js";
 import validate, { customerSchemas } from "../middleware/validateRequest.js";
 import rateLimit from "express-rate-limit";
 import {
@@ -46,7 +47,11 @@ import {
   DeleteCustomerAddress,
   GetCustomerPreferences,
   UpdateCustomerPreferences,
-  GetCustomerStatistics
+  GetCustomerStatistics,
+  GetCustomerBookings,
+  GetCustomerAccountStatement,
+  GetCustomerAccountStatementPdf,
+  GetCustomerRecommendations
 } from "../controllers/CustomerController.js";
 
 const router = express.Router();
@@ -59,6 +64,11 @@ const limiter = rateLimit({
 });
 
 router.use(authenticateAccessToken);
+// Enterprise Subscription Platform — "Refactor Pattern 1... CRM Enabled?
+// YES -> Continue." See routes/FinanceRoutes.js's own doc comment for
+// the full reasoning; Customer is this codebase's real CRM-domain module.
+router.use(requireFeature("crm"));
+router.use(subscriptionResponseHeaders);
 
 // Fast search & merge operations
 router.get("/search", limiter, SearchCustomers);
@@ -68,6 +78,7 @@ router.post("/merge", limiter, validate(customerSchemas.customerMerge), MergeCus
 router.get("/", limiter, ListCustomers);
 router.post("/", limiter, validate(customerSchemas.createCustomer), CreateCustomer);
 router.get("/:customerId", limiter, GetCustomer);
+router.get("/:customerId/recommendations", limiter, GetCustomerRecommendations);
 router.patch("/:customerId", limiter, validate(customerSchemas.updateCustomer), UpdateCustomer);
 router.post("/:customerId/archive", limiter, ArchiveCustomer);
 
@@ -121,5 +132,8 @@ router.get("/:customerId/preferences", limiter, GetCustomerPreferences);
 router.patch("/:customerId/preferences", limiter, validate(customerSchemas.customerPreferences), UpdateCustomerPreferences);
 
 router.get("/:customerId/statistics", limiter, GetCustomerStatistics);
+router.get("/:customerId/bookings", limiter, GetCustomerBookings);
+router.get("/:customerId/account-statement", limiter, GetCustomerAccountStatement);
+router.get("/:customerId/account-statement/pdf", limiter, GetCustomerAccountStatementPdf);
 
 export default router;

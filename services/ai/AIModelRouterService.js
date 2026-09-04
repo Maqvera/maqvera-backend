@@ -6,6 +6,7 @@ import AIRequestMetricModel from "../../models/AIRequestMetricModel.js";
 import OpenAIAdapter from "./OpenAIAdapter.js";
 import AnthropicAdapter from "./AnthropicAdapter.js";
 import AzureOpenAIAdapter from "./AzureOpenAIAdapter.js";
+import GeminiAdapter from "./GeminiAdapter.js";
 import OpenAICompatibleAdapter from "./OpenAICompatibleAdapter.js";
 import { getAIConfig } from "../../utils/aiConfig.js";
 import { getAIModelConfig } from "../../utils/aiModelConfig.js";
@@ -57,6 +58,7 @@ class AIModelRouterService {
     if (providerName === "OpenAI") adapter = new OpenAIAdapter();
     else if (providerName === "Anthropic") adapter = new AnthropicAdapter();
     else if (providerName === "AzureOpenAI") adapter = new AzureOpenAIAdapter();
+    else if (providerName === "Gemini") adapter = new GeminiAdapter();
     else adapter = new OpenAICompatibleAdapter({ providerName, apiKey: providerConfig.apiKey, baseUrl: providerConfig.baseUrl, model: providerConfig.model });
 
     this._adapterCache[providerName] = adapter;

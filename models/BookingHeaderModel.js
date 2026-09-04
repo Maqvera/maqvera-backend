@@ -6,15 +6,17 @@ const BookingHeaderSchema = new mongoose.Schema({
     required: true,
     index: true
   },
+  // Immutable once assigned — generated server-side via NumberGeneratorService,
+  // never caller-supplied (mirrors InvoiceModel.js's invoiceNumber pattern).
   bookingReference: {
     type: String,
     required: true,
-    unique: true,
-    index: true
+    immutable: true
   },
   bookingNumber: {
     type: String,
-    index: true
+    index: true,
+    immutable: true
   },
   customerId: {
     type: mongoose.Schema.Types.ObjectId,
@@ -75,6 +77,16 @@ const BookingHeaderSchema = new mongoose.Schema({
     type: String,
     default: null
   },
+  // B2B Agent Portal (PRD "CRM Feature Map by Phase" Phase 2 module 14) —
+  // the external selling Agent (models/AgentModel.js) who gets commission
+  // credit for this booking, deliberately distinct from assignedTo/
+  // assignedConsultant above (internal tenant staff). null for any booking
+  // not sold through an agent.
+  agentUserId: {
+    type: String,
+    default: null,
+    index: true
+  },
   travelDate: {
     type: Date,
     default: null,
@@ -118,11 +130,27 @@ const BookingHeaderSchema = new mongoose.Schema({
     outstandingBalance: { type: Number, default: 0 },
     refundAmount: { type: Number, default: 0 },
     currency: { type: String, default: "USD" },
+    // Multi-currency balance entry — see multi-currency-booking-and-statement-
+    // requirements.md §2.4a. Populated only when the booking was created/updated
+    // with an explicit convertedCurrency; null otherwise (fully backward
+    // compatible with every booking created before this field existed).
+    convertedAmount: { type: Number, default: null },
+    convertedCurrency: { type: String, default: null },
+    conversionRate: { type: Number, default: null },
+    conversionRateId: { type: mongoose.Schema.Types.ObjectId, ref: "exchange_rate", default: null },
+    conversionAsOf: { type: Date, default: null },
     paymentStatus: { type: String, default: "unpaid" },
-    lastCalculatedAt: { type: Date, default: Date.now }
+    lastCalculatedAt: { type: Date, default: Date.now },
+    // Set by BookingFinanceLinkService once a real Finance-module Invoice
+    // has been issued for this booking (see that service's doc comment) —
+    // null for bookings created before that link existed, or for a $0
+    // booking that never had anything to bill.
+    invoiceId: { type: mongoose.Schema.Types.ObjectId, ref: "invoice", default: null },
+    invoiceNumber: { type: String, default: null }
   }
 }, { timestamps: true });
 
+BookingHeaderSchema.index({ tenantId: 1, bookingReference: 1 }, { unique: true });
 BookingHeaderSchema.index({ tenantId: 1, status: 1 });
 BookingHeaderSchema.index({ customerId: 1, tenantId: 1 });
 BookingHeaderSchema.index({ tenantId: 1, travelDate: 1 });
