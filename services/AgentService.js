@@ -60,6 +60,108 @@ class AgentService {
     return agent.toJSON();
   }
 
+  static async getAgentById(agentId, tenantId) {
+    const agent = await AgentModel.findOne({ _id: agentId, tenantId }).lean();
+    if (!agent) throw new Error("Agent not found.");
+
+    const [wallet, recentBookings, bookingStats] = await Promise.all([
+      AgentWalletModel.findOne({ tenantId, agentId }).lean(),
+      BookingHeaderModel.find({ tenantId, agentUserId: agentId }).sort({ createdAt: -1 }).limit(10)
+        .select("bookingReference customerName packageId status totalAmount currency travelDate createdAt").lean(),
+      BookingHeaderModel.aggregate([
+        { $match: { tenantId, agentUserId: agentId } },
+        { $group: { _id: null, totalBookings: { $sum: 1 }, totalRevenue: { $sum: { $ifNull: ["$totalAmount", 0] } } } }
+      ])
+    ]);
+
+    const stats = bookingStats[0] || { totalBookings: 0, totalRevenue: 0 };
+    return {
+      ...agent,
+      wallet,
+      recentBookings,
+      stats
+    };
+  }
+
+  static async updateAgent(agentId, tenantId, data, userId) {
+    const agent = await AgentModel.findOne({ _id: agentId, tenantId });
+    if (!agent) throw new Error("Agent not found.");
+
+    const { name, phone, creditLimit, status, parentAgentId } = data;
+    if (name !== undefined) agent.name = name;
+    if (phone !== undefined) agent.phone = phone;
+    if (creditLimit !== undefined) agent.creditLimit = roundCurrency(creditLimit);
+    if (status !== undefined) {
+      if (!["Active", "Suspended"].includes(status)) throw new Error("Invalid status. Must be Active or Suspended.");
+      agent.status = status;
+    }
+    if (parentAgentId !== undefined) {
+      if (parentAgentId) {
+        const parent = await AgentModel.findOne({ _id: parentAgentId, tenantId });
+        if (!parent) throw new Error("parentAgentId does not refer to an agent on this tenant.");
+        if (parent._id.toString() === agentId) throw new Error("An agent cannot be its own parent.");
+        agent.parentAgentId = parentAgentId;
+      } else {
+        agent.parentAgentId = null;
+      }
+    }
+
+    agent.updatedBy = userId || null;
+    await agent.save();
+
+    await AuditLogModel.create({
+      action: "agent.update", module: "Agent", resource: "Agent", resourceId: agent._id.toString(),
+      userId: userId || null, tenantId, details: data
+    });
+    publishEvent("AgentUpdated", { tenantId, agentId: agent._id.toString(), performedBy: userId || null });
+
+    return agent.toJSON();
+  }
+
+  static async adjustWalletBalance(agentId, tenantId, { amount, direction = "Credit", type = "Adjustment", description }, userId) {
+    const agent = await AgentModel.findOne({ _id: agentId, tenantId }).lean();
+    if (!agent) throw new Error("Agent not found.");
+
+    const parsedAmount = roundCurrency(amount);
+    if (parsedAmount <= 0) throw new Error("Adjustment amount must be greater than 0.");
+
+    const wallet = await AgentService.getOrCreateWallet(agentId, agent.name, "SAR", tenantId, userId);
+
+    if (direction === "Debit" && wallet.balance < parsedAmount) {
+      throw new Error(`Insufficient wallet balance (Current: ${wallet.balance} SAR, Attempted debit: ${parsedAmount} SAR).`);
+    }
+
+    const delta = direction === "Credit" ? parsedAmount : -parsedAmount;
+    wallet.balance = roundCurrency(wallet.balance + delta);
+    wallet.updatedBy = userId || null;
+    await wallet.save();
+
+    const transaction = await AgentWalletTransactionModel.create({
+      tenantId,
+      walletId: wallet._id,
+      type: type || "Adjustment",
+      direction,
+      amount: parsedAmount,
+      balanceAfter: wallet.balance,
+      currency: wallet.currency || "SAR",
+      description: description || `Manual staff ${direction.toLowerCase()} adjustment`,
+      performedBy: userId || "staff"
+    });
+
+    await AuditLogModel.create({
+      action: "agent.wallet.adjusted",
+      module: "Agent",
+      resource: "AgentWallet",
+      resourceId: wallet._id.toString(),
+      userId: userId || null,
+      tenantId,
+      details: { amount: parsedAmount, direction, balanceAfter: wallet.balance }
+    });
+    publishEvent("AgentWalletAdjusted", { tenantId, agentId, walletId: wallet._id.toString(), amount: parsedAmount, direction });
+
+    return { wallet, transaction: transaction.toJSON() };
+  }
+
   // ---- Agent-side auth ----
 
   /** email is globally unique (same as Usermodel) — tenant is resolved from the matched agent, never supplied by the caller. */

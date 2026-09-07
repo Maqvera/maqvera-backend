@@ -1,0 +1,5534 @@
+{
+  "totalRouteDefinitions": 1365,
+  "resultsByFile": [
+    {
+      "file": "AIAssistantRoutes.js",
+      "prefixes": [
+        "/api/v1/ai"
+      ],
+      "countPerPrefix": 19,
+      "totalEndpoints": 19,
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/chat"
+        },
+        {
+          "method": "POST",
+          "path": "/flight-search"
+        },
+        {
+          "method": "POST",
+          "path": "/hotel-search"
+        },
+        {
+          "method": "POST",
+          "path": "/package-search"
+        },
+        {
+          "method": "POST",
+          "path": "/travel-plan"
+        },
+        {
+          "method": "POST",
+          "path": "/dashboard"
+        },
+        {
+          "method": "POST",
+          "path": "/analytics"
+        },
+        {
+          "method": "POST",
+          "path": "/search"
+        },
+        {
+          "method": "POST",
+          "path": "/explain"
+        },
+        {
+          "method": "POST",
+          "path": "/summarize"
+        },
+        {
+          "method": "POST",
+          "path": "/recommend"
+        },
+        {
+          "method": "GET",
+          "path": "/conversations"
+        },
+        {
+          "method": "POST",
+          "path": "/conversations/:conversationId/archive"
+        },
+        {
+          "method": "GET",
+          "path": "/conversations/:conversationId/context"
+        },
+        {
+          "method": "POST",
+          "path": "/conversations/:conversationId/context/clear"
+        },
+        {
+          "method": "POST",
+          "path": "/supervisor"
+        },
+        {
+          "method": "GET",
+          "path": "/providers/status"
+        },
+        {
+          "method": "GET",
+          "path": "/agents"
+        },
+        {
+          "method": "PATCH",
+          "path": "/agents/:agentId/state"
+        }
+      ]
+    },
+    {
+      "file": "AIGuardrailRoutes.js",
+      "prefixes": [
+        "/api/v1/ai/guardrails"
+      ],
+      "countPerPrefix": 6,
+      "totalEndpoints": 6,
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/audit"
+        },
+        {
+          "method": "GET",
+          "path": "/metrics"
+        },
+        {
+          "method": "POST",
+          "path": "/policies"
+        },
+        {
+          "method": "GET",
+          "path": "/policies"
+        },
+        {
+          "method": "PATCH",
+          "path": "/policies/:policyId"
+        },
+        {
+          "method": "DELETE",
+          "path": "/policies/:policyId"
+        }
+      ]
+    },
+    {
+      "file": "AIKnowledgeRoutes.js",
+      "prefixes": [
+        "/api/v1/ai/knowledge"
+      ],
+      "countPerPrefix": 6,
+      "totalEndpoints": 6,
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/search"
+        },
+        {
+          "method": "POST",
+          "path": "/"
+        },
+        {
+          "method": "GET",
+          "path": "/"
+        },
+        {
+          "method": "PUT",
+          "path": "/:documentId"
+        },
+        {
+          "method": "DELETE",
+          "path": "/:documentId"
+        },
+        {
+          "method": "GET",
+          "path": "/:documentId"
+        }
+      ]
+    },
+    {
+      "file": "AIModelRouterRoutes.js",
+      "prefixes": [
+        "/api/v1/ai/models"
+      ],
+      "countPerPrefix": 12,
+      "totalEndpoints": 12,
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/catalog"
+        },
+        {
+          "method": "GET",
+          "path": "/providers/health"
+        },
+        {
+          "method": "POST",
+          "path": "/routing-policies"
+        },
+        {
+          "method": "GET",
+          "path": "/routing-policies"
+        },
+        {
+          "method": "DELETE",
+          "path": "/routing-policies/:category"
+        },
+        {
+          "method": "POST",
+          "path": "/ab-tests"
+        },
+        {
+          "method": "GET",
+          "path": "/ab-tests"
+        },
+        {
+          "method": "POST",
+          "path": "/ab-tests/:testId/start"
+        },
+        {
+          "method": "POST",
+          "path": "/ab-tests/:testId/cancel"
+        },
+        {
+          "method": "GET",
+          "path": "/ab-tests/:testId/results"
+        },
+        {
+          "method": "POST",
+          "path": "/ab-tests/:testId/promote"
+        },
+        {
+          "method": "GET",
+          "path": "/shadow-tests"
+        }
+      ]
+    },
+    {
+      "file": "AIObservabilityRoutes.js",
+      "prefixes": [
+        "/api/v1/ai/observability"
+      ],
+      "countPerPrefix": 15,
+      "totalEndpoints": 15,
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/requests"
+        },
+        {
+          "method": "GET",
+          "path": "/llm"
+        },
+        {
+          "method": "GET",
+          "path": "/tools"
+        },
+        {
+          "method": "GET",
+          "path": "/rag"
+        },
+        {
+          "method": "GET",
+          "path": "/agents"
+        },
+        {
+          "method": "GET",
+          "path": "/memory"
+        },
+        {
+          "method": "GET",
+          "path": "/quality"
+        },
+        {
+          "method": "GET",
+          "path": "/cost"
+        },
+        {
+          "method": "GET",
+          "path": "/prompts"
+        },
+        {
+          "method": "GET",
+          "path": "/security"
+        },
+        {
+          "method": "GET",
+          "path": "/providers"
+        },
+        {
+          "method": "GET",
+          "path": "/health"
+        },
+        {
+          "method": "GET",
+          "path": "/dashboard/executive"
+        },
+        {
+          "method": "GET",
+          "path": "/alerts"
+        },
+        {
+          "method": "POST",
+          "path": "/alerts/evaluate"
+        }
+      ]
+    },
+    {
+      "file": "AIOrchestrationRoutes.js",
+      "prefixes": [
+        "/api/v1/ai"
+      ],
+      "countPerPrefix": 12,
+      "totalEndpoints": 12,
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/tools/providers/status"
+        },
+        {
+          "method": "POST",
+          "path": "/tools/plan"
+        },
+        {
+          "method": "POST",
+          "path": "/tools/execute"
+        },
+        {
+          "method": "POST",
+          "path": "/tools/validate"
+        },
+        {
+          "method": "POST",
+          "path": "/tools/approval"
+        },
+        {
+          "method": "GET",
+          "path": "/tools/:toolId"
+        },
+        {
+          "method": "GET",
+          "path": "/tools"
+        },
+        {
+          "method": "POST",
+          "path": "/executions/:executionId/cancel"
+        },
+        {
+          "method": "POST",
+          "path": "/executions/:executionId/archive"
+        },
+        {
+          "method": "GET",
+          "path": "/executions/metrics"
+        },
+        {
+          "method": "GET",
+          "path": "/executions/:executionId"
+        },
+        {
+          "method": "GET",
+          "path": "/executions"
+        }
+      ]
+    },
+    {
+      "file": "AIPromptRoutes.js",
+      "prefixes": [
+        "/api/v1/ai/prompts"
+      ],
+      "countPerPrefix": 10,
+      "totalEndpoints": 10,
+      "endpoints": [
+        {
+          "method": "DELETE",
+          "path": "/test-cases/:testCaseId"
+        },
+        {
+          "method": "POST",
+          "path": "/"
+        },
+        {
+          "method": "GET",
+          "path": "/"
+        },
+        {
+          "method": "GET",
+          "path": "/:promptId"
+        },
+        {
+          "method": "POST",
+          "path": "/:promptId/versions"
+        },
+        {
+          "method": "PATCH",
+          "path": "/:promptId/versions/:version/status"
+        },
+        {
+          "method": "POST",
+          "path": "/:promptId/versions/:version/run-tests"
+        },
+        {
+          "method": "POST",
+          "path": "/:promptId/rollback"
+        },
+        {
+          "method": "POST",
+          "path": "/:promptId/test-cases"
+        },
+        {
+          "method": "GET",
+          "path": "/:promptId/test-cases"
+        }
+      ]
+    },
+    {
+      "file": "AgentPortalRoutes.js",
+      "prefixes": [
+        "/api/v1/agents"
+      ],
+      "countPerPrefix": 9,
+      "totalEndpoints": 9,
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/login"
+        },
+        {
+          "method": "GET",
+          "path": "/me/dashboard"
+        },
+        {
+          "method": "GET",
+          "path": "/me/bookings"
+        },
+        {
+          "method": "POST",
+          "path": "/me/bookings"
+        },
+        {
+          "method": "GET",
+          "path": "/me/wallet"
+        },
+        {
+          "method": "GET",
+          "path": "/reports/performance"
+        },
+        {
+          "method": "GET",
+          "path": "/"
+        },
+        {
+          "method": "POST",
+          "path": "/"
+        },
+        {
+          "method": "POST",
+          "path": "/:agentId/suspend"
+        }
+      ]
+    },
+    {
+      "file": "AirlineIntegrationRoutes.js",
+      "prefixes": [
+        "/api/v1/integrations/airlines"
+      ],
+      "countPerPrefix": 1,
+      "totalEndpoints": 1,
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/check-in"
+        }
+      ]
+    },
+    {
+      "file": "AmadeusIntegrationRoutes.js",
+      "prefixes": [
+        "/api/v1/integrations/amadeus"
+      ],
+      "countPerPrefix": 23,
+      "totalEndpoints": 23,
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/flights/book"
+        },
+        {
+          "method": "POST",
+          "path": "/flights/ticket"
+        },
+        {
+          "method": "GET",
+          "path": "/seat-map/:flightOrderId"
+        },
+        {
+          "method": "POST",
+          "path": "/seat-selection"
+        },
+        {
+          "method": "GET",
+          "path": "/flights/status"
+        },
+        {
+          "method": "GET",
+          "path": "/flights/schedules"
+        },
+        {
+          "method": "GET",
+          "path": "/flights/inspiration"
+        },
+        {
+          "method": "POST",
+          "path": "/flights/inspiration/feedback"
+        },
+        {
+          "method": "POST",
+          "path": "/flights/branded-fares"
+        },
+        {
+          "method": "POST",
+          "path": "/flights/branded-fares/recommendation"
+        },
+        {
+          "method": "POST",
+          "path": "/flights/ancillaries"
+        },
+        {
+          "method": "POST",
+          "path": "/flights/ancillaries/selection"
+        },
+        {
+          "method": "POST",
+          "path": "/flights/schedule-sync"
+        },
+        {
+          "method": "GET",
+          "path": "/hotels/search"
+        },
+        {
+          "method": "POST",
+          "path": "/hotels/search/view"
+        },
+        {
+          "method": "GET",
+          "path": "/hotels/offers"
+        },
+        {
+          "method": "POST",
+          "path": "/hotels/offers/view"
+        },
+        {
+          "method": "POST",
+          "path": "/hotels/pricing"
+        },
+        {
+          "method": "POST",
+          "path": "/hotels/book"
+        },
+        {
+          "method": "GET",
+          "path": "/hotels/bookings/:providerBookingId"
+        },
+        {
+          "method": "POST",
+          "path": "/hotels/bookings/:providerBookingId/cancel"
+        },
+        {
+          "method": "GET",
+          "path": "/metrics"
+        },
+        {
+          "method": "GET",
+          "path": "/metrics/prometheus"
+        }
+      ]
+    },
+    {
+      "file": "ApiKeyRoutes.js",
+      "prefixes": [
+        "/api/v1/api-keys"
+      ],
+      "countPerPrefix": 3,
+      "totalEndpoints": 3,
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/"
+        },
+        {
+          "method": "POST",
+          "path": "/"
+        },
+        {
+          "method": "DELETE",
+          "path": "/:apiKeyId"
+        }
+      ]
+    },
+    {
+      "file": "ApiVersionRegistryRoutes.js",
+      "prefixes": [
+        "/api/v1/api-version-registry"
+      ],
+      "countPerPrefix": 6,
+      "totalEndpoints": 6,
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/"
+        },
+        {
+          "method": "GET",
+          "path": "/"
+        },
+        {
+          "method": "GET",
+          "path": "/:apiName/:version"
+        },
+        {
+          "method": "POST",
+          "path": "/:apiName/:version/deprecate"
+        },
+        {
+          "method": "POST",
+          "path": "/:apiName/:version/sunset"
+        },
+        {
+          "method": "POST",
+          "path": "/:apiName/:version/retire"
+        }
+      ]
+    },
+    {
+      "file": "Authroute.js",
+      "prefixes": [
+        "/api/v1/auth",
+        "/api/auth"
+      ],
+      "countPerPrefix": 31,
+      "totalEndpoints": 62,
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/signup"
+        },
+        {
+          "method": "POST",
+          "path": "/setup"
+        },
+        {
+          "method": "POST",
+          "path": "/login"
+        },
+        {
+          "method": "POST",
+          "path": "/logout"
+        },
+        {
+          "method": "POST",
+          "path": "/refresh"
+        },
+        {
+          "method": "GET",
+          "path": "/me"
+        },
+        {
+          "method": "POST",
+          "path": "/forgot-password"
+        },
+        {
+          "method": "POST",
+          "path": "/forgetpassword"
+        },
+        {
+          "method": "POST",
+          "path": "/reset-password"
+        },
+        {
+          "method": "POST",
+          "path": "/change-password"
+        },
+        {
+          "method": "POST",
+          "path": "/changepassword"
+        },
+        {
+          "method": "POST",
+          "path": "/email/send-verification"
+        },
+        {
+          "method": "POST",
+          "path": "/email/verify"
+        },
+        {
+          "method": "GET",
+          "path": "/sessions"
+        },
+        {
+          "method": "DELETE",
+          "path": "/sessions/:sessionId"
+        },
+        {
+          "method": "POST",
+          "path": "/logout-all"
+        },
+        {
+          "method": "POST",
+          "path": "/mfa/setup"
+        },
+        {
+          "method": "POST",
+          "path": "/mfa/verify"
+        },
+        {
+          "method": "POST",
+          "path": "/mfa/login"
+        },
+        {
+          "method": "POST",
+          "path": "/mfa/disable"
+        },
+        {
+          "method": "GET",
+          "path": "/mfa/status"
+        },
+        {
+          "method": "GET",
+          "path": "/security"
+        },
+        {
+          "method": "GET",
+          "path": "/login-history"
+        },
+        {
+          "method": "GET",
+          "path": "/security-events"
+        },
+        {
+          "method": "GET",
+          "path": "/trusted-devices"
+        },
+        {
+          "method": "POST",
+          "path": "/trusted-devices"
+        },
+        {
+          "method": "DELETE",
+          "path": "/trusted-devices/:deviceId"
+        },
+        {
+          "method": "POST",
+          "path": "/account/unlock-request"
+        },
+        {
+          "method": "GET",
+          "path": "/preferences"
+        },
+        {
+          "method": "PATCH",
+          "path": "/preferences"
+        },
+        {
+          "method": "POST",
+          "path": "/avatar"
+        }
+      ]
+    },
+    {
+      "file": "BookingRoutes.js",
+      "prefixes": [
+        "/api/v1/bookings"
+      ],
+      "countPerPrefix": 42,
+      "totalEndpoints": 42,
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/dashboard"
+        },
+        {
+          "method": "GET",
+          "path": "/search"
+        },
+        {
+          "method": "GET",
+          "path": "/my-tasks"
+        },
+        {
+          "method": "POST",
+          "path": "/parse-supplier-document"
+        },
+        {
+          "method": "POST",
+          "path": "/parse-voice-booking"
+        },
+        {
+          "method": "GET",
+          "path": "/"
+        },
+        {
+          "method": "POST",
+          "path": "/"
+        },
+        {
+          "method": "GET",
+          "path": "/:bookingId"
+        },
+        {
+          "method": "PATCH",
+          "path": "/:bookingId"
+        },
+        {
+          "method": "POST",
+          "path": "/:bookingId/archive"
+        },
+        {
+          "method": "POST",
+          "path": "/:bookingId/confirm"
+        },
+        {
+          "method": "POST",
+          "path": "/:bookingId/cancel"
+        },
+        {
+          "method": "POST",
+          "path": "/:bookingId/vouchers"
+        },
+        {
+          "method": "GET",
+          "path": "/:bookingId/vouchers"
+        },
+        {
+          "method": "POST",
+          "path": "/:bookingId/invoice"
+        },
+        {
+          "method": "POST",
+          "path": "/:bookingId/one-click-complete"
+        },
+        {
+          "method": "GET",
+          "path": "/:bookingId/one-click-complete/runs"
+        },
+        {
+          "method": "GET",
+          "path": "/:bookingId/travelers"
+        },
+        {
+          "method": "POST",
+          "path": "/:bookingId/travelers"
+        },
+        {
+          "method": "PATCH",
+          "path": "/:bookingId/travelers/:travelerId"
+        },
+        {
+          "method": "DELETE",
+          "path": "/:bookingId/travelers/:travelerId"
+        },
+        {
+          "method": "GET",
+          "path": "/:bookingId/services"
+        },
+        {
+          "method": "POST",
+          "path": "/:bookingId/services"
+        },
+        {
+          "method": "PATCH",
+          "path": "/:bookingId/services/:serviceAssignmentId"
+        },
+        {
+          "method": "DELETE",
+          "path": "/:bookingId/services/:serviceAssignmentId"
+        },
+        {
+          "method": "POST",
+          "path": "/:bookingId/traveler-services"
+        },
+        {
+          "method": "GET",
+          "path": "/:bookingId/workflow"
+        },
+        {
+          "method": "PATCH",
+          "path": "/:bookingId/workflow"
+        },
+        {
+          "method": "GET",
+          "path": "/:bookingId/documents"
+        },
+        {
+          "method": "POST",
+          "path": "/:bookingId/documents"
+        },
+        {
+          "method": "POST",
+          "path": "/:bookingId/documents/:documentId/verify"
+        },
+        {
+          "method": "POST",
+          "path": "/:bookingId/documents/:documentId/reject"
+        },
+        {
+          "method": "GET",
+          "path": "/:bookingId/notes"
+        },
+        {
+          "method": "POST",
+          "path": "/:bookingId/notes"
+        },
+        {
+          "method": "GET",
+          "path": "/:bookingId/timeline"
+        },
+        {
+          "method": "GET",
+          "path": "/:bookingId/tasks"
+        },
+        {
+          "method": "POST",
+          "path": "/:bookingId/tasks"
+        },
+        {
+          "method": "PATCH",
+          "path": "/:bookingId/tasks/:taskId"
+        },
+        {
+          "method": "GET",
+          "path": "/:bookingId/kit"
+        },
+        {
+          "method": "POST",
+          "path": "/:bookingId/kit/items"
+        },
+        {
+          "method": "PATCH",
+          "path": "/:bookingId/kit/items/:itemId"
+        },
+        {
+          "method": "GET",
+          "path": "/:bookingId/financial-summary"
+        }
+      ]
+    },
+    {
+      "file": "CommunicationRoutes.js",
+      "prefixes": [
+        "/api/v1/communication",
+        "/api/v1/emails",
+        "/api/v1/sms"
+      ],
+      "countPerPrefix": 50,
+      "totalEndpoints": 150,
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/send"
+        },
+        {
+          "method": "GET",
+          "path": "/messages"
+        },
+        {
+          "method": "GET",
+          "path": "/messages/:messageId"
+        },
+        {
+          "method": "POST",
+          "path": "/messages/:messageId/retry"
+        },
+        {
+          "method": "POST",
+          "path": "/messages/:messageId/cancel"
+        },
+        {
+          "method": "POST",
+          "path": "/messages/:messageId/archive"
+        },
+        {
+          "method": "POST",
+          "path": "/messages/:messageId/restore"
+        },
+        {
+          "method": "POST",
+          "path": "/messages/:messageId/purge"
+        },
+        {
+          "method": "POST",
+          "path": "/messages/:messageId/legal-hold"
+        },
+        {
+          "method": "DELETE",
+          "path": "/messages/:messageId/legal-hold"
+        },
+        {
+          "method": "GET",
+          "path": "/messages/:messageId/legal-hold"
+        },
+        {
+          "method": "GET",
+          "path": "/analytics"
+        },
+        {
+          "method": "POST",
+          "path": "/analytics/refresh"
+        },
+        {
+          "method": "POST",
+          "path": "/templates"
+        },
+        {
+          "method": "GET",
+          "path": "/templates"
+        },
+        {
+          "method": "GET",
+          "path": "/templates/:templateId"
+        },
+        {
+          "method": "PATCH",
+          "path": "/templates/:templateId"
+        },
+        {
+          "method": "GET",
+          "path": "/templates/:templateId/versions"
+        },
+        {
+          "method": "GET",
+          "path": "/templates/:templateId/locales"
+        },
+        {
+          "method": "POST",
+          "path": "/templates/:templateId/submit"
+        },
+        {
+          "method": "POST",
+          "path": "/templates/:templateId/approve"
+        },
+        {
+          "method": "POST",
+          "path": "/templates/:templateId/reject"
+        },
+        {
+          "method": "POST",
+          "path": "/templates/:templateId/rollback"
+        },
+        {
+          "method": "GET",
+          "path": "/preferences"
+        },
+        {
+          "method": "GET",
+          "path": "/preferences/:userId"
+        },
+        {
+          "method": "PATCH",
+          "path": "/preferences"
+        },
+        {
+          "method": "PATCH",
+          "path": "/preferences/:userId"
+        },
+        {
+          "method": "GET",
+          "path": "/preferences/:userId/consent-history"
+        },
+        {
+          "method": "GET",
+          "path": "/consent-history"
+        },
+        {
+          "method": "POST",
+          "path": "/emails"
+        },
+        {
+          "method": "GET",
+          "path": "/emails/:trackingId"
+        },
+        {
+          "method": "POST",
+          "path": "/sms"
+        },
+        {
+          "method": "POST",
+          "path": "/"
+        },
+        {
+          "method": "POST",
+          "path": "/sms/otp/generate"
+        },
+        {
+          "method": "POST",
+          "path": "/otp/generate"
+        },
+        {
+          "method": "POST",
+          "path": "/sms/otp/verify"
+        },
+        {
+          "method": "POST",
+          "path": "/otp/verify"
+        },
+        {
+          "method": "POST",
+          "path": "/sms/campaigns"
+        },
+        {
+          "method": "POST",
+          "path": "/campaigns"
+        },
+        {
+          "method": "GET",
+          "path": "/sms/campaigns/:campaignId"
+        },
+        {
+          "method": "GET",
+          "path": "/campaigns/:campaignId"
+        },
+        {
+          "method": "PATCH",
+          "path": "/sms/campaigns/:campaignId/status"
+        },
+        {
+          "method": "PATCH",
+          "path": "/campaigns/:campaignId/status"
+        },
+        {
+          "method": "GET",
+          "path": "/sms/:trackingId"
+        },
+        {
+          "method": "POST",
+          "path": "/sms/:trackingId/retry"
+        },
+        {
+          "method": "GET",
+          "path": "/:trackingId"
+        },
+        {
+          "method": "POST",
+          "path": "/:trackingId/retry"
+        },
+        {
+          "method": "POST",
+          "path": "/whatsapp"
+        },
+        {
+          "method": "GET",
+          "path": "/whatsapp/:trackingId"
+        },
+        {
+          "method": "GET",
+          "path": "/whatsapp/conversations/:phone/window"
+        }
+      ]
+    },
+    {
+      "file": "CustomerRoutes.js",
+      "prefixes": [
+        "/api/v1/customers"
+      ],
+      "countPerPrefix": 48,
+      "totalEndpoints": 48,
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/search"
+        },
+        {
+          "method": "POST",
+          "path": "/merge"
+        },
+        {
+          "method": "GET",
+          "path": "/"
+        },
+        {
+          "method": "POST",
+          "path": "/"
+        },
+        {
+          "method": "GET",
+          "path": "/:customerId"
+        },
+        {
+          "method": "GET",
+          "path": "/:customerId/recommendations"
+        },
+        {
+          "method": "PATCH",
+          "path": "/:customerId"
+        },
+        {
+          "method": "POST",
+          "path": "/:customerId/archive"
+        },
+        {
+          "method": "GET",
+          "path": "/:customerId/versions"
+        },
+        {
+          "method": "GET",
+          "path": "/:customerId/timeline"
+        },
+        {
+          "method": "GET",
+          "path": "/:customerId/notes"
+        },
+        {
+          "method": "POST",
+          "path": "/:customerId/notes"
+        },
+        {
+          "method": "POST",
+          "path": "/:customerId/notes/:noteId/archive"
+        },
+        {
+          "method": "GET",
+          "path": "/:customerId/documents"
+        },
+        {
+          "method": "POST",
+          "path": "/:customerId/documents"
+        },
+        {
+          "method": "POST",
+          "path": "/:customerId/documents/:documentId/verify"
+        },
+        {
+          "method": "POST",
+          "path": "/:customerId/documents/:documentId/reject"
+        },
+        {
+          "method": "DELETE",
+          "path": "/:customerId/documents/:documentId"
+        },
+        {
+          "method": "GET",
+          "path": "/:customerId/emergency-contacts"
+        },
+        {
+          "method": "POST",
+          "path": "/:customerId/emergency-contacts"
+        },
+        {
+          "method": "PATCH",
+          "path": "/:customerId/emergency-contacts/:contactId"
+        },
+        {
+          "method": "DELETE",
+          "path": "/:customerId/emergency-contacts/:contactId"
+        },
+        {
+          "method": "GET",
+          "path": "/:customerId/family"
+        },
+        {
+          "method": "POST",
+          "path": "/:customerId/family"
+        },
+        {
+          "method": "PATCH",
+          "path": "/:customerId/family/:memberId"
+        },
+        {
+          "method": "DELETE",
+          "path": "/:customerId/family/:memberId"
+        },
+        {
+          "method": "POST",
+          "path": "/:customerId/family/:memberId/promote"
+        },
+        {
+          "method": "GET",
+          "path": "/:customerId/passports"
+        },
+        {
+          "method": "POST",
+          "path": "/:customerId/passports"
+        },
+        {
+          "method": "PATCH",
+          "path": "/:customerId/passports/:passportId"
+        },
+        {
+          "method": "GET",
+          "path": "/:customerId/phones"
+        },
+        {
+          "method": "POST",
+          "path": "/:customerId/phones"
+        },
+        {
+          "method": "PATCH",
+          "path": "/:customerId/phones/:phoneId"
+        },
+        {
+          "method": "DELETE",
+          "path": "/:customerId/phones/:phoneId"
+        },
+        {
+          "method": "GET",
+          "path": "/:customerId/emails"
+        },
+        {
+          "method": "POST",
+          "path": "/:customerId/emails"
+        },
+        {
+          "method": "PATCH",
+          "path": "/:customerId/emails/:emailId"
+        },
+        {
+          "method": "DELETE",
+          "path": "/:customerId/emails/:emailId"
+        },
+        {
+          "method": "GET",
+          "path": "/:customerId/addresses"
+        },
+        {
+          "method": "POST",
+          "path": "/:customerId/addresses"
+        },
+        {
+          "method": "PATCH",
+          "path": "/:customerId/addresses/:addressId"
+        },
+        {
+          "method": "DELETE",
+          "path": "/:customerId/addresses/:addressId"
+        },
+        {
+          "method": "GET",
+          "path": "/:customerId/preferences"
+        },
+        {
+          "method": "PATCH",
+          "path": "/:customerId/preferences"
+        },
+        {
+          "method": "GET",
+          "path": "/:customerId/statistics"
+        },
+        {
+          "method": "GET",
+          "path": "/:customerId/bookings"
+        },
+        {
+          "method": "GET",
+          "path": "/:customerId/account-statement"
+        },
+        {
+          "method": "GET",
+          "path": "/:customerId/account-statement/pdf"
+        }
+      ]
+    },
+    {
+      "file": "EmbassyDirectoryRoutes.js",
+      "prefixes": [
+        "/api/v1/embassy-directory"
+      ],
+      "countPerPrefix": 3,
+      "totalEndpoints": 3,
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/"
+        },
+        {
+          "method": "POST",
+          "path": "/"
+        },
+        {
+          "method": "PATCH",
+          "path": "/:embassyId"
+        }
+      ]
+    },
+    {
+      "file": "EmployeeAttendanceRoutes.js",
+      "prefixes": [
+        "/api/v1/attendance"
+      ],
+      "countPerPrefix": 3,
+      "totalEndpoints": 3,
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/clock-in"
+        },
+        {
+          "method": "POST",
+          "path": "/clock-out"
+        },
+        {
+          "method": "GET",
+          "path": "/:employeeId"
+        }
+      ]
+    },
+    {
+      "file": "EnterpriseSearchRoutes.js",
+      "prefixes": [
+        "/api/v1/search"
+      ],
+      "countPerPrefix": 13,
+      "totalEndpoints": 13,
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/suggestions"
+        },
+        {
+          "method": "POST",
+          "path": "/saved"
+        },
+        {
+          "method": "GET",
+          "path": "/saved"
+        },
+        {
+          "method": "DELETE",
+          "path": "/saved/:savedSearchId"
+        },
+        {
+          "method": "GET",
+          "path": "/visa-cases"
+        },
+        {
+          "method": "GET",
+          "path": "/travelers"
+        },
+        {
+          "method": "GET",
+          "path": "/passports"
+        },
+        {
+          "method": "GET",
+          "path": "/documents"
+        },
+        {
+          "method": "GET",
+          "path": "/incidents"
+        },
+        {
+          "method": "GET",
+          "path": "/appointments"
+        },
+        {
+          "method": "GET",
+          "path": "/embassies"
+        },
+        {
+          "method": "POST",
+          "path": "/rebuild"
+        },
+        {
+          "method": "GET",
+          "path": "/"
+        }
+      ]
+    },
+    {
+      "file": "EventRegistryRoutes.js",
+      "prefixes": [
+        "/api/v1/event-registry"
+      ],
+      "countPerPrefix": 6,
+      "totalEndpoints": 6,
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/"
+        },
+        {
+          "method": "GET",
+          "path": "/"
+        },
+        {
+          "method": "GET",
+          "path": "/:eventName/:version"
+        },
+        {
+          "method": "POST",
+          "path": "/:eventName/:version/deprecate"
+        },
+        {
+          "method": "POST",
+          "path": "/:eventName/:version/retire"
+        },
+        {
+          "method": "POST",
+          "path": "/:eventName/:version/reactivate"
+        }
+      ]
+    },
+    {
+      "file": "ExternalAmadeusRoutes.js",
+      "prefixes": [
+        "/api/v1/external/amadeus"
+      ],
+      "countPerPrefix": 1,
+      "totalEndpoints": 1,
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/flights/pricing"
+        }
+      ]
+    },
+    {
+      "file": "ExternalFlightRoutes.js",
+      "prefixes": [
+        "/api/v1/external"
+      ],
+      "countPerPrefix": 2,
+      "totalEndpoints": 2,
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/flights/search"
+        },
+        {
+          "method": "GET",
+          "path": "/flights/metrics"
+        }
+      ]
+    },
+    {
+      "file": "FinanceRoutes.js",
+      "prefixes": [
+        "/api/v1"
+      ],
+      "countPerPrefix": 478,
+      "totalEndpoints": 478,
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/receipts/verify/:token"
+        },
+        {
+          "method": "GET",
+          "path": "/receipts/download/:token"
+        },
+        {
+          "method": "GET",
+          "path": "/customer-payments/pay/:token"
+        },
+        {
+          "method": "GET",
+          "path": "/customer-portal/:token"
+        },
+        {
+          "method": "GET",
+          "path": "/documents/view/:token"
+        },
+        {
+          "method": "GET",
+          "path": "/accounts"
+        },
+        {
+          "method": "POST",
+          "path": "/accounts"
+        },
+        {
+          "method": "GET",
+          "path": "/accounts/:accountId"
+        },
+        {
+          "method": "PATCH",
+          "path": "/accounts/:accountId"
+        },
+        {
+          "method": "DELETE",
+          "path": "/accounts/:accountId"
+        },
+        {
+          "method": "POST",
+          "path": "/accounts/:accountId/reactivate"
+        },
+        {
+          "method": "POST",
+          "path": "/accounts/:accountId/suspend"
+        },
+        {
+          "method": "POST",
+          "path": "/accounts/:accountId/archive"
+        },
+        {
+          "method": "POST",
+          "path": "/accounts/:accountId/merge"
+        },
+        {
+          "method": "GET",
+          "path": "/account-templates"
+        },
+        {
+          "method": "POST",
+          "path": "/account-templates"
+        },
+        {
+          "method": "POST",
+          "path": "/account-templates/:templateId/apply"
+        },
+        {
+          "method": "GET",
+          "path": "/account-templates/:templateId"
+        },
+        {
+          "method": "GET",
+          "path": "/journals"
+        },
+        {
+          "method": "POST",
+          "path": "/journals"
+        },
+        {
+          "method": "GET",
+          "path": "/journals/search"
+        },
+        {
+          "method": "GET",
+          "path": "/journals/statistics"
+        },
+        {
+          "method": "POST",
+          "path": "/journals/bulk"
+        },
+        {
+          "method": "POST",
+          "path": "/journals/templates"
+        },
+        {
+          "method": "POST",
+          "path": "/journals/recurring"
+        },
+        {
+          "method": "POST",
+          "path": "/journals/revenue-recognition"
+        },
+        {
+          "method": "POST",
+          "path": "/journals/import/preview"
+        },
+        {
+          "method": "POST",
+          "path": "/journals/import"
+        },
+        {
+          "method": "GET",
+          "path": "/journals/:journalId"
+        },
+        {
+          "method": "PATCH",
+          "path": "/journals/:journalId"
+        },
+        {
+          "method": "POST",
+          "path": "/journals/:journalId/approve"
+        },
+        {
+          "method": "POST",
+          "path": "/journals/:journalId/reject"
+        },
+        {
+          "method": "POST",
+          "path": "/journals/:journalId/cancel"
+        },
+        {
+          "method": "POST",
+          "path": "/journals/:journalId/post"
+        },
+        {
+          "method": "POST",
+          "path": "/journals/:journalId/reverse"
+        },
+        {
+          "method": "POST",
+          "path": "/journals/:journalId/correct"
+        },
+        {
+          "method": "GET",
+          "path": "/journals/:journalId/history"
+        },
+        {
+          "method": "POST",
+          "path": "/journals/:journalId/attachments"
+        },
+        {
+          "method": "POST",
+          "path": "/journals/:journalId/archive"
+        },
+        {
+          "method": "POST",
+          "path": "/journals/:journalId/restore"
+        },
+        {
+          "method": "GET",
+          "path": "/journal-templates"
+        },
+        {
+          "method": "POST",
+          "path": "/journal-templates"
+        },
+        {
+          "method": "POST",
+          "path": "/journal-templates/:templateId/apply"
+        },
+        {
+          "method": "GET",
+          "path": "/journal-templates/:templateId"
+        },
+        {
+          "method": "GET",
+          "path": "/recurring-journals"
+        },
+        {
+          "method": "POST",
+          "path": "/recurring-journals"
+        },
+        {
+          "method": "GET",
+          "path": "/recurring-journals/:recurringJournalId"
+        },
+        {
+          "method": "POST",
+          "path": "/recurring-journals/:recurringJournalId/pause"
+        },
+        {
+          "method": "POST",
+          "path": "/recurring-journals/:recurringJournalId/resume"
+        },
+        {
+          "method": "POST",
+          "path": "/recurring-journals/:recurringJournalId/cancel"
+        },
+        {
+          "method": "GET",
+          "path": "/journal-batches"
+        },
+        {
+          "method": "POST",
+          "path": "/journal-batches"
+        },
+        {
+          "method": "GET",
+          "path": "/journal-batches/:batchId"
+        },
+        {
+          "method": "GET",
+          "path": "/general-ledger/trial-balance"
+        },
+        {
+          "method": "POST",
+          "path": "/general-ledger/recalculate"
+        },
+        {
+          "method": "GET",
+          "path": "/general-ledger/:accountId/balance"
+        },
+        {
+          "method": "GET",
+          "path": "/general-ledger"
+        },
+        {
+          "method": "GET",
+          "path": "/accounts-receivable"
+        },
+        {
+          "method": "POST",
+          "path": "/accounts-receivable"
+        },
+        {
+          "method": "GET",
+          "path": "/accounts-receivable/:receivableId"
+        },
+        {
+          "method": "POST",
+          "path": "/accounts-receivable/:receivableId/allocate-payment"
+        },
+        {
+          "method": "POST",
+          "path": "/accounts-receivable/:receivableId/write-off"
+        },
+        {
+          "method": "GET",
+          "path": "/payments"
+        },
+        {
+          "method": "POST",
+          "path": "/payments"
+        },
+        {
+          "method": "GET",
+          "path": "/payments/:paymentId"
+        },
+        {
+          "method": "POST",
+          "path": "/payments/:paymentId/allocate"
+        },
+        {
+          "method": "POST",
+          "path": "/payments/:paymentId/void"
+        },
+        {
+          "method": "POST",
+          "path": "/payments/:paymentId/refund"
+        },
+        {
+          "method": "POST",
+          "path": "/payments/:paymentId/retry"
+        },
+        {
+          "method": "GET",
+          "path": "/accounts-payable"
+        },
+        {
+          "method": "POST",
+          "path": "/accounts-payable"
+        },
+        {
+          "method": "GET",
+          "path": "/accounts-payable/:payableId"
+        },
+        {
+          "method": "POST",
+          "path": "/accounts-payable/:payableId/approve"
+        },
+        {
+          "method": "POST",
+          "path": "/accounts-payable/:payableId/allocate-payment"
+        },
+        {
+          "method": "POST",
+          "path": "/accounts-payable/:payableId/write-off"
+        },
+        {
+          "method": "POST",
+          "path": "/accounts-payable/:payableId/schedule-payment"
+        },
+        {
+          "method": "GET",
+          "path": "/vendors"
+        },
+        {
+          "method": "POST",
+          "path": "/vendors"
+        },
+        {
+          "method": "GET",
+          "path": "/vendors/:vendorId"
+        },
+        {
+          "method": "PATCH",
+          "path": "/vendors/:vendorId"
+        },
+        {
+          "method": "GET",
+          "path": "/receipts"
+        },
+        {
+          "method": "POST",
+          "path": "/receipts"
+        },
+        {
+          "method": "GET",
+          "path": "/receipts/:receiptId"
+        },
+        {
+          "method": "POST",
+          "path": "/receipts/:receiptId/reissue"
+        },
+        {
+          "method": "POST",
+          "path": "/receipts/:receiptId/cancel"
+        },
+        {
+          "method": "POST",
+          "path": "/receipts/:receiptId/redeliver"
+        },
+        {
+          "method": "GET",
+          "path": "/invoices"
+        },
+        {
+          "method": "POST",
+          "path": "/invoices"
+        },
+        {
+          "method": "GET",
+          "path": "/invoices/:invoiceId"
+        },
+        {
+          "method": "PATCH",
+          "path": "/invoices/:invoiceId"
+        },
+        {
+          "method": "POST",
+          "path": "/invoices/:invoiceId/approve"
+        },
+        {
+          "method": "POST",
+          "path": "/invoices/:invoiceId/issue"
+        },
+        {
+          "method": "POST",
+          "path": "/invoices/:invoiceId/cancel"
+        },
+        {
+          "method": "POST",
+          "path": "/invoices/:invoiceId/void"
+        },
+        {
+          "method": "POST",
+          "path": "/invoices/:invoiceId/close"
+        },
+        {
+          "method": "GET",
+          "path": "/credit-notes"
+        },
+        {
+          "method": "POST",
+          "path": "/credit-notes"
+        },
+        {
+          "method": "GET",
+          "path": "/credit-notes/:creditNoteId"
+        },
+        {
+          "method": "POST",
+          "path": "/credit-notes/:creditNoteId/approve"
+        },
+        {
+          "method": "POST",
+          "path": "/credit-notes/:creditNoteId/issue"
+        },
+        {
+          "method": "POST",
+          "path": "/credit-notes/:creditNoteId/allocate"
+        },
+        {
+          "method": "POST",
+          "path": "/credit-notes/:creditNoteId/cancel"
+        },
+        {
+          "method": "POST",
+          "path": "/credit-notes/:creditNoteId/void"
+        },
+        {
+          "method": "POST",
+          "path": "/credit-notes/:creditNoteId/close"
+        },
+        {
+          "method": "GET",
+          "path": "/debit-notes"
+        },
+        {
+          "method": "POST",
+          "path": "/debit-notes"
+        },
+        {
+          "method": "GET",
+          "path": "/debit-notes/:debitNoteId"
+        },
+        {
+          "method": "POST",
+          "path": "/debit-notes/:debitNoteId/approve"
+        },
+        {
+          "method": "POST",
+          "path": "/debit-notes/:debitNoteId/issue"
+        },
+        {
+          "method": "POST",
+          "path": "/debit-notes/:debitNoteId/allocate"
+        },
+        {
+          "method": "POST",
+          "path": "/debit-notes/:debitNoteId/cancel"
+        },
+        {
+          "method": "POST",
+          "path": "/debit-notes/:debitNoteId/void"
+        },
+        {
+          "method": "POST",
+          "path": "/debit-notes/:debitNoteId/close"
+        },
+        {
+          "method": "GET",
+          "path": "/refunds/chargebacks"
+        },
+        {
+          "method": "POST",
+          "path": "/refunds/chargebacks"
+        },
+        {
+          "method": "GET",
+          "path": "/refunds/chargebacks/:chargebackId"
+        },
+        {
+          "method": "POST",
+          "path": "/refunds/chargebacks/:chargebackId/evidence"
+        },
+        {
+          "method": "POST",
+          "path": "/refunds/chargebacks/:chargebackId/resolve"
+        },
+        {
+          "method": "GET",
+          "path": "/refunds"
+        },
+        {
+          "method": "POST",
+          "path": "/refunds"
+        },
+        {
+          "method": "GET",
+          "path": "/refunds/:refundId"
+        },
+        {
+          "method": "POST",
+          "path": "/refunds/:refundId/review"
+        },
+        {
+          "method": "POST",
+          "path": "/refunds/:refundId/approve"
+        },
+        {
+          "method": "POST",
+          "path": "/refunds/:refundId/reject"
+        },
+        {
+          "method": "POST",
+          "path": "/refunds/:refundId/process"
+        },
+        {
+          "method": "POST",
+          "path": "/refunds/:refundId/cancel"
+        },
+        {
+          "method": "GET",
+          "path": "/bank-accounts"
+        },
+        {
+          "method": "POST",
+          "path": "/bank-accounts"
+        },
+        {
+          "method": "GET",
+          "path": "/bank-accounts/:accountId"
+        },
+        {
+          "method": "PATCH",
+          "path": "/bank-accounts/:accountId"
+        },
+        {
+          "method": "POST",
+          "path": "/bank-accounts/:accountId/verify"
+        },
+        {
+          "method": "POST",
+          "path": "/bank-accounts/:accountId/activate"
+        },
+        {
+          "method": "POST",
+          "path": "/bank-accounts/:accountId/freeze"
+        },
+        {
+          "method": "POST",
+          "path": "/bank-accounts/:accountId/reopen"
+        },
+        {
+          "method": "POST",
+          "path": "/bank-accounts/:accountId/suspend"
+        },
+        {
+          "method": "POST",
+          "path": "/bank-accounts/:accountId/close"
+        },
+        {
+          "method": "POST",
+          "path": "/bank-accounts/:accountId/archive"
+        },
+        {
+          "method": "POST",
+          "path": "/bank-accounts/:accountId/adjust-balance"
+        },
+        {
+          "method": "POST",
+          "path": "/bank-accounts/:accountId/hold"
+        },
+        {
+          "method": "POST",
+          "path": "/bank-accounts/:accountId/release-hold"
+        },
+        {
+          "method": "POST",
+          "path": "/bank-accounts/:accountId/virtual-accounts"
+        },
+        {
+          "method": "POST",
+          "path": "/bank-accounts/:accountId/link-settlement-account"
+        },
+        {
+          "method": "GET",
+          "path": "/bank-accounts/:accountId/transactions"
+        },
+        {
+          "method": "POST",
+          "path": "/bank-reconciliation/import"
+        },
+        {
+          "method": "POST",
+          "path": "/bank-reconciliation/exceptions/:exceptionId/resolve"
+        },
+        {
+          "method": "GET",
+          "path": "/bank-reconciliation"
+        },
+        {
+          "method": "GET",
+          "path": "/bank-reconciliation/:reconciliationId"
+        },
+        {
+          "method": "POST",
+          "path": "/bank-reconciliation/:reconciliationId/auto-match"
+        },
+        {
+          "method": "POST",
+          "path": "/bank-reconciliation/:reconciliationId/match"
+        },
+        {
+          "method": "POST",
+          "path": "/bank-reconciliation/:reconciliationId/unmatch"
+        },
+        {
+          "method": "GET",
+          "path": "/bank-reconciliation/:reconciliationId/transactions"
+        },
+        {
+          "method": "GET",
+          "path": "/bank-reconciliation/:reconciliationId/exceptions"
+        },
+        {
+          "method": "POST",
+          "path": "/bank-reconciliation/:reconciliationId/adjustments"
+        },
+        {
+          "method": "POST",
+          "path": "/bank-reconciliation/:reconciliationId/approve"
+        },
+        {
+          "method": "POST",
+          "path": "/bank-reconciliation/:reconciliationId/complete"
+        },
+        {
+          "method": "POST",
+          "path": "/bank-reconciliation/:reconciliationId/reject"
+        },
+        {
+          "method": "POST",
+          "path": "/bank-reconciliation/:reconciliationId/reopen"
+        },
+        {
+          "method": "POST",
+          "path": "/bank-reconciliation/:reconciliationId/archive"
+        },
+        {
+          "method": "POST",
+          "path": "/bank-reconciliation/:reconciliationId/ai-suggest"
+        },
+        {
+          "method": "POST",
+          "path": "/bank-reconciliation/:reconciliationId/ai-accept"
+        },
+        {
+          "method": "GET",
+          "path": "/bank-reconciliation/:reconciliationId/report"
+        },
+        {
+          "method": "GET",
+          "path": "/bank-reconciliation/:reconciliationId/report/export"
+        },
+        {
+          "method": "GET",
+          "path": "/cash-locations"
+        },
+        {
+          "method": "POST",
+          "path": "/cash-locations"
+        },
+        {
+          "method": "GET",
+          "path": "/cash-locations/:cashLocationId"
+        },
+        {
+          "method": "PATCH",
+          "path": "/cash-locations/:cashLocationId"
+        },
+        {
+          "method": "POST",
+          "path": "/cash-locations/:cashLocationId/close"
+        },
+        {
+          "method": "POST",
+          "path": "/cash-locations/:cashLocationId/archive"
+        },
+        {
+          "method": "GET",
+          "path": "/cash-locations/:cashLocationId/transactions"
+        },
+        {
+          "method": "POST",
+          "path": "/cash-locations/:cashLocationId/counts"
+        },
+        {
+          "method": "POST",
+          "path": "/cash-locations/:cashLocationId/petty-cash/advances"
+        },
+        {
+          "method": "POST",
+          "path": "/cash-locations/:cashLocationId/petty-cash/replenish"
+        },
+        {
+          "method": "GET",
+          "path": "/cash-transfers"
+        },
+        {
+          "method": "POST",
+          "path": "/cash-transfers"
+        },
+        {
+          "method": "GET",
+          "path": "/cash-transfers/:transferId"
+        },
+        {
+          "method": "POST",
+          "path": "/cash-transfers/:transferId/approve"
+        },
+        {
+          "method": "POST",
+          "path": "/cash-transfers/:transferId/reject"
+        },
+        {
+          "method": "POST",
+          "path": "/cash-transfers/:transferId/cancel"
+        },
+        {
+          "method": "GET",
+          "path": "/cash-counts"
+        },
+        {
+          "method": "GET",
+          "path": "/cash-counts/:countId"
+        },
+        {
+          "method": "POST",
+          "path": "/cash-counts/:countId/resolve"
+        },
+        {
+          "method": "GET",
+          "path": "/petty-cash/advances"
+        },
+        {
+          "method": "GET",
+          "path": "/petty-cash/advances/:advanceId"
+        },
+        {
+          "method": "POST",
+          "path": "/petty-cash/advances/:advanceId/settle"
+        },
+        {
+          "method": "GET",
+          "path": "/cash-management/forecast"
+        },
+        {
+          "method": "GET",
+          "path": "/expense-budgets"
+        },
+        {
+          "method": "POST",
+          "path": "/expense-budgets"
+        },
+        {
+          "method": "GET",
+          "path": "/expense-budgets/:budgetId"
+        },
+        {
+          "method": "GET",
+          "path": "/expenses"
+        },
+        {
+          "method": "POST",
+          "path": "/expenses"
+        },
+        {
+          "method": "GET",
+          "path": "/expenses/export"
+        },
+        {
+          "method": "POST",
+          "path": "/expenses/bulk/approve"
+        },
+        {
+          "method": "POST",
+          "path": "/expenses/bulk/reject"
+        },
+        {
+          "method": "POST",
+          "path": "/expenses/bulk/tag"
+        },
+        {
+          "method": "POST",
+          "path": "/expenses/bulk/archive"
+        },
+        {
+          "method": "POST",
+          "path": "/expenses/bulk/comment"
+        },
+        {
+          "method": "POST",
+          "path": "/expenses/bulk/assign-reviewer"
+        },
+        {
+          "method": "POST",
+          "path": "/expenses/bulk/recalculate-budget"
+        },
+        {
+          "method": "POST",
+          "path": "/expenses/bulk/revalidate-policy"
+        },
+        {
+          "method": "GET",
+          "path": "/expenses/:expenseId"
+        },
+        {
+          "method": "PATCH",
+          "path": "/expenses/:expenseId"
+        },
+        {
+          "method": "POST",
+          "path": "/expenses/:expenseId/receipts"
+        },
+        {
+          "method": "POST",
+          "path": "/expenses/:expenseId/receipts/:attachmentId/verify"
+        },
+        {
+          "method": "POST",
+          "path": "/expenses/:expenseId/receipts/:attachmentId/correct-ocr"
+        },
+        {
+          "method": "POST",
+          "path": "/expenses/:expenseId/submit"
+        },
+        {
+          "method": "POST",
+          "path": "/expenses/:expenseId/approve"
+        },
+        {
+          "method": "POST",
+          "path": "/expenses/:expenseId/reject"
+        },
+        {
+          "method": "POST",
+          "path": "/expenses/:expenseId/return"
+        },
+        {
+          "method": "POST",
+          "path": "/expenses/:expenseId/cancel"
+        },
+        {
+          "method": "POST",
+          "path": "/expenses/:expenseId/reimburse"
+        },
+        {
+          "method": "POST",
+          "path": "/expenses/:expenseId/close"
+        },
+        {
+          "method": "POST",
+          "path": "/vendors/:vendorId/bank-accounts"
+        },
+        {
+          "method": "GET",
+          "path": "/vendors/:vendorId/bank-accounts"
+        },
+        {
+          "method": "POST",
+          "path": "/vendors/:vendorId/bank-accounts/:bankAccountRecordId/set-primary"
+        },
+        {
+          "method": "POST",
+          "path": "/vendor-payments/advances"
+        },
+        {
+          "method": "GET",
+          "path": "/vendor-payments/suggest-timing"
+        },
+        {
+          "method": "POST",
+          "path": "/vendor-payments/file"
+        },
+        {
+          "method": "GET",
+          "path": "/vendor-payments"
+        },
+        {
+          "method": "POST",
+          "path": "/vendor-payments"
+        },
+        {
+          "method": "GET",
+          "path": "/vendor-payments/:vendorPaymentId"
+        },
+        {
+          "method": "POST",
+          "path": "/vendor-payments/:vendorPaymentId/approve"
+        },
+        {
+          "method": "POST",
+          "path": "/vendor-payments/:vendorPaymentId/reject"
+        },
+        {
+          "method": "POST",
+          "path": "/vendor-payments/:vendorPaymentId/cancel"
+        },
+        {
+          "method": "POST",
+          "path": "/vendor-payments/:vendorPaymentId/hold"
+        },
+        {
+          "method": "POST",
+          "path": "/vendor-payments/:vendorPaymentId/release-hold"
+        },
+        {
+          "method": "POST",
+          "path": "/vendor-payments/:vendorPaymentId/schedule"
+        },
+        {
+          "method": "POST",
+          "path": "/vendor-payments/:vendorPaymentId/execute"
+        },
+        {
+          "method": "GET",
+          "path": "/payment-batches"
+        },
+        {
+          "method": "POST",
+          "path": "/payment-batches"
+        },
+        {
+          "method": "GET",
+          "path": "/payment-batches/:batchId"
+        },
+        {
+          "method": "POST",
+          "path": "/payment-batches/:batchId/execute"
+        },
+        {
+          "method": "POST",
+          "path": "/customer-payments/deposits"
+        },
+        {
+          "method": "GET",
+          "path": "/customer-payments/analytics"
+        },
+        {
+          "method": "GET",
+          "path": "/customer-credits"
+        },
+        {
+          "method": "GET",
+          "path": "/customer-payments/customers/:customerId/risk-score"
+        },
+        {
+          "method": "POST",
+          "path": "/customer-payments/:paymentId/allocate"
+        },
+        {
+          "method": "GET",
+          "path": "/customer-payments"
+        },
+        {
+          "method": "POST",
+          "path": "/customer-payments"
+        },
+        {
+          "method": "GET",
+          "path": "/customer-payments/:collectionId"
+        },
+        {
+          "method": "POST",
+          "path": "/customer-payments/:collectionId/collect"
+        },
+        {
+          "method": "POST",
+          "path": "/customer-payments/:collectionId/capture"
+        },
+        {
+          "method": "POST",
+          "path": "/customer-payments/:collectionId/dispute"
+        },
+        {
+          "method": "POST",
+          "path": "/customer-payments/:collectionId/write-off"
+        },
+        {
+          "method": "POST",
+          "path": "/customer-payments/:collectionId/cancel"
+        },
+        {
+          "method": "POST",
+          "path": "/customer-payments/:collectionId/close"
+        },
+        {
+          "method": "POST",
+          "path": "/customer-payments/:collectionId/installments"
+        },
+        {
+          "method": "POST",
+          "path": "/customer-payments/:collectionId/installments/:installmentNumber/reschedule"
+        },
+        {
+          "method": "POST",
+          "path": "/customer-payments/:collectionId/installments/cancel"
+        },
+        {
+          "method": "POST",
+          "path": "/customer-payments/:collectionId/installments/settle-early"
+        },
+        {
+          "method": "POST",
+          "path": "/customer-payments/:collectionId/payment-link"
+        },
+        {
+          "method": "POST",
+          "path": "/customer-payments/:collectionId/send-reminder"
+        },
+        {
+          "method": "GET",
+          "path": "/customer-payments/:collectionId/reminders"
+        },
+        {
+          "method": "POST",
+          "path": "/customer-payments/:collectionId/attachments"
+        },
+        {
+          "method": "GET",
+          "path": "/customer-payments/:collectionId/attachments"
+        },
+        {
+          "method": "POST",
+          "path": "/customer-payments/:collectionId/comments"
+        },
+        {
+          "method": "GET",
+          "path": "/customer-payments/:collectionId/comments"
+        },
+        {
+          "method": "POST",
+          "path": "/customer-payments/:collectionId/timeline"
+        },
+        {
+          "method": "POST",
+          "path": "/customer-payments/:collectionId/reminders/send"
+        },
+        {
+          "method": "POST",
+          "path": "/customer-payments/:collectionId/payment-link/regenerate"
+        },
+        {
+          "method": "POST",
+          "path": "/customer-payments/:collectionId/allocate-advance"
+        },
+        {
+          "method": "POST",
+          "path": "/customer-payments/:collectionId/writeoff"
+        },
+        {
+          "method": "POST",
+          "path": "/customer-payments/:collectionId/reopen"
+        },
+        {
+          "method": "GET",
+          "path": "/customer-payments/:collectionId/audit"
+        },
+        {
+          "method": "GET",
+          "path": "/customer-payments/:collectionId/history"
+        },
+        {
+          "method": "POST",
+          "path": "/customers/:customerId/portal-token"
+        },
+        {
+          "method": "GET",
+          "path": "/wallets"
+        },
+        {
+          "method": "POST",
+          "path": "/wallets"
+        },
+        {
+          "method": "GET",
+          "path": "/wallets/:walletId"
+        },
+        {
+          "method": "GET",
+          "path": "/wallets/:walletId/transactions"
+        },
+        {
+          "method": "POST",
+          "path": "/wallets/:walletId/topup"
+        },
+        {
+          "method": "POST",
+          "path": "/wallets/:walletId/purchase"
+        },
+        {
+          "method": "POST",
+          "path": "/wallets/:walletId/refund"
+        },
+        {
+          "method": "POST",
+          "path": "/wallets/:walletId/transfer"
+        },
+        {
+          "method": "POST",
+          "path": "/wallets/:walletId/withdraw"
+        },
+        {
+          "method": "POST",
+          "path": "/wallets/:walletId/suspend"
+        },
+        {
+          "method": "POST",
+          "path": "/wallets/:walletId/reactivate"
+        },
+        {
+          "method": "POST",
+          "path": "/wallets/:walletId/close"
+        },
+        {
+          "method": "GET",
+          "path": "/subscriptions"
+        },
+        {
+          "method": "POST",
+          "path": "/subscriptions"
+        },
+        {
+          "method": "GET",
+          "path": "/subscriptions/:subscriptionId"
+        },
+        {
+          "method": "POST",
+          "path": "/subscriptions/:subscriptionId/bill"
+        },
+        {
+          "method": "POST",
+          "path": "/subscriptions/:subscriptionId/usage"
+        },
+        {
+          "method": "POST",
+          "path": "/subscriptions/:subscriptionId/change-plan"
+        },
+        {
+          "method": "POST",
+          "path": "/subscriptions/:subscriptionId/pause"
+        },
+        {
+          "method": "POST",
+          "path": "/subscriptions/:subscriptionId/resume"
+        },
+        {
+          "method": "POST",
+          "path": "/subscriptions/:subscriptionId/cancel"
+        },
+        {
+          "method": "POST",
+          "path": "/subscriptions/:subscriptionId/terminate"
+        },
+        {
+          "method": "GET",
+          "path": "/collection-campaigns"
+        },
+        {
+          "method": "POST",
+          "path": "/collection-campaigns"
+        },
+        {
+          "method": "GET",
+          "path": "/collection-campaigns/:campaignId"
+        },
+        {
+          "method": "GET",
+          "path": "/collection-campaigns/:campaignId/preview"
+        },
+        {
+          "method": "POST",
+          "path": "/collection-campaigns/:campaignId/run"
+        },
+        {
+          "method": "POST",
+          "path": "/collection-campaigns/:campaignId/cancel"
+        },
+        {
+          "method": "GET",
+          "path": "/webhook-subscriptions"
+        },
+        {
+          "method": "POST",
+          "path": "/webhook-subscriptions"
+        },
+        {
+          "method": "GET",
+          "path": "/webhook-subscriptions/monitoring/summary"
+        },
+        {
+          "method": "GET",
+          "path": "/webhook-subscriptions/:subscriptionId"
+        },
+        {
+          "method": "POST",
+          "path": "/webhook-subscriptions/:subscriptionId/rotate-secret"
+        },
+        {
+          "method": "POST",
+          "path": "/webhook-subscriptions/:subscriptionId/suspend"
+        },
+        {
+          "method": "POST",
+          "path": "/webhook-subscriptions/:subscriptionId/reactivate"
+        },
+        {
+          "method": "POST",
+          "path": "/webhook-subscriptions/:subscriptionId/disable"
+        },
+        {
+          "method": "GET",
+          "path": "/webhook-subscriptions/:subscriptionId/deliveries"
+        },
+        {
+          "method": "POST",
+          "path": "/webhook-deliveries/:deliveryId/replay"
+        },
+        {
+          "method": "GET",
+          "path": "/currencies/convert"
+        },
+        {
+          "method": "POST",
+          "path": "/currency/convert"
+        },
+        {
+          "method": "GET",
+          "path": "/currencies/exposure"
+        },
+        {
+          "method": "GET",
+          "path": "/currencies/dashboard"
+        },
+        {
+          "method": "POST",
+          "path": "/currencies/revalue"
+        },
+        {
+          "method": "GET",
+          "path": "/currencies/revaluations"
+        },
+        {
+          "method": "GET",
+          "path": "/currencies/conversions"
+        },
+        {
+          "method": "GET",
+          "path": "/exchange-rates"
+        },
+        {
+          "method": "POST",
+          "path": "/exchange-rates"
+        },
+        {
+          "method": "POST",
+          "path": "/exchange-rates/import"
+        },
+        {
+          "method": "POST",
+          "path": "/exchange-rates/:exchangeRateId/approve"
+        },
+        {
+          "method": "POST",
+          "path": "/exchange-rates/:exchangeRateId/reject"
+        },
+        {
+          "method": "GET",
+          "path": "/exchange-rates/:exchangeRateId"
+        },
+        {
+          "method": "GET",
+          "path": "/currencies"
+        },
+        {
+          "method": "POST",
+          "path": "/currencies"
+        },
+        {
+          "method": "GET",
+          "path": "/currencies/:currencyId"
+        },
+        {
+          "method": "POST",
+          "path": "/currencies/:currencyId/submit"
+        },
+        {
+          "method": "POST",
+          "path": "/currencies/:currencyId/approve"
+        },
+        {
+          "method": "POST",
+          "path": "/currencies/:currencyId/activate"
+        },
+        {
+          "method": "POST",
+          "path": "/currencies/:currencyId/suspend"
+        },
+        {
+          "method": "POST",
+          "path": "/currencies/:currencyId/archive"
+        },
+        {
+          "method": "POST",
+          "path": "/currencies/:currencyId/deprecate"
+        },
+        {
+          "method": "POST",
+          "path": "/tax/calculate"
+        },
+        {
+          "method": "POST",
+          "path": "/tax/withholding/calculate"
+        },
+        {
+          "method": "GET",
+          "path": "/tax/reports"
+        },
+        {
+          "method": "POST",
+          "path": "/tax/reports"
+        },
+        {
+          "method": "GET",
+          "path": "/tax-exemptions"
+        },
+        {
+          "method": "POST",
+          "path": "/tax-exemptions"
+        },
+        {
+          "method": "POST",
+          "path": "/tax-exemptions/:exemptionId/revoke"
+        },
+        {
+          "method": "GET",
+          "path": "/tax-rules"
+        },
+        {
+          "method": "POST",
+          "path": "/tax-rules"
+        },
+        {
+          "method": "GET",
+          "path": "/tax-rules/:taxRuleId"
+        },
+        {
+          "method": "POST",
+          "path": "/tax-rules/:taxRuleId/approve"
+        },
+        {
+          "method": "POST",
+          "path": "/tax-rules/:taxRuleId/archive"
+        },
+        {
+          "method": "POST",
+          "path": "/pricing/calculate"
+        },
+        {
+          "method": "GET",
+          "path": "/coupons"
+        },
+        {
+          "method": "POST",
+          "path": "/coupons"
+        },
+        {
+          "method": "POST",
+          "path": "/coupons/:couponId/revoke"
+        },
+        {
+          "method": "GET",
+          "path": "/price-lists"
+        },
+        {
+          "method": "POST",
+          "path": "/price-lists"
+        },
+        {
+          "method": "GET",
+          "path": "/price-lists/:priceListId/entries"
+        },
+        {
+          "method": "POST",
+          "path": "/price-lists/:priceListId/entries"
+        },
+        {
+          "method": "GET",
+          "path": "/pricing-rules"
+        },
+        {
+          "method": "POST",
+          "path": "/pricing-rules"
+        },
+        {
+          "method": "GET",
+          "path": "/pricing-rules/:ruleId"
+        },
+        {
+          "method": "POST",
+          "path": "/pricing-rules/:ruleId/approve"
+        },
+        {
+          "method": "POST",
+          "path": "/pricing-rules/:ruleId/archive"
+        },
+        {
+          "method": "POST",
+          "path": "/approvals/start"
+        },
+        {
+          "method": "GET",
+          "path": "/approvals"
+        },
+        {
+          "method": "GET",
+          "path": "/approvals/:approvalId"
+        },
+        {
+          "method": "POST",
+          "path": "/approvals/:approvalId/decision"
+        },
+        {
+          "method": "POST",
+          "path": "/approvals/:approvalId/cancel"
+        },
+        {
+          "method": "GET",
+          "path": "/approval-delegations"
+        },
+        {
+          "method": "POST",
+          "path": "/approval-delegations"
+        },
+        {
+          "method": "POST",
+          "path": "/approval-delegations/:delegationId/revoke"
+        },
+        {
+          "method": "GET",
+          "path": "/approval-workflows"
+        },
+        {
+          "method": "POST",
+          "path": "/approval-workflows"
+        },
+        {
+          "method": "GET",
+          "path": "/approval-workflows/:definitionId"
+        },
+        {
+          "method": "POST",
+          "path": "/approval-workflows/:definitionId/approve"
+        },
+        {
+          "method": "POST",
+          "path": "/approval-workflows/:definitionId/archive"
+        },
+        {
+          "method": "POST",
+          "path": "/settlements/reconcile"
+        },
+        {
+          "method": "GET",
+          "path": "/settlements/gateway-report"
+        },
+        {
+          "method": "GET",
+          "path": "/settlement-batches"
+        },
+        {
+          "method": "POST",
+          "path": "/settlement-batches"
+        },
+        {
+          "method": "GET",
+          "path": "/settlement-batches/:batchId"
+        },
+        {
+          "method": "POST",
+          "path": "/settlement-batches/:batchId/send"
+        },
+        {
+          "method": "POST",
+          "path": "/settlement-batches/:batchId/complete"
+        },
+        {
+          "method": "GET",
+          "path": "/settlements"
+        },
+        {
+          "method": "POST",
+          "path": "/settlements"
+        },
+        {
+          "method": "GET",
+          "path": "/settlements/:settlementId"
+        },
+        {
+          "method": "POST",
+          "path": "/settlements/:settlementId/cancel"
+        },
+        {
+          "method": "POST",
+          "path": "/settlements/:settlementId/complete"
+        },
+        {
+          "method": "POST",
+          "path": "/settlements/:settlementId/adjustments"
+        },
+        {
+          "method": "GET",
+          "path": "/report-schedules"
+        },
+        {
+          "method": "POST",
+          "path": "/report-schedules"
+        },
+        {
+          "method": "POST",
+          "path": "/report-schedules/:scheduleId/cancel"
+        },
+        {
+          "method": "POST",
+          "path": "/financial-reports/generate"
+        },
+        {
+          "method": "GET",
+          "path": "/financial-reports"
+        },
+        {
+          "method": "GET",
+          "path": "/financial-reports/:reportId"
+        },
+        {
+          "method": "GET",
+          "path": "/financial-reports/:reportId/drill-down"
+        },
+        {
+          "method": "POST",
+          "path": "/financial-reports/:reportId/export"
+        },
+        {
+          "method": "POST",
+          "path": "/financial-reports/:reportId/archive"
+        },
+        {
+          "method": "POST",
+          "path": "/financial-reports/:reportId/cancel"
+        },
+        {
+          "method": "GET",
+          "path": "/financial-dashboard/executive"
+        },
+        {
+          "method": "GET",
+          "path": "/financial-dashboard/cfo"
+        },
+        {
+          "method": "GET",
+          "path": "/financial-dashboard/treasury"
+        },
+        {
+          "method": "GET",
+          "path": "/financial-dashboard/accounts-receivable"
+        },
+        {
+          "method": "GET",
+          "path": "/financial-dashboard/accounts-payable"
+        },
+        {
+          "method": "GET",
+          "path": "/financial-dashboard/revenue"
+        },
+        {
+          "method": "GET",
+          "path": "/financial-dashboard/expense"
+        },
+        {
+          "method": "GET",
+          "path": "/financial-dashboard/cash-flow"
+        },
+        {
+          "method": "GET",
+          "path": "/financial-dashboard/tax"
+        },
+        {
+          "method": "GET",
+          "path": "/financial-dashboard/custom"
+        },
+        {
+          "method": "GET",
+          "path": "/financial-dashboard/kpis"
+        },
+        {
+          "method": "GET",
+          "path": "/financial-dashboard/trends"
+        },
+        {
+          "method": "GET",
+          "path": "/financial-dashboard/drill-through"
+        },
+        {
+          "method": "GET",
+          "path": "/financial-dashboard/ceo"
+        },
+        {
+          "method": "GET",
+          "path": "/financial-dashboard/board"
+        },
+        {
+          "method": "GET",
+          "path": "/financial-dashboard/department"
+        },
+        {
+          "method": "POST",
+          "path": "/financial-dashboard/refresh"
+        },
+        {
+          "method": "GET",
+          "path": "/dashboard-alerts"
+        },
+        {
+          "method": "POST",
+          "path": "/dashboard-alerts/:id/acknowledge"
+        },
+        {
+          "method": "GET",
+          "path": "/dashboard-preferences/:dashboardType"
+        },
+        {
+          "method": "PUT",
+          "path": "/dashboard-preferences/:dashboardType"
+        },
+        {
+          "method": "POST",
+          "path": "/financial-analytics/run"
+        },
+        {
+          "method": "POST",
+          "path": "/financial-analytics/refresh"
+        },
+        {
+          "method": "GET",
+          "path": "/financial-analytics"
+        },
+        {
+          "method": "GET",
+          "path": "/financial-analytics/:analysisId"
+        },
+        {
+          "method": "POST",
+          "path": "/financial-analytics/:analysisId/cancel"
+        },
+        {
+          "method": "POST",
+          "path": "/financial-analytics/:analysisId/archive"
+        },
+        {
+          "method": "GET",
+          "path": "/audit-events/verify-integrity"
+        },
+        {
+          "method": "GET",
+          "path": "/audit-events/role-conflicts"
+        },
+        {
+          "method": "GET",
+          "path": "/audit-events/investigation/timeline"
+        },
+        {
+          "method": "GET",
+          "path": "/audit-events/investigation/user-activity"
+        },
+        {
+          "method": "GET",
+          "path": "/audit-events/investigation/correlation"
+        },
+        {
+          "method": "POST",
+          "path": "/audit-events/export"
+        },
+        {
+          "method": "GET",
+          "path": "/audit-events/segregation-of-duties/:entityType/:entityId"
+        },
+        {
+          "method": "GET",
+          "path": "/audit-events"
+        },
+        {
+          "method": "POST",
+          "path": "/audit-events"
+        },
+        {
+          "method": "GET",
+          "path": "/audit-events/:eventId"
+        },
+        {
+          "method": "POST",
+          "path": "/audit-events/:eventId/legal-hold"
+        },
+        {
+          "method": "GET",
+          "path": "/compliance-policies"
+        },
+        {
+          "method": "POST",
+          "path": "/compliance-policies"
+        },
+        {
+          "method": "POST",
+          "path": "/compliance-policies/:policyId/status"
+        },
+        {
+          "method": "GET",
+          "path": "/planning-dashboards"
+        },
+        {
+          "method": "POST",
+          "path": "/budgets"
+        },
+        {
+          "method": "GET",
+          "path": "/budgets"
+        },
+        {
+          "method": "GET",
+          "path": "/budgets/:budgetId/versions"
+        },
+        {
+          "method": "GET",
+          "path": "/budgets/:budgetId"
+        },
+        {
+          "method": "PUT",
+          "path": "/budgets/:budgetId"
+        },
+        {
+          "method": "POST",
+          "path": "/budgets/:budgetId/submit"
+        },
+        {
+          "method": "POST",
+          "path": "/budgets/:budgetId/approve"
+        },
+        {
+          "method": "POST",
+          "path": "/budgets/:budgetId/publish"
+        },
+        {
+          "method": "POST",
+          "path": "/budgets/:budgetId/versions"
+        },
+        {
+          "method": "POST",
+          "path": "/forecasts"
+        },
+        {
+          "method": "GET",
+          "path": "/forecasts"
+        },
+        {
+          "method": "GET",
+          "path": "/forecasts/:forecastId"
+        },
+        {
+          "method": "POST",
+          "path": "/variances/calculate"
+        },
+        {
+          "method": "GET",
+          "path": "/variances"
+        },
+        {
+          "method": "GET",
+          "path": "/variances/:varianceId"
+        },
+        {
+          "method": "POST",
+          "path": "/scenarios"
+        },
+        {
+          "method": "GET",
+          "path": "/scenarios"
+        },
+        {
+          "method": "POST",
+          "path": "/scenarios/:scenarioId/evaluate"
+        },
+        {
+          "method": "GET",
+          "path": "/scenarios/:scenarioId"
+        },
+        {
+          "method": "POST",
+          "path": "/treasury/cash-position"
+        },
+        {
+          "method": "GET",
+          "path": "/treasury/cash-position"
+        },
+        {
+          "method": "GET",
+          "path": "/treasury/dashboard"
+        },
+        {
+          "method": "POST",
+          "path": "/treasury/bank-sync"
+        },
+        {
+          "method": "POST",
+          "path": "/treasury/liquidity-forecast"
+        },
+        {
+          "method": "GET",
+          "path": "/treasury/liquidity-forecast"
+        },
+        {
+          "method": "POST",
+          "path": "/treasury/investments"
+        },
+        {
+          "method": "GET",
+          "path": "/treasury/investments"
+        },
+        {
+          "method": "GET",
+          "path": "/treasury/investments/:investmentId"
+        },
+        {
+          "method": "PATCH",
+          "path": "/treasury/investments/:investmentId/status"
+        },
+        {
+          "method": "POST",
+          "path": "/treasury/debts"
+        },
+        {
+          "method": "GET",
+          "path": "/treasury/debts"
+        },
+        {
+          "method": "GET",
+          "path": "/treasury/debts/:debtId"
+        },
+        {
+          "method": "PATCH",
+          "path": "/treasury/debts/:debtId"
+        },
+        {
+          "method": "POST",
+          "path": "/treasury/fx-exposure"
+        },
+        {
+          "method": "GET",
+          "path": "/treasury/fx-exposure"
+        },
+        {
+          "method": "POST",
+          "path": "/treasury/risk-assessment"
+        },
+        {
+          "method": "GET",
+          "path": "/treasury/risk-assessment"
+        },
+        {
+          "method": "POST",
+          "path": "/finance-governance/evaluate"
+        },
+        {
+          "method": "GET",
+          "path": "/finance-governance/policies"
+        },
+        {
+          "method": "POST",
+          "path": "/finance-governance/policies"
+        },
+        {
+          "method": "GET",
+          "path": "/finance-governance/sod-rules"
+        },
+        {
+          "method": "POST",
+          "path": "/finance-governance/sod-rules"
+        },
+        {
+          "method": "GET",
+          "path": "/finance-governance/evidence"
+        },
+        {
+          "method": "GET",
+          "path": "/finance-governance/evidence/:evidenceId"
+        },
+        {
+          "method": "GET",
+          "path": "/finance-governance/fraud-checks"
+        },
+        {
+          "method": "POST",
+          "path": "/finance-governance/fraud-checks"
+        },
+        {
+          "method": "GET",
+          "path": "/finance-governance/dashboard"
+        },
+        {
+          "method": "POST",
+          "path": "/finance-platform/process-request"
+        },
+        {
+          "method": "GET",
+          "path": "/finance-platform/architecture"
+        },
+        {
+          "method": "GET",
+          "path": "/finance-platform/health"
+        }
+      ]
+    },
+    {
+      "file": "FlightBookingRoutes.js",
+      "prefixes": [
+        "/api/v1/flight-bookings"
+      ],
+      "countPerPrefix": 13,
+      "totalEndpoints": 13,
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/"
+        },
+        {
+          "method": "POST",
+          "path": "/revalidate"
+        },
+        {
+          "method": "GET",
+          "path": "/:flightBookingId"
+        },
+        {
+          "method": "GET",
+          "path": "/:flightBookingId/pnr"
+        },
+        {
+          "method": "POST",
+          "path": "/:flightBookingId/ticket"
+        },
+        {
+          "method": "POST",
+          "path": "/:flightBookingId/void"
+        },
+        {
+          "method": "POST",
+          "path": "/:flightBookingId/reissue"
+        },
+        {
+          "method": "POST",
+          "path": "/:flightBookingId/refund"
+        },
+        {
+          "method": "POST",
+          "path": "/:flightBookingId/sync"
+        },
+        {
+          "method": "POST",
+          "path": "/:flightBookingId/ssr"
+        },
+        {
+          "method": "POST",
+          "path": "/:flightBookingId/osi"
+        },
+        {
+          "method": "POST",
+          "path": "/:flightBookingId/emd"
+        },
+        {
+          "method": "GET",
+          "path": "/:flightBookingId/history"
+        }
+      ]
+    },
+    {
+      "file": "FlightSearchRoutes.js",
+      "prefixes": [
+        "/api/v1/flight-search"
+      ],
+      "countPerPrefix": 9,
+      "totalEndpoints": 9,
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/"
+        },
+        {
+          "method": "GET",
+          "path": "/providers/status"
+        },
+        {
+          "method": "GET",
+          "path": "/:searchId"
+        },
+        {
+          "method": "POST",
+          "path": "/revalidate"
+        },
+        {
+          "method": "POST",
+          "path": "/calendar"
+        },
+        {
+          "method": "POST",
+          "path": "/fare-rules"
+        },
+        {
+          "method": "POST",
+          "path": "/baggage"
+        },
+        {
+          "method": "POST",
+          "path": "/seat-map"
+        },
+        {
+          "method": "POST",
+          "path": "/airline-pricing"
+        }
+      ]
+    },
+    {
+      "file": "HotelDistributionRoutes.js",
+      "prefixes": [
+        "/api/v1"
+      ],
+      "countPerPrefix": 10,
+      "totalEndpoints": 10,
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/hotel-search"
+        },
+        {
+          "method": "GET",
+          "path": "/hotel-providers/status"
+        },
+        {
+          "method": "GET",
+          "path": "/hotel-search/:searchId"
+        },
+        {
+          "method": "POST",
+          "path": "/hotel-search/revalidate"
+        },
+        {
+          "method": "POST",
+          "path": "/hotel-bookings"
+        },
+        {
+          "method": "GET",
+          "path": "/hotel-bookings/:hotelBookingId"
+        },
+        {
+          "method": "POST",
+          "path": "/hotel-bookings/:hotelBookingId/modify"
+        },
+        {
+          "method": "POST",
+          "path": "/hotel-bookings/:hotelBookingId/cancel"
+        },
+        {
+          "method": "POST",
+          "path": "/hotel-bookings/:hotelBookingId/voucher"
+        },
+        {
+          "method": "POST",
+          "path": "/hotel-bookings/:hotelBookingId/sync"
+        }
+      ]
+    },
+    {
+      "file": "InAppNotificationRoutes.js",
+      "prefixes": [
+        "/api/v1/notifications"
+      ],
+      "countPerPrefix": 5,
+      "totalEndpoints": 5,
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/"
+        },
+        {
+          "method": "GET",
+          "path": "/unread-count"
+        },
+        {
+          "method": "PATCH",
+          "path": "/read-all"
+        },
+        {
+          "method": "PATCH",
+          "path": "/:notificationId/read"
+        },
+        {
+          "method": "PATCH",
+          "path": "/:notificationId/archive"
+        }
+      ]
+    },
+    {
+      "file": "IncidentRoutes.js",
+      "prefixes": [
+        "/api/v1/incidents"
+      ],
+      "countPerPrefix": 15,
+      "totalEndpoints": 15,
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/analytics"
+        },
+        {
+          "method": "GET",
+          "path": "/"
+        },
+        {
+          "method": "POST",
+          "path": "/"
+        },
+        {
+          "method": "GET",
+          "path": "/:incidentId"
+        },
+        {
+          "method": "PATCH",
+          "path": "/:incidentId"
+        },
+        {
+          "method": "POST",
+          "path": "/:incidentId/assign"
+        },
+        {
+          "method": "POST",
+          "path": "/:incidentId/resolve"
+        },
+        {
+          "method": "POST",
+          "path": "/:incidentId/investigation/evidence"
+        },
+        {
+          "method": "POST",
+          "path": "/:incidentId/verify"
+        },
+        {
+          "method": "POST",
+          "path": "/:incidentId/close"
+        },
+        {
+          "method": "POST",
+          "path": "/:incidentId/reopen"
+        },
+        {
+          "method": "POST",
+          "path": "/:incidentId/attachments"
+        },
+        {
+          "method": "POST",
+          "path": "/:incidentId/comments"
+        },
+        {
+          "method": "POST",
+          "path": "/:incidentId/tasks"
+        },
+        {
+          "method": "POST",
+          "path": "/:incidentId/investigation"
+        }
+      ]
+    },
+    {
+      "file": "KPIDefinitionRoutes.js",
+      "prefixes": [
+        "/api/v1/reporting/kpi-definitions"
+      ],
+      "countPerPrefix": 4,
+      "totalEndpoints": 4,
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/"
+        },
+        {
+          "method": "GET",
+          "path": "/"
+        },
+        {
+          "method": "GET",
+          "path": "/:kpiKey"
+        },
+        {
+          "method": "POST",
+          "path": "/:kpiKey/deprecate"
+        }
+      ]
+    },
+    {
+      "file": "LeadRoutes.js",
+      "prefixes": [
+        "/api/v1/leads"
+      ],
+      "countPerPrefix": 6,
+      "totalEndpoints": 6,
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/pipeline"
+        },
+        {
+          "method": "GET",
+          "path": "/"
+        },
+        {
+          "method": "POST",
+          "path": "/"
+        },
+        {
+          "method": "GET",
+          "path": "/:leadId"
+        },
+        {
+          "method": "PATCH",
+          "path": "/:leadId"
+        },
+        {
+          "method": "POST",
+          "path": "/:leadId/convert"
+        }
+      ]
+    },
+    {
+      "file": "MarketingCampaignRoutes.js",
+      "prefixes": [
+        "/api/v1/campaigns"
+      ],
+      "countPerPrefix": 5,
+      "totalEndpoints": 5,
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/"
+        },
+        {
+          "method": "GET",
+          "path": "/"
+        },
+        {
+          "method": "GET",
+          "path": "/:campaignId"
+        },
+        {
+          "method": "POST",
+          "path": "/:campaignId/send"
+        },
+        {
+          "method": "GET",
+          "path": "/:campaignId/analytics"
+        }
+      ]
+    },
+    {
+      "file": "MerchantPlatformRoutes.js",
+      "prefixes": [
+        "/api/v1"
+      ],
+      "countPerPrefix": 15,
+      "totalEndpoints": 15,
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/merchants"
+        },
+        {
+          "method": "GET",
+          "path": "/merchants"
+        },
+        {
+          "method": "GET",
+          "path": "/merchants/:merchantId"
+        },
+        {
+          "method": "POST",
+          "path": "/merchants/:merchantId/verify"
+        },
+        {
+          "method": "POST",
+          "path": "/merchants/:merchantId/join"
+        },
+        {
+          "method": "POST",
+          "path": "/merchants/:merchantId/suspend"
+        },
+        {
+          "method": "POST",
+          "path": "/merchants/:merchantId/reactivate"
+        },
+        {
+          "method": "GET",
+          "path": "/merchants/:merchantId/wallet"
+        },
+        {
+          "method": "GET",
+          "path": "/billing-accounts"
+        },
+        {
+          "method": "POST",
+          "path": "/billing-accounts"
+        },
+        {
+          "method": "POST",
+          "path": "/billing-invoices"
+        },
+        {
+          "method": "POST",
+          "path": "/payment-methods"
+        },
+        {
+          "method": "POST",
+          "path": "/wallets"
+        },
+        {
+          "method": "POST",
+          "path": "/merchant/refund"
+        },
+        {
+          "method": "GET",
+          "path": "/billing-history"
+        }
+      ]
+    },
+    {
+      "file": "NotesTimelineRoutes.js",
+      "prefixes": [
+        "/api/v1"
+      ],
+      "countPerPrefix": 3,
+      "totalEndpoints": 3,
+      "endpoints": [
+        {
+          "method": "PATCH",
+          "path": "/notes/:noteId"
+        },
+        {
+          "method": "DELETE",
+          "path": "/notes/:noteId"
+        },
+        {
+          "method": "POST",
+          "path": "/timeline/:timelineEventId/attachments"
+        }
+      ]
+    },
+    {
+      "file": "NumberingRoutes.js",
+      "prefixes": [
+        "/api/v1/numbering"
+      ],
+      "countPerPrefix": 9,
+      "totalEndpoints": 9,
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/schemes"
+        },
+        {
+          "method": "GET",
+          "path": "/schemes"
+        },
+        {
+          "method": "GET",
+          "path": "/schemes/:schemeId"
+        },
+        {
+          "method": "PATCH",
+          "path": "/schemes/:schemeId"
+        },
+        {
+          "method": "POST",
+          "path": "/schemes/:schemeId/reset"
+        },
+        {
+          "method": "POST",
+          "path": "/generate"
+        },
+        {
+          "method": "POST",
+          "path": "/:generatedNumberId/register"
+        },
+        {
+          "method": "POST",
+          "path": "/:generatedNumberId/rollback"
+        },
+        {
+          "method": "GET",
+          "path": "/history"
+        }
+      ]
+    },
+    {
+      "file": "OrganisationRoutes.js",
+      "prefixes": [
+        "/api/v1"
+      ],
+      "countPerPrefix": 30,
+      "totalEndpoints": 30,
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/organisations"
+        },
+        {
+          "method": "GET",
+          "path": "/organisations"
+        },
+        {
+          "method": "GET",
+          "path": "/organisations/:organisationId"
+        },
+        {
+          "method": "PATCH",
+          "path": "/organisations/:organisationId"
+        },
+        {
+          "method": "POST",
+          "path": "/legal-entities"
+        },
+        {
+          "method": "GET",
+          "path": "/legal-entities"
+        },
+        {
+          "method": "GET",
+          "path": "/legal-entities/:legalEntityId"
+        },
+        {
+          "method": "PATCH",
+          "path": "/legal-entities/:legalEntityId"
+        },
+        {
+          "method": "POST",
+          "path": "/legal-entities/:legalEntityId/activate"
+        },
+        {
+          "method": "POST",
+          "path": "/business-units"
+        },
+        {
+          "method": "GET",
+          "path": "/business-units"
+        },
+        {
+          "method": "GET",
+          "path": "/business-units/:businessUnitId"
+        },
+        {
+          "method": "PATCH",
+          "path": "/business-units/:businessUnitId"
+        },
+        {
+          "method": "POST",
+          "path": "/companies"
+        },
+        {
+          "method": "GET",
+          "path": "/companies"
+        },
+        {
+          "method": "GET",
+          "path": "/companies/:companyId"
+        },
+        {
+          "method": "PATCH",
+          "path": "/companies/:companyId"
+        },
+        {
+          "method": "POST",
+          "path": "/branches"
+        },
+        {
+          "method": "GET",
+          "path": "/branches"
+        },
+        {
+          "method": "GET",
+          "path": "/branches/:branchId"
+        },
+        {
+          "method": "PATCH",
+          "path": "/branches/:branchId"
+        },
+        {
+          "method": "POST",
+          "path": "/branches/:branchId/close"
+        },
+        {
+          "method": "POST",
+          "path": "/departments"
+        },
+        {
+          "method": "GET",
+          "path": "/departments"
+        },
+        {
+          "method": "GET",
+          "path": "/departments/:departmentId"
+        },
+        {
+          "method": "PATCH",
+          "path": "/departments/:departmentId"
+        },
+        {
+          "method": "POST",
+          "path": "/teams"
+        },
+        {
+          "method": "GET",
+          "path": "/teams"
+        },
+        {
+          "method": "GET",
+          "path": "/teams/:teamId"
+        },
+        {
+          "method": "PATCH",
+          "path": "/teams/:teamId"
+        }
+      ]
+    },
+    {
+      "file": "OwnerDashboardRoutes.js",
+      "prefixes": [
+        "/api/v1/dashboard/overview"
+      ],
+      "countPerPrefix": 1,
+      "totalEndpoints": 1,
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/"
+        }
+      ]
+    },
+    {
+      "file": "PackageRoutes.js",
+      "prefixes": [
+        "/api/v1/packages"
+      ],
+      "countPerPrefix": 77,
+      "totalEndpoints": 77,
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/room-types"
+        },
+        {
+          "method": "POST",
+          "path": "/room-types"
+        },
+        {
+          "method": "PATCH",
+          "path": "/room-types/:roomTypeId"
+        },
+        {
+          "method": "GET",
+          "path": "/transport-vehicles"
+        },
+        {
+          "method": "POST",
+          "path": "/transport-vehicles"
+        },
+        {
+          "method": "PATCH",
+          "path": "/transport-vehicles/:vehicleId"
+        },
+        {
+          "method": "GET",
+          "path": "/hotel-catalog"
+        },
+        {
+          "method": "POST",
+          "path": "/hotel-catalog"
+        },
+        {
+          "method": "PATCH",
+          "path": "/hotel-catalog/:hotelCatalogId"
+        },
+        {
+          "method": "GET",
+          "path": "/hotel-rates"
+        },
+        {
+          "method": "POST",
+          "path": "/hotel-rates"
+        },
+        {
+          "method": "POST",
+          "path": "/hotel-rates/bulk"
+        },
+        {
+          "method": "PATCH",
+          "path": "/hotel-rates/bulk-status"
+        },
+        {
+          "method": "GET",
+          "path": "/hotel-rates/export"
+        },
+        {
+          "method": "PATCH",
+          "path": "/hotel-rates/:rateId"
+        },
+        {
+          "method": "POST",
+          "path": "/hotel-rates/:rateId/clone"
+        },
+        {
+          "method": "GET",
+          "path": "/transport-rates"
+        },
+        {
+          "method": "POST",
+          "path": "/transport-rates"
+        },
+        {
+          "method": "POST",
+          "path": "/transport-rates/bulk"
+        },
+        {
+          "method": "PATCH",
+          "path": "/transport-rates/bulk-status"
+        },
+        {
+          "method": "GET",
+          "path": "/transport-rates/export"
+        },
+        {
+          "method": "PATCH",
+          "path": "/transport-rates/:rateId"
+        },
+        {
+          "method": "POST",
+          "path": "/transport-rates/:rateId/clone"
+        },
+        {
+          "method": "GET",
+          "path": "/flight-rates"
+        },
+        {
+          "method": "POST",
+          "path": "/flight-rates"
+        },
+        {
+          "method": "POST",
+          "path": "/flight-rates/bulk"
+        },
+        {
+          "method": "PATCH",
+          "path": "/flight-rates/bulk-status"
+        },
+        {
+          "method": "GET",
+          "path": "/flight-rates/export"
+        },
+        {
+          "method": "PATCH",
+          "path": "/flight-rates/:rateId"
+        },
+        {
+          "method": "POST",
+          "path": "/flight-rates/:rateId/clone"
+        },
+        {
+          "method": "GET",
+          "path": "/visa-rates"
+        },
+        {
+          "method": "POST",
+          "path": "/visa-rates"
+        },
+        {
+          "method": "POST",
+          "path": "/visa-rates/bulk"
+        },
+        {
+          "method": "PATCH",
+          "path": "/visa-rates/bulk-status"
+        },
+        {
+          "method": "GET",
+          "path": "/visa-rates/export"
+        },
+        {
+          "method": "PATCH",
+          "path": "/visa-rates/:rateId"
+        },
+        {
+          "method": "POST",
+          "path": "/visa-rates/:rateId/clone"
+        },
+        {
+          "method": "GET",
+          "path": "/service-rates"
+        },
+        {
+          "method": "POST",
+          "path": "/service-rates"
+        },
+        {
+          "method": "POST",
+          "path": "/service-rates/bulk"
+        },
+        {
+          "method": "PATCH",
+          "path": "/service-rates/bulk-status"
+        },
+        {
+          "method": "GET",
+          "path": "/service-rates/export"
+        },
+        {
+          "method": "PATCH",
+          "path": "/service-rates/:rateId"
+        },
+        {
+          "method": "POST",
+          "path": "/service-rates/:rateId/clone"
+        },
+        {
+          "method": "GET",
+          "path": "/markup-rules"
+        },
+        {
+          "method": "POST",
+          "path": "/markup-rules"
+        },
+        {
+          "method": "PATCH",
+          "path": "/markup-rules/:ruleId"
+        },
+        {
+          "method": "GET",
+          "path": "/suppliers"
+        },
+        {
+          "method": "POST",
+          "path": "/suppliers"
+        },
+        {
+          "method": "PATCH",
+          "path": "/suppliers/:supplierId"
+        },
+        {
+          "method": "GET",
+          "path": "/commission-rules"
+        },
+        {
+          "method": "POST",
+          "path": "/commission-rules"
+        },
+        {
+          "method": "GET",
+          "path": "/package-templates"
+        },
+        {
+          "method": "PATCH",
+          "path": "/package-templates/:templateId"
+        },
+        {
+          "method": "POST",
+          "path": "/package-templates/:templateId/clone"
+        },
+        {
+          "method": "GET",
+          "path": "/quotations/:quotationId"
+        },
+        {
+          "method": "POST",
+          "path": "/quotations/:quotationId/pdf"
+        },
+        {
+          "method": "POST",
+          "path": "/quotations/:quotationId/send"
+        },
+        {
+          "method": "POST",
+          "path": "/quotations/:quotationId/convert-to-booking"
+        },
+        {
+          "method": "GET",
+          "path": "/"
+        },
+        {
+          "method": "POST",
+          "path": "/"
+        },
+        {
+          "method": "POST",
+          "path": "/compare"
+        },
+        {
+          "method": "GET",
+          "path": "/analytics/summary"
+        },
+        {
+          "method": "GET",
+          "path": "/:packageId"
+        },
+        {
+          "method": "GET",
+          "path": "/:packageId/room-combinations"
+        },
+        {
+          "method": "GET",
+          "path": "/:packageId/dynamic-pricing-suggestion"
+        },
+        {
+          "method": "PATCH",
+          "path": "/:packageId"
+        },
+        {
+          "method": "POST",
+          "path": "/:packageId/link-booking"
+        },
+        {
+          "method": "POST",
+          "path": "/:packageId/convert-to-booking"
+        },
+        {
+          "method": "POST",
+          "path": "/:packageId/save-as-template"
+        },
+        {
+          "method": "POST",
+          "path": "/:packageId/calculate"
+        },
+        {
+          "method": "POST",
+          "path": "/:packageId/finalize"
+        },
+        {
+          "method": "GET",
+          "path": "/:packageId/quotations"
+        },
+        {
+          "method": "POST",
+          "path": "/:packageId/quotations"
+        },
+        {
+          "method": "GET",
+          "path": "/:packageId/flyers"
+        },
+        {
+          "method": "POST",
+          "path": "/:packageId/flyers"
+        },
+        {
+          "method": "POST",
+          "path": "/:packageId/whatsapp-message"
+        }
+      ]
+    },
+    {
+      "file": "PaymentGatewayRoutes.js",
+      "prefixes": [
+        "/api/v1/payment-gateways"
+      ],
+      "countPerPrefix": 5,
+      "totalEndpoints": 5,
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/connect/stripe"
+        },
+        {
+          "method": "GET",
+          "path": "/oauth/stripe/callback"
+        },
+        {
+          "method": "POST",
+          "path": "/disconnect"
+        },
+        {
+          "method": "GET",
+          "path": "/"
+        },
+        {
+          "method": "POST",
+          "path": "/checkout"
+        }
+      ]
+    },
+    {
+      "file": "PaymentWebhookRoutes.js",
+      "prefixes": [
+        "/api/v1/webhooks"
+      ],
+      "countPerPrefix": 1,
+      "totalEndpoints": 1,
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/stripe"
+        }
+      ]
+    },
+    {
+      "file": "PublicBookingRoutes.js",
+      "prefixes": [
+        "/api/v1/public"
+      ],
+      "countPerPrefix": 4,
+      "totalEndpoints": 4,
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/packages"
+        },
+        {
+          "method": "GET",
+          "path": "/packages/:id"
+        },
+        {
+          "method": "POST",
+          "path": "/bookings"
+        },
+        {
+          "method": "POST",
+          "path": "/leads"
+        }
+      ]
+    },
+    {
+      "file": "PublicLandingPageRoutes.js",
+      "prefixes": [
+        "/"
+      ],
+      "countPerPrefix": 1,
+      "totalEndpoints": 1,
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/"
+        }
+      ]
+    },
+    {
+      "file": "PushRoutes.js",
+      "prefixes": [
+        "/api/v1/push"
+      ],
+      "countPerPrefix": 5,
+      "totalEndpoints": 5,
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/devices"
+        },
+        {
+          "method": "GET",
+          "path": "/devices"
+        },
+        {
+          "method": "DELETE",
+          "path": "/devices/:token"
+        },
+        {
+          "method": "POST",
+          "path": "/send"
+        },
+        {
+          "method": "GET",
+          "path": "/:trackingId"
+        }
+      ]
+    },
+    {
+      "file": "RateLimitRoutes.js",
+      "prefixes": [
+        "/api/v1/rate-limits"
+      ],
+      "countPerPrefix": 4,
+      "totalEndpoints": 4,
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/rules"
+        },
+        {
+          "method": "GET",
+          "path": "/rules"
+        },
+        {
+          "method": "GET",
+          "path": "/violations"
+        },
+        {
+          "method": "GET",
+          "path": "/top-consumers"
+        }
+      ]
+    },
+    {
+      "file": "ReferenceDataRoutes.js",
+      "prefixes": [
+        "/api/v1/reference"
+      ],
+      "countPerPrefix": 7,
+      "totalEndpoints": 7,
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/airports"
+        },
+        {
+          "method": "GET",
+          "path": "/airlines"
+        },
+        {
+          "method": "GET",
+          "path": "/aircraft"
+        },
+        {
+          "method": "GET",
+          "path": "/countries"
+        },
+        {
+          "method": "GET",
+          "path": "/cities"
+        },
+        {
+          "method": "GET",
+          "path": "/airports/search"
+        },
+        {
+          "method": "POST",
+          "path": "/airports/search/select"
+        }
+      ]
+    },
+    {
+      "file": "ReportCatalogRoutes.js",
+      "prefixes": [
+        "/api/v1/reporting/catalog"
+      ],
+      "countPerPrefix": 4,
+      "totalEndpoints": 4,
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/"
+        },
+        {
+          "method": "GET",
+          "path": "/"
+        },
+        {
+          "method": "GET",
+          "path": "/:reportKey"
+        },
+        {
+          "method": "POST",
+          "path": "/:reportKey/lifecycle"
+        }
+      ]
+    },
+    {
+      "file": "ReportTemplateRoutes.js",
+      "prefixes": [
+        "/api/v1/reporting/templates"
+      ],
+      "countPerPrefix": 6,
+      "totalEndpoints": 6,
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/"
+        },
+        {
+          "method": "GET",
+          "path": "/"
+        },
+        {
+          "method": "GET",
+          "path": "/:templateKey"
+        },
+        {
+          "method": "PATCH",
+          "path": "/:templateKey"
+        },
+        {
+          "method": "POST",
+          "path": "/:templateKey/publish"
+        },
+        {
+          "method": "POST",
+          "path": "/:templateKey/archive"
+        }
+      ]
+    },
+    {
+      "file": "ReportUsageRoutes.js",
+      "prefixes": [
+        "/api/v1/reporting/usage"
+      ],
+      "countPerPrefix": 1,
+      "totalEndpoints": 1,
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/"
+        }
+      ]
+    },
+    {
+      "file": "ResilienceRoutes.js",
+      "prefixes": [
+        "/api/v1/resilience"
+      ],
+      "countPerPrefix": 4,
+      "totalEndpoints": 4,
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/dead-letters"
+        },
+        {
+          "method": "GET",
+          "path": "/dead-letters/:dlqId"
+        },
+        {
+          "method": "POST",
+          "path": "/dead-letters/:dlqId/permanent-failure"
+        },
+        {
+          "method": "GET",
+          "path": "/circuit-breakers"
+        }
+      ]
+    },
+    {
+      "file": "ReviewRoutes.js",
+      "prefixes": [
+        "/api/v1/reviews"
+      ],
+      "countPerPrefix": 3,
+      "totalEndpoints": 3,
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/"
+        },
+        {
+          "method": "POST",
+          "path": "/"
+        },
+        {
+          "method": "PATCH",
+          "path": "/:reviewId/moderate"
+        }
+      ]
+    },
+    {
+      "file": "RoleRoutes.js",
+      "prefixes": [
+        "/api/v1/roles"
+      ],
+      "countPerPrefix": 6,
+      "totalEndpoints": 6,
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/permissions"
+        },
+        {
+          "method": "GET",
+          "path": "/"
+        },
+        {
+          "method": "POST",
+          "path": "/"
+        },
+        {
+          "method": "GET",
+          "path": "/:roleId"
+        },
+        {
+          "method": "PATCH",
+          "path": "/:roleId"
+        },
+        {
+          "method": "DELETE",
+          "path": "/:roleId"
+        }
+      ]
+    },
+    {
+      "file": "SubscriptionPlatformRoutes.js",
+      "prefixes": [
+        "/api/v1/platform"
+      ],
+      "countPerPrefix": 32,
+      "totalEndpoints": 32,
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/plans"
+        },
+        {
+          "method": "POST",
+          "path": "/plans"
+        },
+        {
+          "method": "PATCH",
+          "path": "/plans/:planId"
+        },
+        {
+          "method": "GET",
+          "path": "/subscription"
+        },
+        {
+          "method": "POST",
+          "path": "/subscription/trial"
+        },
+        {
+          "method": "POST",
+          "path": "/subscription"
+        },
+        {
+          "method": "POST",
+          "path": "/subscription/cancel"
+        },
+        {
+          "method": "POST",
+          "path": "/subscription/suspend"
+        },
+        {
+          "method": "POST",
+          "path": "/subscription/reactivate"
+        },
+        {
+          "method": "GET",
+          "path": "/billing-account"
+        },
+        {
+          "method": "POST",
+          "path": "/billing-account"
+        },
+        {
+          "method": "POST",
+          "path": "/billing-account/verify"
+        },
+        {
+          "method": "GET",
+          "path": "/invoices"
+        },
+        {
+          "method": "POST",
+          "path": "/invoices/:invoiceId/pay-manual"
+        },
+        {
+          "method": "POST",
+          "path": "/invoices/:invoiceId/charge"
+        },
+        {
+          "method": "GET",
+          "path": "/subscription-scheduler/runs"
+        },
+        {
+          "method": "GET",
+          "path": "/subscription-scheduler/dashboard"
+        },
+        {
+          "method": "GET",
+          "path": "/renewal-engine/renewals"
+        },
+        {
+          "method": "GET",
+          "path": "/renewal-engine/dashboard"
+        },
+        {
+          "method": "GET",
+          "path": "/retry-engine/dashboard"
+        },
+        {
+          "method": "GET",
+          "path": "/grace/status"
+        },
+        {
+          "method": "GET",
+          "path": "/grace-period-engine/dashboard"
+        },
+        {
+          "method": "GET",
+          "path": "/access-revocation/dashboard"
+        },
+        {
+          "method": "GET",
+          "path": "/enforcement/dashboard"
+        },
+        {
+          "method": "GET",
+          "path": "/notifications/dashboard"
+        },
+        {
+          "method": "GET",
+          "path": "/bulk-processing/dashboard"
+        },
+        {
+          "method": "POST",
+          "path": "/bulk-processing/dead-letters/:dlqId/reprocess"
+        },
+        {
+          "method": "GET",
+          "path": "/reactivation/dashboard"
+        },
+        {
+          "method": "GET",
+          "path": "/operations/dashboard"
+        },
+        {
+          "method": "GET",
+          "path": "/operations/dashboard/export"
+        },
+        {
+          "method": "GET",
+          "path": "/operations/search"
+        },
+        {
+          "method": "GET",
+          "path": "/operations/merchants/:tenantId/timeline"
+        }
+      ]
+    },
+    {
+      "file": "SubscriptionResourceRoutes.js",
+      "prefixes": [
+        "/api/v1/subscriptions"
+      ],
+      "countPerPrefix": 5,
+      "totalEndpoints": 5,
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/"
+        },
+        {
+          "method": "GET",
+          "path": "/"
+        },
+        {
+          "method": "POST",
+          "path": "/:subscriptionId/renew"
+        },
+        {
+          "method": "POST",
+          "path": "/:subscriptionId/suspend"
+        },
+        {
+          "method": "POST",
+          "path": "/:subscriptionId/reactivate"
+        }
+      ]
+    },
+    {
+      "file": "SupplierPortalRoutes.js",
+      "prefixes": [
+        "/api/v1/supplier-portal"
+      ],
+      "countPerPrefix": 7,
+      "totalEndpoints": 7,
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/me"
+        },
+        {
+          "method": "POST",
+          "path": "/invoices"
+        },
+        {
+          "method": "GET",
+          "path": "/invoices"
+        },
+        {
+          "method": "GET",
+          "path": "/payments"
+        },
+        {
+          "method": "POST",
+          "path": "/vendors/:vendorId/tokens"
+        },
+        {
+          "method": "GET",
+          "path": "/vendors/:vendorId/tokens"
+        },
+        {
+          "method": "POST",
+          "path": "/tokens/:tokenId/revoke"
+        }
+      ]
+    },
+    {
+      "file": "TenantProfileRoutes.js",
+      "prefixes": [
+        "/api/v1/tenant-profile"
+      ],
+      "countPerPrefix": 6,
+      "totalEndpoints": 6,
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/"
+        },
+        {
+          "method": "POST",
+          "path": "/"
+        },
+        {
+          "method": "POST",
+          "path": "/logo"
+        },
+        {
+          "method": "GET",
+          "path": "/theme"
+        },
+        {
+          "method": "GET",
+          "path": "/settings"
+        },
+        {
+          "method": "PUT",
+          "path": "/settings"
+        }
+      ]
+    },
+    {
+      "file": "TravelDashboardRoutes.js",
+      "prefixes": [
+        "/api/v1/travel/dashboard"
+      ],
+      "countPerPrefix": 7,
+      "totalEndpoints": 7,
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/"
+        },
+        {
+          "method": "GET",
+          "path": "/kpis"
+        },
+        {
+          "method": "GET",
+          "path": "/trends"
+        },
+        {
+          "method": "GET",
+          "path": "/map"
+        },
+        {
+          "method": "GET",
+          "path": "/workload"
+        },
+        {
+          "method": "GET",
+          "path": "/alerts"
+        },
+        {
+          "method": "GET",
+          "path": "/export"
+        }
+      ]
+    },
+    {
+      "file": "TravelPlanRoutes.js",
+      "prefixes": [
+        "/api/v1/travel-plans"
+      ],
+      "countPerPrefix": 37,
+      "totalEndpoints": 37,
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/dashboard"
+        },
+        {
+          "method": "GET",
+          "path": "/search"
+        },
+        {
+          "method": "GET",
+          "path": "/"
+        },
+        {
+          "method": "POST",
+          "path": "/"
+        },
+        {
+          "method": "GET",
+          "path": "/:travelPlanId"
+        },
+        {
+          "method": "PATCH",
+          "path": "/:travelPlanId"
+        },
+        {
+          "method": "POST",
+          "path": "/:travelPlanId/archive"
+        },
+        {
+          "method": "POST",
+          "path": "/:travelPlanId/travelers"
+        },
+        {
+          "method": "GET",
+          "path": "/:travelPlanId/flights"
+        },
+        {
+          "method": "POST",
+          "path": "/:travelPlanId/flights"
+        },
+        {
+          "method": "PATCH",
+          "path": "/:travelPlanId/flights/:flightAssignmentId"
+        },
+        {
+          "method": "POST",
+          "path": "/:travelPlanId/flights/:flightAssignmentId/travelers"
+        },
+        {
+          "method": "PATCH",
+          "path": "/:travelPlanId/flights/:flightAssignmentId/status"
+        },
+        {
+          "method": "POST",
+          "path": "/:travelPlanId/flights/:flightAssignmentId/incidents"
+        },
+        {
+          "method": "GET",
+          "path": "/:travelPlanId/hotels"
+        },
+        {
+          "method": "POST",
+          "path": "/:travelPlanId/hotels"
+        },
+        {
+          "method": "PATCH",
+          "path": "/:travelPlanId/hotels/:hotelAssignmentId"
+        },
+        {
+          "method": "POST",
+          "path": "/:travelPlanId/rooms"
+        },
+        {
+          "method": "PATCH",
+          "path": "/:travelPlanId/hotels/:hotelAssignmentId/status"
+        },
+        {
+          "method": "POST",
+          "path": "/:travelPlanId/hotels/:hotelAssignmentId/incidents"
+        },
+        {
+          "method": "GET",
+          "path": "/:travelPlanId/transport"
+        },
+        {
+          "method": "POST",
+          "path": "/:travelPlanId/transport"
+        },
+        {
+          "method": "POST",
+          "path": "/:travelPlanId/transport/:transportAssignmentId/travelers"
+        },
+        {
+          "method": "PATCH",
+          "path": "/:travelPlanId/transport/:transportAssignmentId/status"
+        },
+        {
+          "method": "POST",
+          "path": "/:travelPlanId/transport/:transportAssignmentId/incidents"
+        },
+        {
+          "method": "GET",
+          "path": "/:travelPlanId/itinerary"
+        },
+        {
+          "method": "POST",
+          "path": "/:travelPlanId/itinerary"
+        },
+        {
+          "method": "PATCH",
+          "path": "/:travelPlanId/itinerary/:activityId"
+        },
+        {
+          "method": "POST",
+          "path": "/:travelPlanId/itinerary/:activityId/travelers"
+        },
+        {
+          "method": "PATCH",
+          "path": "/:travelPlanId/itinerary/:activityId/status"
+        },
+        {
+          "method": "GET",
+          "path": "/:travelPlanId/attendance/dashboard"
+        },
+        {
+          "method": "GET",
+          "path": "/:travelPlanId/attendance"
+        },
+        {
+          "method": "POST",
+          "path": "/:travelPlanId/attendance"
+        },
+        {
+          "method": "PATCH",
+          "path": "/:travelPlanId/attendance/:attendanceId"
+        },
+        {
+          "method": "POST",
+          "path": "/:travelPlanId/incidents"
+        },
+        {
+          "method": "GET",
+          "path": "/:travelPlanId/timeline"
+        },
+        {
+          "method": "POST",
+          "path": "/:travelPlanId/notes"
+        }
+      ]
+    },
+    {
+      "file": "UserRoutes.js",
+      "prefixes": [
+        "/api/v1/users"
+      ],
+      "countPerPrefix": 20,
+      "totalEndpoints": 20,
+      "endpoints": [
+        {
+          "method": "POST",
+          "path": "/accept-invitation"
+        },
+        {
+          "method": "POST",
+          "path": "/:userId/accept-invitation"
+        },
+        {
+          "method": "GET",
+          "path": "/"
+        },
+        {
+          "method": "POST",
+          "path": "/"
+        },
+        {
+          "method": "POST",
+          "path": "/invite"
+        },
+        {
+          "method": "POST",
+          "path": "/:userId/resend-invitation"
+        },
+        {
+          "method": "GET",
+          "path": "/:userId/employment-history"
+        },
+        {
+          "method": "GET",
+          "path": "/:userId/preferences"
+        },
+        {
+          "method": "PATCH",
+          "path": "/:userId/preferences"
+        },
+        {
+          "method": "GET",
+          "path": "/:userId"
+        },
+        {
+          "method": "PATCH",
+          "path": "/:userId"
+        },
+        {
+          "method": "DELETE",
+          "path": "/:userId"
+        },
+        {
+          "method": "POST",
+          "path": "/:userId/archive"
+        },
+        {
+          "method": "PATCH",
+          "path": "/:userId/role"
+        },
+        {
+          "method": "PATCH",
+          "path": "/:userId/roles"
+        },
+        {
+          "method": "PATCH",
+          "path": "/:userId/department"
+        },
+        {
+          "method": "PATCH",
+          "path": "/:userId/status"
+        },
+        {
+          "method": "GET",
+          "path": "/:userId/permissions"
+        },
+        {
+          "method": "PATCH",
+          "path": "/:userId/permissions"
+        },
+        {
+          "method": "PATCH",
+          "path": "/:userId/permission-overrides"
+        }
+      ]
+    },
+    {
+      "file": "VisaDashboardRoutes.js",
+      "prefixes": [
+        "/api/v1/dashboard"
+      ],
+      "countPerPrefix": 16,
+      "totalEndpoints": 16,
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/executive"
+        },
+        {
+          "method": "GET",
+          "path": "/operations"
+        },
+        {
+          "method": "GET",
+          "path": "/officer"
+        },
+        {
+          "method": "GET",
+          "path": "/embassy"
+        },
+        {
+          "method": "GET",
+          "path": "/finance"
+        },
+        {
+          "method": "GET",
+          "path": "/customer"
+        },
+        {
+          "method": "GET",
+          "path": "/compliance"
+        },
+        {
+          "method": "GET",
+          "path": "/ai-insights"
+        },
+        {
+          "method": "GET",
+          "path": "/kpis"
+        },
+        {
+          "method": "GET",
+          "path": "/trends"
+        },
+        {
+          "method": "GET",
+          "path": "/operations/export"
+        },
+        {
+          "method": "GET",
+          "path": "/officer/export"
+        },
+        {
+          "method": "GET",
+          "path": "/embassy/export"
+        },
+        {
+          "method": "GET",
+          "path": "/finance/export"
+        },
+        {
+          "method": "GET",
+          "path": "/compliance/export"
+        },
+        {
+          "method": "GET",
+          "path": "/executive/export"
+        }
+      ]
+    },
+    {
+      "file": "VisaRoutes.js",
+      "prefixes": [
+        "/api/v1"
+      ],
+      "countPerPrefix": 52,
+      "totalEndpoints": 52,
+      "endpoints": [
+        {
+          "method": "GET",
+          "path": "/visa-types"
+        },
+        {
+          "method": "POST",
+          "path": "/visa-types"
+        },
+        {
+          "method": "PATCH",
+          "path": "/visa-types/:visaTypeId"
+        },
+        {
+          "method": "PATCH",
+          "path": "/visa-cases/:visaCaseId/applications/:applicationNumber/pricing"
+        },
+        {
+          "method": "GET",
+          "path": "/countries"
+        },
+        {
+          "method": "POST",
+          "path": "/countries"
+        },
+        {
+          "method": "PATCH",
+          "path": "/countries/:countryMasterId"
+        },
+        {
+          "method": "GET",
+          "path": "/countries/:countryId/visa-requirements"
+        },
+        {
+          "method": "POST",
+          "path": "/requirement-profiles"
+        },
+        {
+          "method": "GET",
+          "path": "/visa-cases/:visaCaseId/documents"
+        },
+        {
+          "method": "POST",
+          "path": "/visa-cases/:visaCaseId/documents"
+        },
+        {
+          "method": "GET",
+          "path": "/documents/:documentId"
+        },
+        {
+          "method": "PATCH",
+          "path": "/documents/:documentId"
+        },
+        {
+          "method": "DELETE",
+          "path": "/documents/:documentId"
+        },
+        {
+          "method": "POST",
+          "path": "/documents/:documentId/verification/start"
+        },
+        {
+          "method": "GET",
+          "path": "/documents/:documentId/verification"
+        },
+        {
+          "method": "POST",
+          "path": "/documents/:documentId/verification/manual-review"
+        },
+        {
+          "method": "POST",
+          "path": "/documents/:documentId/verification/reverify"
+        },
+        {
+          "method": "POST",
+          "path": "/visa-cases/:visaCaseId/embassy-submissions"
+        },
+        {
+          "method": "GET",
+          "path": "/embassy-submissions/:submissionId"
+        },
+        {
+          "method": "PATCH",
+          "path": "/embassy-submissions/:submissionId"
+        },
+        {
+          "method": "POST",
+          "path": "/embassy-submissions/:submissionId/additional-documents"
+        },
+        {
+          "method": "POST",
+          "path": "/embassy-submissions/:submissionId/decision"
+        },
+        {
+          "method": "POST",
+          "path": "/embassy-submissions/batches"
+        },
+        {
+          "method": "GET",
+          "path": "/visa-cases/:visaCaseId/appointments"
+        },
+        {
+          "method": "POST",
+          "path": "/visa-cases/:visaCaseId/appointments"
+        },
+        {
+          "method": "PATCH",
+          "path": "/appointments/:appointmentId"
+        },
+        {
+          "method": "POST",
+          "path": "/appointments/:appointmentId/attendance"
+        },
+        {
+          "method": "POST",
+          "path": "/appointments/:appointmentId/result"
+        },
+        {
+          "method": "GET",
+          "path": "/workflows/visa"
+        },
+        {
+          "method": "GET",
+          "path": "/visa-cases/:visaCaseId/workflow"
+        },
+        {
+          "method": "POST",
+          "path": "/visa-cases/:visaCaseId/workflow/transition"
+        },
+        {
+          "method": "GET",
+          "path": "/visa-cases/:visaCaseId/passport"
+        },
+        {
+          "method": "POST",
+          "path": "/visa-cases/:visaCaseId/passport/receive"
+        },
+        {
+          "method": "POST",
+          "path": "/passports/:passportId/transfer"
+        },
+        {
+          "method": "POST",
+          "path": "/passports/:passportId/dispatch"
+        },
+        {
+          "method": "POST",
+          "path": "/passports/:passportId/receive-from-embassy"
+        },
+        {
+          "method": "POST",
+          "path": "/passports/:passportId/collect"
+        },
+        {
+          "method": "POST",
+          "path": "/passports/:passportId/report-lost"
+        },
+        {
+          "method": "GET",
+          "path": "/visa-cases/:visaCaseId/incidents"
+        },
+        {
+          "method": "POST",
+          "path": "/visa-cases/:visaCaseId/incidents"
+        },
+        {
+          "method": "GET",
+          "path": "/visa-cases/:visaCaseId/timeline"
+        },
+        {
+          "method": "POST",
+          "path": "/visa-cases/:visaCaseId/notes"
+        },
+        {
+          "method": "GET",
+          "path": "/visa-cases/:visaCaseId/ai-context"
+        },
+        {
+          "method": "GET",
+          "path": "/timeline/:eventId"
+        },
+        {
+          "method": "GET",
+          "path": "/visa-cases/:visaCaseId/payments"
+        },
+        {
+          "method": "POST",
+          "path": "/visa-cases/:visaCaseId/refunds"
+        },
+        {
+          "method": "GET",
+          "path": "/visa-cases"
+        },
+        {
+          "method": "POST",
+          "path": "/visa-cases"
+        },
+        {
+          "method": "GET",
+          "path": "/visa-cases/:visaCaseId"
+        },
+        {
+          "method": "PATCH",
+          "path": "/visa-cases/:visaCaseId"
+        },
+        {
+          "method": "DELETE",
+          "path": "/visa-cases/:visaCaseId"
+        }
+      ]
+    }
+  ]
+}

@@ -5,6 +5,7 @@ import authenticateAgentToken from "../middleware/authenticateAgentToken.js";
 import validate, { agentSchemas } from "../middleware/validateRequest.js";
 import {
   createAgent, listAgents, suspendAgent, getAgentPerformanceReport,
+  getAgentById, updateAgent, getAgentWalletStaff, adjustAgentWallet,
   agentLogin,
   getMyDashboard, getMyBookings, createMyBooking, getMyWallet
 } from "../controllers/AgentPortalController.js";
@@ -44,6 +45,10 @@ router.get("/me/wallet", authenticateAgentToken, limiter, getMyWallet);
 router.get("/reports/performance", authenticateAccessToken, limiter, getAgentPerformanceReport);
 router.get("/", authenticateAccessToken, limiter, listAgents);
 router.post("/", authenticateAccessToken, limiter, validate(agentSchemas.createAgent), createAgent);
+router.get("/:agentId", authenticateAccessToken, limiter, getAgentById);
+router.patch("/:agentId", authenticateAccessToken, limiter, updateAgent);
 router.post("/:agentId/suspend", authenticateAccessToken, limiter, suspendAgent);
+router.get("/:agentId/wallet", authenticateAccessToken, limiter, getAgentWalletStaff);
+router.post("/:agentId/wallet/adjust", authenticateAccessToken, limiter, adjustAgentWallet);
 
 export default router;

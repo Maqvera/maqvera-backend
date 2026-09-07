@@ -87,6 +87,66 @@ export const suspendAgent = async (req, res) => {
   }
 };
 
+export const getAgentById = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "agent.read", "agent.manage")) return sendError(res, 403, "Permission denied.", requestId);
+
+    const agent = await AgentService.getAgentById(req.params.agentId, scope.tenantId);
+    return sendSuccess(res, 200, "Agent details retrieved successfully.", agent, requestId);
+  } catch (error) {
+    console.error("getAgentById error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to retrieve agent.", requestId);
+  }
+};
+
+export const updateAgent = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "agent.manage")) return sendError(res, 403, "Permission denied.", requestId);
+
+    const agent = await AgentService.updateAgent(req.params.agentId, scope.tenantId, req.body, req.auth?.id || null);
+    return sendSuccess(res, 200, "Agent updated successfully.", agent, requestId);
+  } catch (error) {
+    console.error("updateAgent error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to update agent.", requestId);
+  }
+};
+
+export const getAgentWalletStaff = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "agent.read", "agent.manage")) return sendError(res, 403, "Permission denied.", requestId);
+
+    const result = await AgentService.getMyWallet(req.params.agentId, scope.tenantId);
+    return sendSuccess(res, 200, "Agent wallet retrieved successfully.", result, requestId);
+  } catch (error) {
+    console.error("getAgentWalletStaff error:", error);
+    return sendError(res, 500, error.message || "Failed to retrieve agent wallet.", requestId);
+  }
+};
+
+export const adjustAgentWallet = async (req, res) => {
+  const requestId = req.requestId || createRequestId();
+  try {
+    const scope = getAccessScope(req);
+    if (!scope) return sendError(res, 403, "Tenant context is required.", requestId);
+    if (!hasPermission(req, "agent.manage")) return sendError(res, 403, "Permission denied.", requestId);
+
+    const result = await AgentService.adjustWalletBalance(req.params.agentId, scope.tenantId, req.body, req.auth?.id || null);
+    return sendSuccess(res, 200, "Agent wallet adjusted successfully.", result, requestId);
+  } catch (error) {
+    console.error("adjustAgentWallet error:", error);
+    return sendError(res, statusFromError(error), error.message || "Failed to adjust agent wallet.", requestId);
+  }
+};
+
 // ---- Agent-side auth (public) ----
 
 export const agentLogin = async (req, res) => {

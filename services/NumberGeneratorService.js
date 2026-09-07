@@ -144,6 +144,46 @@ class NumberGeneratorService {
       const scheme = await NumberingSchemeModel.findOne(filter);
       if (scheme) return scheme;
     }
+
+    // Auto-provision standard default scheme for the tenant so business workflows never block
+    try {
+      const prefixMap = {
+        Booking: "BK",
+        Customer: "CUST",
+        Invoice: "INV",
+        Payment: "PAY",
+        Receipt: "RCP",
+        Voucher: "VCH",
+        Visa: "VIS",
+        Package: "PKG",
+      };
+      const prefix = prefixMap[resourceType] || String(resourceType).slice(0, 4).toUpperCase();
+      const autoScheme = await NumberingSchemeModel.create({
+        tenantId,
+        resourceType,
+        companyId: null,
+        branchId: null,
+        prefix,
+        separator: "-",
+        includeYear: true,
+        sequenceLength: 6,
+        allowGaps: true,
+        isDefault: true,
+        status: "Active",
+        timeline: [
+          {
+            event: "NumberSchemeAutoCreated",
+            description: `Default scheme for ${resourceType} auto-provisioned (${prefix}).`,
+            performedBy: "system",
+          },
+        ],
+      });
+      return autoScheme;
+    } catch (createErr) {
+      const fallback = await NumberingSchemeModel.findOne({ tenantId, resourceType, status: "Active" });
+      if (fallback) return fallback;
+    }
+
     throw new Error(`No numbering scheme configured for resourceType "${resourceType}". Create one via POST /api/v1/numbering/schemes.`);
   }
 
